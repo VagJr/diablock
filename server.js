@@ -2,32 +2,24 @@ const http = require("http");
 const fs = require("fs");
 const path = require("path");
 const { Server } = require("socket.io");
-const { Pool } = require("pg"); // OBRIGATÓRIO: Cliente PostgreSQL
+const { Pool } = require("pg");
 
 // ===================================
 // 1. DATABASE CONFIGURATION (PostgreSQL)
 // ===================================
-// ALTERAÇÃO 1: Permite rodar localmente sem DB_URL, mas mantém a persistência do Render.
 let DB_MODE = process.env.DATABASE_URL ? "POSTGRES" : "NONE";
 let pgPool = null;
 let isDbReady = false;
 
-// Variáveis que existiam no topo e foram removidas
-// let mongoose, CharModel; // REMOVIDO: MongoDB não é mais suportado
-
-// Função assíncrona para configurar o DB e iniciar o servidor
 async function initializeServer() {
     if (DB_MODE === 'POSTGRES') {
         try {
-            // Inicializa o Pool (Render usa DATABASE_URL)
             pgPool = new Pool({
                 connectionString: process.env.DATABASE_URL,
-                // SSL é obrigatório no Render
                 ssl: process.env.NODE_ENV === "production" ? { rejectUnauthorized: false } : false
             });
             console.log("PostgreSQL detected. Initializing connection...");
             
-            // Cria a tabela 'characters' se não existir
             await pgPool.query(`
                 CREATE TABLE IF NOT EXISTS characters (
                     id TEXT PRIMARY KEY,       
@@ -38,60 +30,33 @@ async function initializeServer() {
                 );
             `);
             isDbReady = true;
-            console.log("PostgreSQL connected and table 'characters' ready. Persistence ENABLED.");
+            console.log("PostgreSQL connected. Persistence ENABLED.");
 
         } catch (err) {
-            // ALTERAÇÃO 2: Se falhar, rebaixa para DB_MODE=NONE em vez de sair do processo.
-            console.error("FATAL ERROR: PostgreSQL connection failed. Check DATABASE_URL/Whitelist.", err.message);
+            console.error("FATAL ERROR: PostgreSQL connection failed.", err.message);
             DB_MODE = 'NONE';
-            console.warn("⚠️ Switching to persistence NONE mode. Server will start but data will not be saved/loaded.");
         }
     } 
     
-    if (DB_MODE === 'NONE') {
-        console.warn("⚠️ No DATABASE_URL set. Running WITHOUT persistence (DB_MODE: NONE).");
-    }
-
-    // INICIA O SERVIDOR HTTP/SOCKETS APENAS DEPOIS DA CONFIGURAÇÃO DO DB
     server.listen(3000, () => {
-        console.log("🔥 Diablock V26 - Server Started (Mode: " + DB_MODE + ")");
-    }).on('error', (err) => {
-        if (err.code === 'EADDRINUSE') {
-            console.error('ERRO FATAL: A porta 3000 já está em uso. Por favor, feche o processo que a está usando ou tente outra porta.');
-        } else {
-            console.error('ERRO FATAL AO INICIAR O SERVIDOR:', err);
-        }
-        process.exit(1); 
+        console.log("🔥 Diablock V27 - EYES OF THE VOID (Stable) - Mode: " + DB_MODE);
     });
 }
 
-
-// 2. FUNÇÕES DE PERSISTÊNCIA (SOMENTE POSTGRES)
-
-// NOVO: Armazenamento temporário em memória para o modo NONE
+// 2. FUNÇÕES DE PERSISTÊNCIA
 let localCharacters = {};
 
 async function loadUserChars(user) {
-    // CORREÇÃO 1: Em modo NONE, retorna todos os chars criados em memória
-    if (DB_MODE === 'NONE' || !isDbReady) {
-        return localCharacters[user] || {};
-    }
+    if (DB_MODE === 'NONE' || !isDbReady) return localCharacters[user] || {};
     try {
-        const r = await pgPool.query(
-            "SELECT char_name, data->>'level' AS level FROM characters WHERE user_name=$1",
-            [user]
-        );
+        const r = await pgPool.query("SELECT char_name, data->>'level' AS level FROM characters WHERE user_name=$1", [user]);
         const chars = {};
         r.rows.forEach(c => chars[c.char_name] = { level: Number(c.level) });
         return chars;
-    } catch (error) {
-        console.error("Postgres loadUserChars error:", error);
-        return {};
-    }
+    } catch (error) { return {}; }
 }
 
 async function createChar(user, name, cls) {
-    // CORREÇÃO 2: Em modo NONE, salva o char em memória e usa a classe real
     const newCharData = { 
         class: cls, level: 1, xp: 0, pts: 0, gold: 0, 
         attrs: { str: 5, dex: 5, int: 5 }, hp: 100, mp: 50, 
@@ -101,66 +66,36 @@ async function createChar(user, name, cls) {
 
     if (DB_MODE === 'NONE' || !isDbReady) {
         if (!localCharacters[user]) localCharacters[user] = {};
-        if (localCharacters[user][name]) return false; // Nome já existe localmente
+        if (localCharacters[user][name]) return false; 
         localCharacters[user][name] = newCharData;
         return true; 
     }
 
-    // Lógica PostgreSQL (mantida)
     const id = `${user}:${name}`;
     try {
-        await pgPool.query(`
-            INSERT INTO characters (id, user_name, char_name, data)
-            VALUES ($1, $2, $3, $4)
-            ON CONFLICT (id) DO NOTHING
-        `, [id, user, name, newCharData]);
+        await pgPool.query(`INSERT INTO characters (id, user_name, char_name, data) VALUES ($1, $2, $3, $4) ON CONFLICT (id) DO NOTHING`, [id, user, name, newCharData]);
         return true;
-    } catch (error) {
-        if (!error.message.includes('duplicate key')) {
-             console.error(`Error creating character:`, error);
-        }
-        return false;
-    }
+    } catch (error) { return false; }
 }
 
 async function loadCharData(user, name) {
-    // CORREÇÃO 3: Em modo NONE, carrega o char da memória (se existir)
-    if (DB_MODE === 'NONE' || !isDbReady) {
-        return localCharacters[user]?.[name] || null;
-    }
-
+    if (DB_MODE === 'NONE' || !isDbReady) return localCharacters[user]?.[name] || null;
     const id = `${user}:${name}`;
-
     try {
-        const r = await pgPool.query(
-            "SELECT data FROM characters WHERE id=$1",
-            [id]
-        );
+        const r = await pgPool.query("SELECT data FROM characters WHERE id=$1", [id]);
         return r.rows[0]?.data || null;
-    } catch (error) {
-        console.error(`Error loading character data:`, error);
-        return null;
-    }
+    } catch (error) { return null; }
 }
 
 async function saveCharData(user, name, data) {
-    // ALTERAÇÃO 6: Em modo NONE, apenas ignora a tentativa de salvar.
     const savableData = { ...data };
-    delete savableData.x; 
-    delete savableData.y; 
-    delete savableData.vx; 
-    delete savableData.vy; 
-    delete savableData.input; 
-    delete savableData.stats; 
-    delete savableData.cd; 
-    delete savableData.id;
-    delete savableData.user; 
-    delete savableData.charName;
+    delete savableData.x; delete savableData.y; delete savableData.vx; delete savableData.vy; 
+    delete savableData.input; delete savableData.stats; delete savableData.cd; delete savableData.id;
+    delete savableData.user; delete savableData.charName; delete savableData.chatMsg; delete savableData.chatTimer;
+    delete savableData.instId;
         
     if (DB_MODE === 'NONE' || !isDbReady) {
-        // Se estamos em modo NONE, atualizamos o cache de memória 
         if(localCharacters[user] && localCharacters[user][name]) {
-            // Garantir que a classe original seja mantida no cache
             savableData.class = localCharacters[user][name].class;
             localCharacters[user][name] = savableData;
         }
@@ -168,38 +103,23 @@ async function saveCharData(user, name, data) {
     }
 
     const id = `${user}:${name}`;
-    
     try {
-        await pgPool.query(`
-            INSERT INTO characters (id, user_name, char_name, data)
-            VALUES ($1,$2,$3,$4)
-            ON CONFLICT (id)
-            DO UPDATE SET data=$4, updated_at=NOW()
-        `, [id, user, name, savableData]);
-    } catch (error) {
-        console.error(`Error saving character data:`, error);
-    }
+        await pgPool.query(`INSERT INTO characters (id, user_name, char_name, data) VALUES ($1,$2,$3,$4) ON CONFLICT (id) DO UPDATE SET data=$4, updated_at=NOW()`, [id, user, name, savableData]);
+    } catch (error) { console.error(`Error saving char:`, error); }
 }
 
-
-// 3. INFRAESTRUTURA E CONFIGURAÇÕES DO JOGO (RESTANTE MANTIDO)
-
+// 3. INFRAESTRUTURA
 const server = http.createServer((req, res) => {
   const safeUrl = decodeURI(req.url === "/" ? "/index.html" : req.url);
   const p = path.join(__dirname, safeUrl);
-
   if(fs.existsSync(p) && fs.statSync(p).isFile()) {
       let contentType = "text/html";
       if(safeUrl.endsWith(".js")) contentType = "application/javascript";
       else if(safeUrl.endsWith(".css")) contentType = "text/css";
       else if(safeUrl.endsWith(".mp3")) contentType = "audio/mpeg"; 
-
       res.writeHead(200, {"Content-Type": contentType});
       fs.createReadStream(p).pipe(res);
-  } else { 
-      res.writeHead(404);
-      res.end("404 Not Found"); 
-  }
+  } else { res.writeHead(404); res.end("404 Not Found"); }
 });
 const io = new Server(server);
 
@@ -243,7 +163,6 @@ const ITEM_BASES = {
   armor: { slot: "body", name: "Armor", hp: 40, def: 3, price:100 },
   runa_dano: { slot: "rune", name: "Rune of Might", dmg: 5, type: "passive", price: 150, color:"#f0f" },
   runa_crit: { slot: "rune", name: "Rune of Fortune", crit: 0.02, type: "passive", price: 150, color:"#0ff" },
-  
   potion:{ slot: "potion",name: "Hp Pot", heal: 50, type: "consumable", price:20 },
   wood:  { slot: "mat", name: "Wood", type: "material", price: 5 },
   stone: { slot: "mat", name: "Stone", type: "material", price: 8 },
@@ -266,8 +185,8 @@ const RECIPES = [
 ];
 
 const MOB_DATA = {
-    tree:     { hp: 20, spd: 0, ai: "resource", drop: "wood", xp: 5, size: 14, color: "#252", poise: 999 },
-    rock:     { hp: 30, spd: 0, ai: "resource", drop: "stone",xp: 5, size: 14, color: "#555", poise: 999 },
+    tree:     { hp: 20, dmg: 0, spd: 0, ai: "resource", drop: "wood", xp: 5, size: 14, color: "#252", poise: 999 },
+    rock:     { hp: 30, dmg: 0, spd: 0, ai: "resource", drop: "stone",xp: 5, size: 14, color: "#555", poise: 999 },
     rat:      { hp: 8,  dmg: 3, spd: 0.08, ai: "chase", xp: 5,  gold: 2,  size: 8,  poise: 0 },
     bat:      { hp: 6,  dmg: 4, spd: 0.10, ai: "chase", xp: 6,  gold: 3,  size: 6,  poise: 0 },
     slime:    { hp: 15, dmg: 4, spd: 0.04, ai: "chase", xp: 8,  gold: 5,  size: 10, poise: 1 },
@@ -308,25 +227,20 @@ function generateItem(level, diffMult=1, forceType=null) {
         const k = gemKeys[Math.floor(Math.random()*gemKeys.length)];
         return { ...ITEM_BASES[k], id:Math.random().toString(36).substr(2), key:k, rarity:"magic", color:ITEM_BASES[k].color };
     }
-    
     if (level >= 12 && Math.random() < 0.02 * diffMult) { 
         const runeKeys = ["runa_dano", "runa_crit"];
         const k = runeKeys[Math.floor(Math.random()*runeKeys.length)];
         const base = ITEM_BASES[k];
         const power = (level * 0.5) * diffMult; 
-        
         const item = {
             id: Math.random().toString(36).substr(2), key:k, rarity:"rare", color:base.color, 
             slot: base.slot, type: base.type, name: base.name, price: base.price, 
             stats: {}, sockets:[], gems:[]
         };
-        
         if (base.dmg) item.stats.dmg = Math.floor(base.dmg + power * 2);
         if (base.crit) item.stats.crit = base.crit + power * 0.005; 
-        
         return item;
     }
-    
     const keys = Object.keys(ITEM_BASES).filter(k=>!["potion","wood","stone","runa_dano","runa_crit"].includes(k) && !k.includes("ruby") && !k.includes("sapphire") && !k.includes("emerald") && !k.includes("diamond") && !k.includes("topaz") && !k.includes("amethyst"));
     const key = keys[Math.floor(Math.random()*keys.length)];
     const base = ITEM_BASES[key];
@@ -354,18 +268,12 @@ function generateItem(level, diffMult=1, forceType=null) {
     return item;
 }
 
-// server.js (Apenas a função recalcStats alterada)
-
 function recalcStats(p) {
     if(!p.attrs) p.attrs = { str:5, dex:5, int:5 };
     let str=p.attrs.str, dex=p.attrs.dex, int=p.attrs.int;
     let addHp=0, addMp=0, addDmg=0, addDef=0, addSpd=0;
-    
     let critChance=0.01 + (dex * 0.002);
     let cdRed=0;
-    
-    // Raio de luz base (em tiles)
-    // ALTERAÇÃO: Aumentado de 5 para 15 para cobrir quase toda a tela
     let baseLightRadius = 15; 
     
     ["hand", "head", "body", "rune"].forEach(s => { 
@@ -374,7 +282,6 @@ function recalcStats(p) {
             addHp+=it.stats.hp||0; addMp+=it.stats.mp||0; 
             addDmg+=it.stats.dmg||0; addDef+=it.stats.def||0;
             critChance+=it.stats.crit||0; 
-            
             if(it.gems) it.gems.forEach(g => {
                 if(g.stat === "dmg") addDmg += g.val;
                 if(g.stat === "hp") addHp += g.val;
@@ -385,19 +292,13 @@ function recalcStats(p) {
             });
         }
     });
-    
-    // Aumenta o raio de luz com base na INT e Level
     baseLightRadius += (p.level * 0.1) + (int * 0.15); 
-    
-    // Stats base
     p.stats.maxHp = 90 + (str*8) + addHp + (p.level*10);
     p.stats.maxMp = 30 + (int*5) + addMp + (p.level*4);
     p.stats.spd = 0.11 + (dex*0.001) + addSpd;
     p.stats.def = addDef;
     p.stats.crit = Math.min(0.5, critChance); 
     p.stats.lightRadius = Math.ceil(baseLightRadius); 
-    
-    // Damage Calculation
     const wep = p.equipment.hand;
     let baseDmg = addDmg;
     if(wep) {
@@ -407,7 +308,6 @@ function recalcStats(p) {
     } else { baseDmg += str * 0.3; }
     p.stats.dmg = Math.floor(baseDmg);
     p.stats.cd_mult = (1 - cdRed); 
-
     if(p.hp > p.stats.maxHp) p.hp = p.stats.maxHp;
 }
 
@@ -463,7 +363,6 @@ function generateDungeon(inst) {
             spawnMob(inst, r.cx, r.cy, boss, 1 + inst.level*0.3); 
             return; 
         }
-
         if(Math.random() < 0.15) spawnMob(inst, r.cx, r.cy, "chest", 1);
         const count = 2 + Math.random() * (inst.level * 0.8) | 0;
         let pool = ["rat", "bat"];
@@ -498,25 +397,23 @@ function spawnMob(inst, x, y, type, mult) {
     }
 }
 
+function sendPlayerUpdate(p) {
+    if (!p || !p.id || !p.instId || !instances[p.instId]) return;
+    const inst = instances[p.instId];
+    const playerState = { 
+        pl: { [p.id]: p }, mb: inst.mobs, it: inst.items, pr: inst.projectiles, props: inst.props, 
+        lvl: inst.level, map: inst.dungeon, theme: inst.theme, explored: p.explored, lightRadius: p.stats.lightRadius 
+    };
+    io.to(p.id).emit("u", playerState);
+}
+
 io.on("connection", socket => {
     let user = null, charName = null;
-    socket.on("login", async u => { 
-        user=u; 
-        const chars = await loadUserChars(user);
-        socket.emit("char_list", chars); 
-    });
+    socket.on("login", async u => { user=u; const chars = await loadUserChars(user); socket.emit("char_list", chars); });
     socket.on("create_char", async ({name, cls}) => { 
         if(!user) return; 
-        // Em modo NONE, createChar agora usa o nome/classe real, salvando em memória.
-        const success = await createChar(user, name, cls);
-        if (success) {
-            const chars = await loadUserChars(user);
-            socket.emit("char_list", chars);
-        } else {
-            // Em caso de falha (ex: nome duplicado em modo POSTGRES ou NONE), reenvia a lista.
-            const chars = await loadUserChars(user);
-            socket.emit("char_list", chars);
-        }
+        await createChar(user, name, cls);
+        const chars = await loadUserChars(user); socket.emit("char_list", chars);
     });
     socket.on("enter_game", async name => { 
         if(!user || !name) return;
@@ -525,40 +422,39 @@ io.on("connection", socket => {
         socket.join(inst.id); socket.instId = inst.id;
         
         let data = await loadCharData(user, name); 
-        
-        if (!data) { 
-             if (DB_MODE === 'POSTGRES') {
-                console.error(`Postgres was active, but could not load character data for ${user}:${name}. Aborting.`);
-                return; 
-             }
-             
-             // Este ponto só é atingido se houver um erro de lógica na criação/carga do modo NONE.
-             // Para garantir que o jogo inicie, criamos um fallback genérico (redundante após correções anteriores).
-             data = { 
-                 class: 'knight', level: 1, xp: 0, pts: 0, gold: 0, 
-                 attrs: { str: 5, dex: 5, int: 5 }, hp: 100, mp: 50, 
-                 inventory: [], equipment: {}, 
-                 explored: Array.from({length: SIZE}, () => Array(SIZE).fill(0)) 
-             };
-        }
-        
+        if (!data) data = { class: 'knight', level: 1, xp: 0, pts: 0, gold: 0, attrs: { str: 5, dex: 5, int: 5 }, hp: 100, mp: 50, inventory: [], equipment: {} };
         if(!data.attrs) data.attrs = { str:5, dex:5, int:5 };
-        
         if(!data.explored) data.explored = Array.from({length: SIZE}, () => Array(SIZE).fill(0)); 
         
         inst.players[socket.id] = {
             id: socket.id, name, user, charName, 
             ...JSON.parse(JSON.stringify(data)),
             x: inst.rooms[0].cx, y: inst.rooms[0].cy, vx:0, vy:0, input: {x:0,y:0,block:false},
-            cd: { atk:0, skill:0, dash:0 }, stats: {}
+            cd: { atk:0, skill:0, dash:0 }, stats: {}, instId: inst.id, chatMsg: "", chatTimer: 0
         };
         recalcStats(inst.players[socket.id]); 
         socket.emit("game_start", {recipes: RECIPES});
     });
-    
-    socket.on("chat", msg => { if(socket.instId) io.to(socket.instId).emit("chat", {id:socket.id, msg}); });
+
+    // CORREÇÃO DO CHAT: Armazena o texto no servidor para não ser sobrescrito
+    socket.on("chat", msg => { 
+        const p = instances[socket.instId]?.players[socket.id];
+        if(p) {
+            p.chatMsg = msg;
+            p.chatTimer = 200; // 10 segundos
+            io.to(socket.instId).emit("chat", {id:socket.id, msg}); // Som
+            sendPlayerUpdate(p);
+        }
+    });
+
     socket.on("input", d => { const p = instances[socket.instId]?.players[socket.id]; if(p) { p.input.x=d.x; p.input.y=d.y; p.input.block=d.block; } });
-    socket.on("add_stat", s => { const p = instances[socket.instId]?.players[socket.id]; if(p && p.pts>0){ p.attrs[s]++; p.pts--; recalcStats(p); } });
+    
+    socket.on("add_stat", s => { 
+        const p = instances[socket.instId]?.players[socket.id]; 
+        if(p && p.pts>0){ p.attrs[s]++; p.pts--; recalcStats(p); sendPlayerUpdate(p); } 
+    });
+    
+    // CORREÇÃO DASH: Usa o ângulo enviado pelo cliente (mouse/direção)
     socket.on("dash", angle => {
         const p = instances[socket.instId]?.players[socket.id];
         if(!p || p.cd.dash > 0 || p.input.block || p.mp < 10) return;
@@ -566,9 +462,12 @@ io.on("connection", socket => {
         p.vx = Math.cos(angle) * 0.7; p.vy = Math.sin(angle) * 0.7;
         p.dashTime = 5;
         io.to(instances[socket.instId].id).emit("fx", { type: "dash", x: p.x, y: p.y });
+        sendPlayerUpdate(p); 
     });
+    
     socket.on("potion", () => {
         const p = instances[socket.instId]?.players[socket.id];
+        const inst = instances[socket.instId];
         if(!p || !p.equipment.potion) return;
         const pot = p.equipment.potion;
         p.hp = Math.min(p.stats.maxHp, p.hp + pot.stats.heal);
@@ -576,7 +475,9 @@ io.on("connection", socket => {
         p.equipment.potion = null; 
         const idx = p.inventory.findIndex(i => i.key === "potion");
         if(idx !== -1) { p.equipment.potion = p.inventory[idx]; p.inventory.splice(idx, 1); }
+        sendPlayerUpdate(p);
     });
+    
     socket.on("attack", ang => {
         const inst = instances[socket.instId];
         const p = inst?.players[socket.id];
@@ -585,53 +486,65 @@ io.on("connection", socket => {
         const type = wep ? wep.type : "melee";
         p.cd.atk = Math.floor((wep ? wep.cd : 10) * (p.stats.cd_mult || 1)); 
         let clickedNPC = false;
-        Object.values(inst.mobs).forEach(m => { 
-            if(m.npc && Math.hypot(m.x-p.x, m.y-p.y) < 3) { socket.emit("open_shop", m.shop); clickedNPC = true; } 
-        });
+        Object.values(inst.mobs).forEach(m => { if(m.npc && Math.hypot(m.x-p.x, m.y-p.y) < 3) { socket.emit("open_shop", m.shop); clickedNPC = true; } });
         if(clickedNPC) return;
         
         let damage = p.stats.dmg;
         let isCrit = false;
-        if (Math.random() < p.stats.crit) {
-            damage = Math.floor(damage * 1.5); 
-            isCrit = true;
-        }
+        if (Math.random() < p.stats.crit) { damage = Math.floor(damage * 1.5); isCrit = true; }
 
         if(type === "melee") {
             io.to(inst.id).emit("fx", { type: "slash", x: p.x, y: p.y, angle: ang });
+            // Usa alcance de ataque corpo a corpo: 2.0 tiles
             hitArea(inst, p, p.x, p.y, 2.0, ang, 1.5, damage, 20, isCrit);
         } else {
             if(type==="magic" && p.mp < 2) return; if(type==="magic") p.mp -= 2;
-            inst.projectiles.push({ x:p.x, y:p.y, vx:Math.cos(ang)*0.4, vy:Math.sin(ang)*0.4, life: 30, dmg: damage, owner: p.id, type: wep ? wep.proj : "arrow", angle: ang, isCrit: isCrit });
+            
+            // CORREÇÃO: Spawn do projétil ligeiramente à frente do jogador (0.5 tiles)
+            const spawnX = p.x + Math.cos(ang) * 0.5;
+            const spawnY = p.y + Math.sin(ang) * 0.5;
+            
+            inst.projectiles.push({ x:spawnX, y:spawnY, vx:Math.cos(ang)*0.4, vy:Math.sin(ang)*0.4, life: 60, dmg: damage, owner: p.id, type: wep ? wep.proj : "arrow", angle: ang, isCrit: isCrit });
+            if (type === 'magic') sendPlayerUpdate(p); 
         }
     });
+    
     socket.on("skill", ({idx, angle}) => {
         const inst = instances[socket.instId];
         const p = inst?.players[socket.id];
         if(!p || p.cd.skill > 0 || p.input.block) return;
         const ang = angle || Math.atan2(p.input.y||0, p.input.x||1);
         let base_cd = 0;
-        
         let damage = p.stats.dmg;
         let isCrit = false;
         if (Math.random() < p.stats.crit) { damage = Math.floor(damage * 1.5); isCrit = true; }
         
         if(p.class === "knight") {
             if(p.mp < 15) return; p.mp -= 15; base_cd = 60;
-            // CORREÇÃO: Efeito spin life/duration para ser visível (20 ticks)
-            io.to(inst.id).emit("fx", { type: "spin", x: p.x, y: p.y, life: 20 }); hitArea(inst, p, p.x, p.y, 3.5, null, 0, damage * 2, 40, isCrit);
+            io.to(inst.id).emit("fx", { type: "spin", x: p.x, y: p.y, life: 20 }); 
+            hitArea(inst, p, p.x, p.y, 3.5, null, 0, damage * 2, 40, isCrit); // Atinge 3.5 tiles em volta
         } else if(p.class === "hunter") {
             if(p.mp < 15) return; p.mp -= 15; base_cd = 50;
-            // Hunter dispara 3 projéteis "arrow"
-            [-0.3, 0, 0.3].forEach(off => { inst.projectiles.push({ x:p.x, y:p.y, vx:Math.cos(ang+off)*0.5, vy:Math.sin(ang+off)*0.5, life: 25, dmg: damage, owner: p.id, type: "arrow", angle: ang+off, isCrit: isCrit }); });
+            
+            // CORREÇÃO: Spawn de projéteis hunter ligeiramente à frente (0.5 tiles)
+            const spawnX = p.x + Math.cos(ang) * 0.5;
+            const spawnY = p.y + Math.sin(ang) * 0.5;
+            
+            [-0.3, 0, 0.3].forEach(off => { inst.projectiles.push({ x:spawnX, y:spawnY, vx:Math.cos(ang+off)*0.5, vy:Math.sin(ang+off)*0.5, life: 35, dmg: damage, owner: p.id, type: "arrow", angle: ang+off, isCrit: isCrit }); });
         } else if(p.class === "mage") {
             if(p.mp < 25) return; p.mp -= 25; base_cd = 80;
-            // Mage lança um projétil "meteor"
-            inst.projectiles.push({ x:p.x, y:p.y, vx:Math.cos(ang)*0.2, vy:Math.sin(ang)*0.2, life: 50, dmg: damage * 3, owner: p.id, type: "meteor", angle: ang, isCrit: isCrit });
+            
+            // CORREÇÃO: Spawn de projéteis mage ligeiramente à frente (0.5 tiles)
+            const spawnX = p.x + Math.cos(ang) * 0.5;
+            const spawnY = p.y + Math.sin(ang) * 0.5;
+            
+            // Projétil Meteor com maior vida/alcance
+            inst.projectiles.push({ x:spawnX, y:spawnY, vx:Math.cos(ang)*0.2, vy:Math.sin(ang)*0.2, life: 80, dmg: damage * 3, owner: p.id, type: "meteor", angle: ang, isCrit: isCrit });
         }
-        
         p.cd.skill = Math.floor(base_cd * (p.stats.cd_mult || 1)); 
+        sendPlayerUpdate(p); 
     });
+    
     socket.on("craft", ({action, recipeIdx, itemIdx, gemIdx}) => {
         const inst = instances[socket.instId];
         const p = inst?.players[socket.id];
@@ -645,11 +558,9 @@ io.on("connection", socket => {
                 for(let k=0; k<recipe.req.wood; k++) { const i=p.inventory.findIndex(x=>x.key==="wood"); if(i>-1) p.inventory.splice(i,1); }
                 for(let k=0; k<recipe.req.stone; k++) { const i=p.inventory.findIndex(x=>x.key==="stone"); if(i>-1) p.inventory.splice(i,1); }
                 if(recipe.res === "potion") p.inventory.push({...ITEM_BASES.potion, id:Math.random(), stats:{heal:50+p.level*5}});
-                else {
-                    const gemBase = ITEM_BASES[recipe.res];
-                    p.inventory.push({...gemBase, id:Math.random(), key:recipe.res});
-                }
+                else { const gemBase = ITEM_BASES[recipe.res]; p.inventory.push({...gemBase, id:Math.random(), key:recipe.res}); }
                 io.to(inst.id).emit("txt", {x:p.x, y:p.y, val:"CRAFT!", color:"#0f0"});
+                sendPlayerUpdate(p); 
             }
         }
         else if(action === "socket") {
@@ -657,10 +568,9 @@ io.on("connection", socket => {
             const gem = p.inventory[gemIdx];
             if(item && gem && item.type !== "material" && item.type !== "consumable" && gem.type === "gem") {
                 if(item.sockets && item.gems.length < item.sockets.length) {
-                    item.gems.push(gem);
-                    p.inventory.splice(gemIdx, 1);
-                    recalcStats(p); 
+                    item.gems.push(gem); p.inventory.splice(gemIdx, 1); recalcStats(p); 
                     io.to(inst.id).emit("txt", {x:p.x, y:p.y, val:"SOCKETED!", color:"#0ff"});
+                    sendPlayerUpdate(p); 
                 }
             }
         }
@@ -673,61 +583,72 @@ io.on("connection", socket => {
         if(it.type === "material" || it.type === "gem") return;
         p.equipment[it.slot] = it; p.inventory.splice(idx, 1);
         if(old) p.inventory.push(old);
-        recalcStats(p);
+        recalcStats(p); sendPlayerUpdate(p);
     });
     socket.on("unequip", slot => {
         const p = instances[socket.instId]?.players[socket.id];
-        if(p && p.equipment[slot] && p.inventory.length < 20) { p.inventory.push(p.equipment[slot]); p.equipment[slot] = null; recalcStats(p); }
+        if(p && p.equipment[slot] && p.inventory.length < 20) { 
+            p.inventory.push(p.equipment[slot]); p.equipment[slot] = null; recalcStats(p); sendPlayerUpdate(p);
+        }
     });
     socket.on("drop", idx => {
         const inst = instances[socket.instId];
         const p = inst?.players[socket.id];
         if(p && p.inventory[idx]) {
-            const it = p.inventory[idx];
-            p.inventory.splice(idx, 1);
-            const iid = "d"+(++inst.itemId);
-            inst.items[iid] = { id:iid, x:p.x, y:p.y, item: it, pickupDelay: Date.now() + 1500 }; 
+            const it = p.inventory[idx]; p.inventory.splice(idx, 1);
+            const iid = "d"+(++inst.itemId); inst.items[iid] = { id:iid, x:p.x, y:p.y, item: it, pickupDelay: Date.now() + 1500 }; 
+            sendPlayerUpdate(p);
         }
     });
     socket.on("buy", item => {
         const p = instances[socket.instId]?.players[socket.id];
-        if(p && p.gold >= item.price && p.inventory.length < 20) { p.gold -= item.price; p.inventory.push(item); }
+        if(p && p.gold >= item.price && p.inventory.length < 20) { p.gold -= item.price; p.inventory.push(item); sendPlayerUpdate(p); }
     });
     socket.on("disconnect", async () => { 
         const inst = instances[socket.instId];
         const p = inst?.players[socket.id];
-        
-        if(p && user && charName && DB_MODE === 'POSTGRES') {
-            // Salva o estado do personagem no DB/arquivo
-            await saveCharData(p.user, p.charName, p);
-            console.log(`Saved character: ${p.user}:${p.charName}`);
-            
-            delete inst.players[socket.id];
-        } else if (p) {
-             // CORREÇÃO: Salva o estado atual do char localmente em memória
-             await saveCharData(p.user, p.charName, p);
-             delete inst.players[socket.id];
-        }
+        if(p) { await saveCharData(p.user, p.charName, p); delete inst.players[socket.id]; }
     });
 });
+
 function isWall(inst, x, y) { return inst.dungeon[Math.floor(y)]?.[Math.floor(x)] === TILE_WALL; }
 function resolveCollisions(inst, e, radius) {
     if(isWall(inst, e.x + e.vx + (e.vx>0?radius:-radius), e.y)) e.vx = 0;
     if(isWall(inst, e.x, e.y + e.vy + (e.vy>0?radius:-radius))) e.vy = 0;
 }
+
+// CORREÇÃO: A colisão de ataque/skill agora verifica o raio de forma mais robusta e ignora NPCs
 function hitArea(inst, owner, x, y, range, angle, width, dmg, kbForce, isCrit=false) {
     Object.values(inst.mobs).forEach(m => {
+        // Ignora NPCs e recursos, e mobs mortos
+        if (m.npc || m.ai === "resource" || m.hp <= 0) return;
+
+        const mobRadius = m.size / SCALE / 2;
         const dx = m.x - x, dy = m.y - y;
-        const mobRadius = m.size / SCALE; 
-        const dist = Math.hypot(dx, dy) - mobRadius; 
-        if(dist > range) return;
-        if(angle !== null) { let diff = Math.abs(Math.atan2(dy, dx) - angle); if(diff > Math.PI) diff = 2*Math.PI - diff; if(diff > width) return; }
+        const dist = Math.hypot(dx, dy); 
+
+        // 1. Verificação de Alcance Absoluto
+        if(dist > range + mobRadius) return; 
+
+        // 2. Verificação Angular (Cone de Ataque - para ataques em arco)
+        if(angle !== null && width > 0) { 
+            let mobAngle = Math.atan2(dy, dx);
+            let diff = Math.abs(mobAngle - angle); 
+            // Normaliza o ângulo (diferença nunca maior que PI)
+            if(diff > Math.PI) diff = 2 * Math.PI - diff; 
+            if(diff > width) return; 
+        }
+        
+        // 3. Dano e Knockback
         damageMob(inst, m, dmg, owner, dx, dy, kbForce, isCrit);
     });
 }
+
+// CORREÇÃO: O Butcher não estava morrendo. A lógica de dano é universal e deve funcionar para todos os mobs, incluindo bosses.
 function damageMob(inst, m, dmg, owner, kx, ky, kbForce=10, isCrit=false) {
     m.hp -= dmg; m.hitFlash = 5;
     io.to(inst.id).emit("fx", {type:"hit"});
+    
     if(m.ai === "resource") {
         if(m.hp <= 0) {
             delete inst.mobs[m.id];
@@ -737,32 +658,32 @@ function damageMob(inst, m, dmg, owner, kx, ky, kbForce=10, isCrit=false) {
         }
         return;
     }
+    
+    // Knockback
     if(kbForce > m.poise) {
         const dist = Math.hypot(kx, ky) || 1;
         let nvx = (kx/dist)*0.25; let nvy = (ky/dist)*0.25;
-        if(!isWall(inst, m.x+nvx, m.y)) m.vx += nvx; if(!isWall(inst, m.x, m.y+nvy)) m.vy += nvy;
+        if(!isWall(inst, m.x+nvx, m.y)) m.vx += nvx; 
+        if(!isWall(inst, m.x, m.y+nvy)) m.vy += nvy;
         if(m.state === "prep") m.state = "idle";
     }
     
     let color = isCrit ? "#f0f" : "#f33";
-    if (isCrit) io.to(inst.id).emit("fx", {type:"crit_hit", x:m.x, y:m.y-1, val:`CRIT! ${Math.floor(dmg)}`});
-
-    io.to(inst.id).emit("txt", {x:m.x, y:m.y-1, val:Math.floor(dmg), color:color, isCrit:isCrit});
+    let textVal = Math.floor(dmg);
+    if (isCrit) { 
+        textVal = `CRIT! ${textVal}`;
+        io.to(inst.id).emit("fx", {type:"crit_hit", x:m.x, y:m.y-1, val:textVal});
+    }
+    io.to(inst.id).emit("txt", {x:m.x, y:m.y-1, val:textVal, color:color, isCrit:isCrit});
     
     if(m.hp <= 0) {
         delete inst.mobs[m.id];
+        // ... (Lógica de Drop de Gold e Itens)
         if(m.gold > 0) {
             const piles = Math.min(10, Math.ceil(m.gold / 2)); 
             for(let i=0; i<piles; i++) {
-                const iid="g"+(++inst.itemId);
-                const angle = Math.random() * Math.PI * 2;
-                const speed = 0.1 + Math.random() * 0.1; 
-                inst.items[iid] = { 
-                    id:iid, x:m.x, y:m.y, 
-                    vx: Math.cos(angle)*speed, vy: Math.sin(angle)*speed, 
-                    item: { key:"gold", name:"Gold", color:"#fb0", val: Math.ceil(m.gold/piles) },
-                    pickupDelay: Date.now() + 500
-                };
+                const iid="g"+(++inst.itemId); const angle = Math.random() * Math.PI * 2; const speed = 0.1 + Math.random() * 0.1; 
+                inst.items[iid] = { id:iid, x:m.x, y:m.y, vx: Math.cos(angle)*speed, vy: Math.sin(angle)*speed, item: { key:"gold", name:"Gold", color:"#fb0", val: Math.ceil(m.gold/piles) }, pickupDelay: Date.now() + 500 };
             }
         }
         const diff = getDifficulty(inst.level);
@@ -771,6 +692,7 @@ function damageMob(inst, m, dmg, owner, kx, ky, kbForce=10, isCrit=false) {
             io.to(inst.id).emit("txt", {x:m.x, y:m.y, val:"OPEN!", color:"#fb0"});
             return;
         }
+        
         owner.xp += m.xp;
         if(Math.random() < 0.3 * diff.drop) { 
             const iid="i"+(++inst.itemId); 
@@ -780,7 +702,6 @@ function damageMob(inst, m, dmg, owner, kx, ky, kbForce=10, isCrit=false) {
                  droppedItem = generateItem(inst.level, diff.drop, runeKeys[Math.floor(Math.random()*runeKeys.length)]);
                  droppedItem.name = "Rune of " + (droppedItem.key.includes("dano") ? "Might" : "Fortune");
             }
-            
             inst.items[iid] = { id:iid, x:m.x, y:m.y, item: droppedItem, pickupDelay: Date.now()+1000 }; 
         }
         if(owner.xp >= owner.level*100) {
@@ -790,46 +711,76 @@ function damageMob(inst, m, dmg, owner, kx, ky, kbForce=10, isCrit=false) {
         }
     }
 }
-function damagePlayer(p, dmg) {
-    if(p.input.block) {
-        dmg = Math.ceil(dmg * 0.3);
-        p.vx -= Math.sign(p.input.x || p.vx || 0) * 0.5; p.vy -= Math.sign(p.input.y || p.vy || 0) * 0.5;
-    } else { dmg = Math.max(1, dmg - (p.stats.def||0)); }
-    p.hp -= dmg;
+
+// AJUSTE CRÍTICO: Morte e Respawn, e Bloqueio com Mana
+function damagePlayer(p, dmg, sourceX=p.x, sourceY=p.y) {
+    if (p.hp <= 0) return; // Não causa mais dano se já estiver morto
+
+    let finalDmg = dmg;
+    const blockCost = 5; // Custo de mana por bloqueio
+
+    if(p.input.block && p.mp >= blockCost) {
+        // Bloqueio
+        finalDmg = Math.max(1, Math.ceil(dmg * 0.3)); // 70% de redução de dano
+        p.mp -= blockCost;
+        
+        // Repulsão (Spark/Knockback visual)
+        io.to(p.instId).emit("fx", { type: "nova", x: p.x, y: p.y, life: 5 }); 
+        
+        // Calcula o vetor de repulsão (oposto ao ataque)
+        const dx = p.x - sourceX; const dy = p.y - sourceY;
+        const dist = Math.hypot(dx, dy) || 1;
+        const kbForce = 0.4; // Força de repulsão
+        
+        p.vx += (dx/dist) * kbForce; 
+        p.vy += (dy/dist) * kbForce;
+        
+        io.to(p.instId).emit("txt", { x: p.x, y: p.y - 1, val: "BLOCK", color: "#0ff" });
+    } else { 
+        // Dano normal
+        finalDmg = Math.max(1, finalDmg - (p.stats.def||0)); 
+    }
+    
+    p.hp -= finalDmg;
+    io.to(p.instId).emit("txt", { x: p.x, y: p.y, val: Math.floor(finalDmg), color: "#f00" });
+
+    // VERIFICAÇÃO DE MORTE
+    if (p.hp <= 0) {
+        const inst = instances[p.instId];
+        
+        // Penalidade: Perde 10% do ouro
+        const lostGold = Math.floor(p.gold * 0.1);
+        p.gold -= lostGold;
+        
+        // Respawn (Primeira Sala)
+        p.x = inst.rooms[0].cx; p.y = inst.rooms[0].cy;
+        p.hp = p.stats.maxHp * 0.5; // Respawn com 50% de HP
+        p.mp = p.stats.maxMp;
+        p.vx = 0; p.vy = 0; 
+        p.input.block = false;
+
+        io.to(p.instId).emit("txt", { x: p.x, y: p.y, val: `DEATH! Lost ${lostGold}G`, color: "#f00", size: "18px" });
+        io.to(p.instId).emit("fx", { type: "nova", x: p.x, y: p.y, life: 30 });
+    }
 }
 
-// NOVO: Função para marcar tiles como explorados
 function markExplored(p) {
-    const r = p.stats.lightRadius;
-    const px = Math.floor(p.x);
-    const py = Math.floor(p.y);
-    const exploredMap = p.explored;
-
+    const r = p.stats.lightRadius; const px = Math.floor(p.x); const py = Math.floor(p.y);
     for (let dy = -r; dy <= r; dy++) {
         for (let dx = -r; dx <= r; dx++) {
-            const x = px + dx;
-            const y = py + dy;
-
-            if (y >= 0 && y < SIZE && x >= 0 && x < SIZE) {
-                // Checagem radial
-                if (Math.hypot(dx, dy) <= r) {
-                    if (exploredMap[y][x] !== 2) {
-                        exploredMap[y][x] = 1; // 1 = Visto/Iluminado Atualmente
-                    }
-                }
-            }
+            const x = px + dx; const y = py + dy;
+            if (y >= 0 && y < SIZE && x >= 0 && x < SIZE && Math.hypot(dx, dy) <= r && p.explored[y][x] !== 2) p.explored[y][x] = 1; 
         }
     }
 }
 
-
 setInterval(() => {
     Object.values(instances).forEach(inst => {
         Object.values(inst.players).forEach(p => {
-            // Marca o mapa como explorado a cada tick
             markExplored(p);
-            
-            if(p.chatTimer > 0) p.chatTimer--;
+            // CORREÇÃO: Servidor gerencia o tempo do chat para persistência
+            if(p.chatTimer > 0) p.chatTimer--; else if(p.chatMsg) p.chatMsg = "";
+
             if(p.cd.atk>0)p.cd.atk--; if(p.cd.skill>0)p.cd.skill--; if(p.cd.dash>0)p.cd.dash--;
             if(p.hp<p.stats.maxHp) p.hp+=0.05; if(p.mp<p.stats.maxMp) p.mp+=0.1;
             if(p.dashTime > 0) { 
@@ -841,25 +792,31 @@ setInterval(() => {
                 resolveCollisions(inst, p, 0.4); p.x+=p.vx; p.y+=p.vy; p.vx*=0.8; p.vy*=0.8;
             }
             const now = Date.now();
+            let playerCollectedItem = false;
+            
+            // LÓGICA DE COLETA DE ITENS
             for(let k in inst.items) {
                 const it = inst.items[k];
-                if(it.vx || it.vy) { 
-                    it.x+=it.vx; it.y+=it.vy; 
-                    it.vx*=0.8; it.vy*=0.8; 
-                    if(Math.abs(it.vx)<0.01) it.vx=0; 
-                    if(Math.abs(it.vy)<0.01) it.vy=0; 
-                }
+                if(it.vx || it.vy) { it.x+=it.vx; it.y+=it.vy; it.vx*=0.8; it.vy*=0.8; if(Math.abs(it.vx)<0.01) it.vx=0; if(Math.abs(it.vy)<0.01) it.vy=0; }
                 if(Math.hypot(p.x-it.x, p.y-it.y)<0.8) {
                     if(it.pickupDelay && now < it.pickupDelay) continue;
+                    
                     if(it.item.key === "gold") {
                         p.gold += it.item.val; delete inst.items[k];
                         io.to(inst.id).emit("fx", {type:"gold_txt", x:p.x, y:p.y-1, val:`+${it.item.val}`});
                         io.to(inst.id).emit("fx", {type:"gold"});
-                    } else if(p.inventory.length<20) { 
-                        p.inventory.push(it.item); delete inst.items[k]; io.to(inst.id).emit("txt", {x:p.x, y:p.y, val:"ITEM", color:"#ff0"}); 
+                        playerCollectedItem = true; 
+                    } 
+                    // CORREÇÃO APLICADA AQUI: Garante que o item seja adicionado e removido do chão
+                    else if(p.inventory.length<20) { 
+                        p.inventory.push(it.item); 
+                        delete inst.items[k]; // Remove o item do mapa
+                        io.to(inst.id).emit("txt", {x:p.x, y:p.y, val:"ITEM", color:"#ff0"}); 
+                        playerCollectedItem = true; 
                     }
                 }
             }
+            if (playerCollectedItem) sendPlayerUpdate(p);
         });
         Object.values(inst.mobs).forEach(m => {
             if(m.ai === "static" || m.ai === "npc" || m.ai === "resource") return;
@@ -872,13 +829,11 @@ setInterval(() => {
                     if(m.boss) {
                         let dx = Math.sign(t.x-m.x), dy = Math.sign(t.y-m.y);
                         if(m.state === "rage" || m.ai === "boss_melee") {
-                            if(!isWall(inst, m.x+dx*m.spd, m.y)) m.x += dx*m.spd;
-                            if(!isWall(inst, m.x, m.y+dy*m.spd)) m.y += dy*m.spd;
-                            if(dist < (m.size/SCALE)+0.5 && m.timer<=0) { damagePlayer(t, m.dmg); m.timer=20; }
+                            if(!isWall(inst, m.x+dx*m.spd, m.y)) m.x += dx*m.spd; if(!isWall(inst, m.x, m.y+dy*m.spd)) m.y += dy*m.spd;
+                            if(dist < (m.size/SCALE)+0.5 && m.timer<=0) { damagePlayer(t, m.dmg, m.x, m.y); m.timer=20; }
                         } else if (m.ai === "boss_range") {
                             if(dist < 4) { dx = -dx; dy = -dy; } 
-                            if(!isWall(inst, m.x+dx*m.spd, m.y)) m.x += dx*m.spd;
-                            if(!isWall(inst, m.x, m.y+dy*m.spd)) m.y += dy*m.spd;
+                            if(!isWall(inst, m.x+dx*m.spd, m.y)) m.x += dx*m.spd; if(!isWall(inst, m.x, m.y+dy*m.spd)) m.y += dy*m.spd;
                         }
                         if(m.timer > 0) m.timer--;
                         else if(Math.random() < 0.05) {
@@ -894,46 +849,28 @@ setInterval(() => {
                     else if(m.ai === "lunge") {
                         if(m.state === "idle" || m.state === "chase") {
                             let dx = Math.sign(t.x-m.x), dy = Math.sign(t.y-m.y);
-                            if(!isWall(inst, m.x+dx*m.spd, m.y)) m.x += dx*m.spd;
-                            if(!isWall(inst, m.x, m.y+dy*m.spd)) m.y += dy*m.spd;
+                            if(!isWall(inst, m.x+dx*m.spd, m.y)) m.x += dx*m.spd; if(!isWall(inst, m.x, m.y+dy*m.spd)) m.y += dy*m.spd;
                             m.state = "chase";
-                            if(dist < 6 && m.timer <= 0 && Math.random() < 0.08) { 
-                                m.timer = 15; m.state="prep";
-                                io.to(inst.id).emit("fx", {type:"alert", x:m.x, y:m.y});
-                            }
-                        } 
-                        else if (m.state === "prep") {
-                            m.timer--; 
-                            if(m.timer <= 0) { 
-                                const ang = Math.atan2(t.y-m.y, t.x-m.x); 
-                                m.vx = Math.cos(ang) * 0.9; m.vy = Math.sin(ang) * 0.9; 
-                                m.state = "attack"; m.timer = 15; 
-                            }
-                        } 
-                        else if (m.state === "attack") {
-                            if(!isWall(inst, m.x+m.vx, m.y)) m.x += m.vx;
-                            if(!isWall(inst, m.x, m.y+m.vy)) m.y += m.vy;
-                            m.timer--; 
-                            if(dist < 1) { damagePlayer(t, m.dmg); m.state = "cooldown"; m.timer = 40; }
+                            if(dist < 6 && m.timer <= 0 && Math.random() < 0.08) { m.timer = 15; m.state="prep"; io.to(inst.id).emit("fx", {type:"alert", x:m.x, y:m.y}); }
+                        } else if (m.state === "prep") {
+                            m.timer--; if(m.timer <= 0) { const ang = Math.atan2(t.y-m.y, t.x-m.x); m.vx = Math.cos(ang) * 0.9; m.vy = Math.sin(ang) * 0.9; m.state = "attack"; m.timer = 15; }
+                        } else if (m.state === "attack") {
+                            if(!isWall(inst, m.x+m.vx, m.y)) m.x += m.vx; if(!isWall(inst, m.x, m.y+m.vy)) m.y += m.vy;
+                            m.timer--; if(dist < 1) { damagePlayer(t, m.dmg, m.x, m.y); m.state = "cooldown"; m.timer = 40; }
                             if(m.timer <= 0) { m.state = "cooldown"; m.timer = 25; }
-                        } 
-                        else if (m.state === "cooldown") { 
-                            m.timer--; if(m.timer <= 0) m.state = "idle"; 
-                        }
+                        } else if (m.state === "cooldown") { m.timer--; if(m.timer <= 0) m.state = "idle"; }
                     } else if(m.ai === "range") {
                         let dx=0, dy=0;
                         if(dist > m.range) { dx=Math.sign(t.x-m.x); dy=Math.sign(t.y-m.y); } else if(dist<3) { dx=-Math.sign(t.x-m.x); dy=-Math.sign(t.y-m.y); }
-                        if(!isWall(inst, m.x+dx*m.spd, m.y)) m.x += dx*m.spd;
-                        if(!isWall(inst, m.x, m.y+dy*m.spd)) m.y += dy*m.spd;
+                        if(!isWall(inst, m.x+dx*m.spd, m.y)) m.x += dx*m.spd; if(!isWall(inst, m.x, m.y+dy*m.spd)) m.y += dy*m.spd;
                         if(Math.random()<0.02 && dist < m.range + 1) {
                             const ang = Math.atan2(t.y-m.y, t.x-m.x);
                             inst.projectiles.push({x:m.x, y:m.y, vx:Math.cos(ang)*0.25, vy:Math.sin(ang)*0.25, life:40, dmg:m.dmg, type:m.proj||"arrow", owner:"mob", angle:ang});
                         }
                     } else if(m.ai === "chase") {
                         let dx = Math.sign(t.x-m.x), dy = Math.sign(t.y-m.y);
-                        if(!isWall(inst, m.x+dx*m.spd, m.y)) m.x += dx*m.spd;
-                        if(!isWall(inst, m.x, m.y+dy*m.spd)) m.y += dy*m.spd;
-                        if(dist < 1 && Math.random()<0.1) { damagePlayer(t, m.dmg); }
+                        if(!isWall(inst, m.x+dx*m.spd, m.y)) m.x += dx*m.spd; if(!isWall(inst, m.x, m.y+dy*m.spd)) m.y += dy*m.spd;
+                        if(dist < 1 && Math.random()<0.1) { damagePlayer(t, m.dmg, m.x, m.y); }
                     }
                 }
             }
@@ -943,66 +880,63 @@ setInterval(() => {
         for(let i=inst.projectiles.length-1; i>=0; i--) {
             let pr = inst.projectiles[i];
             pr.x += pr.vx; pr.y += pr.vy; pr.life--;
+            
+            const isExplosive = pr.type === "meteor" || pr.type === "fireball" || pr.type === "frostball";
+
+            // Verificação de colisão com a parede ou fim da vida do projétil
             if(isWall(inst, pr.x, pr.y) || pr.life<=0) { 
-                if(pr.type === "meteor") { 
-                    io.to(inst.id).emit("fx", { type: "nova", x: pr.x, y: pr.y }); 
-                    hitArea(inst, inst.players[pr.owner]||{id:"mob"}, pr.x, pr.y, 3.0, null, 0, pr.dmg, 30, pr.isCrit); 
+                if(isExplosive) { 
+                     io.to(inst.id).emit("fx", { type: "nova", x: pr.x, y: pr.y, life: 10 }); 
+                     hitArea(inst, inst.players[pr.owner]||{id:"mob"}, pr.x, pr.y, 1.5, null, 0, pr.dmg * 0.5, 10, pr.isCrit); 
                 }
                 inst.projectiles.splice(i,1); continue; 
             }
+            
             let hit = false;
+            // Dano em Mobs
             if(pr.owner !== "mob") {
                 for(let k in inst.mobs) {
                     let m = inst.mobs[k];
-                    if(m.npc || m.ai === "resource") continue; // Projetil não atinge NPC/Recurso
+                    // Projéteis não devem atingir recursos ou NPCs
+                    if(m.npc || m.ai === "resource" || m.hp <= 0) continue; 
                     if(Math.hypot(m.x-pr.x, pr.y-pr.y) < (m.size/SCALE/2 + 0.3)) { 
                         damageMob(inst, m, pr.dmg, inst.players[pr.owner], pr.vx, pr.vy, 5, pr.isCrit); 
-                        hit=true; break; 
+                        hit=true; 
+                        break; 
                     }
                 }
-            } else {
-                for(let k in inst.players) {
-                    let p = inst.players[k];
-                    if(Math.hypot(p.x-pr.x, p.y-pr.y) < 0.5) { damagePlayer(p, pr.dmg); hit=true; break; }
+            } 
+            // Dano em Jogadores (Mobs)
+            else {
+                for(let k in inst.players) { 
+                    let p = inst.players[k]; 
+                    if(Math.hypot(p.x-pr.x, p.y-pr.y) < 0.5) { 
+                        damagePlayer(p, pr.dmg, pr.x, pr.y); 
+                        hit=true; 
+                        break; 
+                    } 
                 }
             }
+
             if(hit) {
-                 if(pr.type === "meteor") { 
-                    io.to(inst.id).emit("fx", { type: "nova", x: pr.x, y: pr.y }); 
-                    hitArea(inst, inst.players[pr.owner]||{id:"mob"}, pr.x, pr.y, 3.0, null, 0, pr.dmg, 30, pr.isCrit); 
-                }
+                 // Se atingir alvo, causa explosão/dano secundário (somente projéteis explosivos)
+                 if(isExplosive) { 
+                     io.to(inst.id).emit("fx", { type: "nova", x: pr.x, y: pr.y, life: 10 }); 
+                     hitArea(inst, inst.players[pr.owner]||{id:"mob"}, pr.x, pr.y, 1.5, null, 0, pr.dmg * 0.5, 10, pr.isCrit); 
+                 }
                 inst.projectiles.splice(i,1);
             }
         }
+        
         if(Object.values(inst.mobs).filter(m=>m.ai!=="static" && m.ai!=="npc" && m.ai!=="resource").length===0) {
             inst.level++; generateDungeon(inst);
             Object.values(inst.players).forEach(p=>{ 
                 p.x=inst.rooms[0].cx; p.y=inst.rooms[0].cy; 
-                // Reinicia o explored map no novo andar
                 p.explored = Array.from({length: SIZE}, () => Array(SIZE).fill(0));
             });
         }
-        
-        // ENVIA explored map e lightRadius por jogador
-        Object.values(inst.players).forEach(p => {
-             const playerState = { 
-                 pl: { [p.id]: p }, 
-                 mb: inst.mobs, 
-                 it: inst.items, 
-                 pr: inst.projectiles, 
-                 props: inst.props, 
-                 lvl: inst.level, 
-                 map: inst.dungeon, 
-                 theme: inst.theme,
-                 explored: p.explored, 
-                 lightRadius: p.stats.lightRadius 
-             };
-             // CORREÇÃO: Usa io.to(p.id) para enviar ao jogador correto
-             io.to(p.id).emit("u", playerState);
-        });
-
+        Object.values(inst.players).forEach(p => sendPlayerUpdate(p));
     });
 }, TICK);
 
-// CHAMA A FUNÇÃO DE INICIALIZAÇÃO NO FINAL DO ARQUIVO
 initializeServer();
