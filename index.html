@@ -156,7 +156,7 @@ h1 { text-shadow: 2px 2px #f00; color: #d00; }
     right: 55px; 
 }
 
-/* HUD MENU BUTTONS (INV/CHR) - Ajuste final de altura */
+/* HUD MENU BUTTONS (INV/CHR/CFT) */
 #mobile-menu-buttons {
     position: absolute; 
     bottom: 110px; 
@@ -206,7 +206,7 @@ h1 { text-shadow: 2px 2px #f00; color: #d00; }
 /* MEDIA QUERIES PARA RESPONSIVIDADE */
 
 /* Mobile (Qualquer Orientação) - CORRIGIDO: Esconde HUD de PC */
-@media (max-width: 768px) {
+@media (max-width: 1024px) { 
     .hud-bottom { display: none !important; } /* Esconde HUD de PC */
     #hud-gold { display: none !important; } /* Esconde HUD de Gold grande */
 }
@@ -221,7 +221,7 @@ h1 { text-shadow: 2px 2px #f00; color: #d00; }
     }
 }
 
-/* NOVO: Botões de Ação UI (Aparecem apenas com INV/CHR abertos) */
+/* NOVO: Botões de Ação UI (Aparecem apenas com INV/CHR/CFT abertos) */
 .ui-action-buttons {
     position: absolute;
     bottom: 50px;
@@ -301,7 +301,7 @@ h1 { text-shadow: 2px 2px #f00; color: #d00; }
             <div class="skill-btn">ATK</div>
             <div class="skill-btn" id="skill-1"><span class="key-hint">E</span>SKL</div>
             <div class="skill-btn" id="skill-dash"><span class="key-hint">SPC</span>DSH</div>
-            <div class="skill-btn" id="hud-potion"><span class="key-hint">Q</span>POT</div>
+            <div class="skill-btn" id="hud-potion"><span class="key-hint">E</span>POT</div>
             <div class="skill-btn"><span class="key-hint">I</span>INV</div>
             <div class="skill-btn"><span class="key-hint">K</span>CFT</div>
             <div class="skill-btn"><span class="key-hint">C</span>CHR</div>
@@ -364,6 +364,7 @@ h1 { text-shadow: 2px 2px #f00; color: #d00; }
 <div id="mobile-menu-buttons">
     <div id="btn-inv-mobile" class="skill-btn" data-action="toggle_inv">INV</div>
     <div id="btn-char-mobile" class="skill-btn" data-action="toggle_char">CHR</div>
+    <div id="btn-craft-mobile" class="skill-btn" data-action="toggle_craft">CFT</div>
 </div>
 
 <div id="menu">

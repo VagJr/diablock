@@ -91,7 +91,7 @@ socket.on("txt", d => {
 });
 socket.on("fx", d => {
     if (d.type === "slash") { effects.push({ type: "slash", x: d.x, y: d.y, angle: d.angle, life: 10 }); playSfx("atk"); }
-    else if (d.type === "spin") { effects.push({ type: "spin", x: d.x, y: d.y, life: 20 }); playSfx("atk"); }
+    else if (d.type === "spin") { effects.push({ type: "spin", x: d.x, y: d.y, angle: d.angle || 0, life: 20 }); playSfx("atk"); }
     else if (d.type === "nova") effects.push({ type: "nova", x: d.x, y: d.y, life: d.life || 20 });
     else if (d.type === "dash") playSfx("dash");
     else if (d.type === "gold_txt") { texts.push({ val: d.val, x: d.x, y: d.y, color: "#fb0", life: 75, vy: -0.3, size: "10px" }); playSfx("gold"); }
@@ -189,15 +189,22 @@ function getAttackAngle() {
         return closestAngle; // Mira no inimigo mais próximo
     }
     
-    // 3. Fallback: Mira na direção do movimento (Joystick/Gamepad)
+    // 3. Fallback: Mira na direção do movimento (Joystick/Gamepad/Teclado)
     const { dx, dy } = getDirectionalInput();
     const isMoving = (Math.abs(dx) > 0.1) || (Math.abs(dy) > 0.1);
     
     if (isMoving) { 
         return Math.atan2(dy, dx); 
     }
-    // Se não estiver movendo e sem inimigos, usa a direção atual do jogador, ou 0 (direita)
-    return me ? Math.atan2(me.vy || 0, me.vx || 1) : 0;
+    
+    // Se não estiver movendo e sem inimigos:
+    // CORREÇÃO FINAL PARA SKILL: Usa a direção que o jogador está olhando (se existir vx/vy) ou a direção padrão (direita=0)
+    // Isso resolve o bug do projétil sumir se o jogador parou de se mover mas ainda tem inércia (vx/vy).
+    if (me && (me.vx !== 0 || me.vy !== 0)) {
+        return Math.atan2(me.vy, me.vx);
+    }
+
+    return 0; // Direção padrão: Direita
 }
 
 const chatInput = document.getElementById("chat-input");
@@ -240,7 +247,7 @@ window.onkeydown = e => {
     if(keys.hasOwnProperty(k)){ keys[k]=true; sendInput(); }
     if(k==="i") uiState.inv = !uiState.inv; 
     if(k==="c") uiState.char = !uiState.char; 
-    if(k==="k") uiState.craft = !uiState.craft;
+    if(k==="k") uiState.craft = !uiState.craft; // Tecla K para Crafting
     if(k==="escape") { 
         if (uiState.chat) {
             uiState.chat = false;
@@ -283,7 +290,7 @@ window.onmousedown = e => {
 
 
 // ----------------------------------------------------
-// NOVO: IMPLEMENTAÇÃO DO JOYSTICK VIRTUAL E TOUCH HANDLERS
+// IMPLEMENTAÇÃO DO JOYSTICK VIRTUAL E TOUCH HANDLERS
 // ----------------------------------------------------
 
 // Objeto de estado do Joystick
@@ -349,8 +356,9 @@ const handleTouchStart = (e) => {
             else if (action === "potion") socket.emit("potion");
             processed = true;
         }
-        else if (target.closest('#btn-inv-mobile')) { uiState.inv = !uiState.inv; uiState.char = false; updateUI(); processed = true; }
-        else if (target.closest('#btn-char-mobile')) { uiState.char = !uiState.char; uiState.inv = false; updateUI(); processed = true; }
+        else if (target.closest('#btn-inv-mobile')) { uiState.inv = !uiState.inv; uiState.char = false; uiState.craft = false; updateUI(); processed = true; } // Fecha Crafting
+        else if (target.closest('#btn-char-mobile')) { uiState.char = !uiState.char; uiState.inv = false; uiState.craft = false; updateUI(); processed = true; } // Fecha Crafting
+        else if (target.closest('#btn-craft-mobile')) { uiState.craft = !uiState.craft; uiState.inv = false; uiState.char = false; updateUI(); processed = true; } // NOVO: Abre/fecha Crafting
         
         if (processed) e.preventDefault();
     }
@@ -421,45 +429,150 @@ document.addEventListener('touchend', handleTouchEnd);
 document.addEventListener('touchcancel', handleTouchEnd);
 
 
-// ... GAMEPAD NAVIGATION 
+// ----------------------------------------------------
+// GAMEPAD NAVIGATION E AÇÕES (CORRIGIDO E EXPANDIDO)
+// ----------------------------------------------------
 let lastNavTimestamp = 0; const NAV_DELAY = 150;
 function handleGamepadNavigation(direction) {
     if (Date.now() - lastNavTimestamp < NAV_DELAY) return;
-    let elements = []; let cols = 8;
-    if (uiState.inv) { elements = Array.from(document.querySelectorAll('#inv-grid .slot')); cols = 8; } 
+    
+    // Ações de navegação em painéis abertos
+    let elements = []; 
+    let cols = 8;
+    let maxIndex = 0;
+    
+    if (uiState.inv) { 
+        elements = Array.from(document.querySelectorAll('#inv-grid .slot')); 
+        cols = 8; 
+        focusArea = 'inventory';
+    } 
     else if (uiState.char) {
-        const eq_slots = Array.from(document.querySelectorAll('.equip-slots .slot'));
-        const stat_btns = Array.from(document.querySelectorAll('.stat-row .plus-btn'));
-        elements = eq_slots.concat(stat_btns); cols = 5;
-    } else { return; }
-    if (elements.length === 0) return;
-    let newIndex = focusIndex; const maxIndex = elements.length - 1;
-    if (uiState.inv) {
-        if (direction === 'left') newIndex--; else if (direction === 'right') newIndex++; else if (direction === 'up') newIndex -= cols; else if (direction === 'down') newIndex += cols;
-        if (newIndex < 0) newIndex = 0; if (newIndex > maxIndex) newIndex = maxIndex;
-    } else if (uiState.char) {
-        if (direction === 'left' && newIndex > 0) newIndex--; else if (direction === 'right' && newIndex < maxIndex) newIndex++;
-        if (direction === 'down' && newIndex < 5) newIndex = 5; if (direction === 'up' && newIndex >= 5) newIndex = 4;
-        newIndex = Math.max(0, Math.min(newIndex, maxIndex));
+        const eq_slots = Array.from(document.querySelectorAll('.equip-slots .slot')); // Índices 0-4
+        const stat_btns = Array.from(document.querySelectorAll('.stat-row .plus-btn')); // Índices 5-7
+        elements = eq_slots.concat(stat_btns); 
+        cols = 5; 
+        focusArea = 'equipment';
+    } 
+    else if (uiState.craft) { // NOVO: Navegação no Crafting
+        elements = Array.from(document.querySelectorAll('#craft-list .craft-item'));
+        cols = 1;
+        focusArea = 'craft';
+        
+        // Navegação vertical simples na lista de receitas
+        let newIndex = focusIndex;
+        if (direction === 'up') newIndex = Math.max(0, focusIndex - 1);
+        else if (direction === 'down') newIndex = Math.min(elements.length - 1, focusIndex + 1);
+        else { 
+             newIndex = focusIndex;
+        }
+        
+        focusIndex = newIndex;
+        updateUI();
+        lastNavTimestamp = Date.now();
+        return; 
     }
-    focusIndex = newIndex; updateUI(); lastNavTimestamp = Date.now();
+    else { return; } // Nenhum menu aberto
+
+    maxIndex = elements.length - 1;
+    if (elements.length === 0) { 
+        focusIndex = 0; 
+        updateUI();
+        lastNavTimestamp = Date.now();
+        return;
+    }
+    
+    let newIndex = focusIndex; 
+
+    if (uiState.inv) {
+        // Navegação em grid (Inventário)
+        if (direction === 'left') newIndex--; 
+        else if (direction === 'right') newIndex++; 
+        else if (direction === 'up') newIndex -= cols; 
+        else if (direction === 'down') newIndex += cols;
+    } else if (uiState.char) {
+        // Navegação Mista (Equipamento e Stats)
+        
+        // Equipamento: Índices 0 a 4 (horizontal)
+        if (focusIndex <= 4) {
+            if (direction === 'left') newIndex = Math.max(0, newIndex - 1);
+            else if (direction === 'right') newIndex = Math.min(4, newIndex + 1);
+            else if (direction === 'down') newIndex = 5; // Salta para o primeiro stat (STR)
+        }
+        
+        // Stats: Índices 5 a 7 (vertical)
+        else if (focusIndex >= 5 && focusIndex <= 7) {
+            if (direction === 'up') newIndex = (newIndex === 5) ? 4 : newIndex - 1; 
+            else if (direction === 'down') newIndex = Math.min(7, newIndex + 1);
+        }
+    }
+    
+    newIndex = Math.max(0, Math.min(newIndex, maxIndex));
+    focusIndex = newIndex; 
+    
+    updateUI(); 
+    lastNavTimestamp = Date.now();
 }
+
 function handleGamepadAction() {
-    if (!me) return;
+    if (!me || !(uiState.inv || uiState.char || uiState.shop || uiState.craft)) return;
+    
     if (uiState.char) {
-        const eq_slots = Array.from(document.querySelectorAll('.equip-slots .slot'));
-        const stat_btns = Array.from(document.querySelectorAll('.stat-row .plus-btn'));
-        const elements = eq_slots.concat(stat_btns); const focusedElement = elements[focusIndex];
-        if (focusedElement) {
-            if (focusedElement.classList.contains('plus-btn')) focusedElement.click(); 
-            else if (focusIndex >= 0 && focusIndex <= 4) { const slotNames = ["head", "body", "hand", "rune", "potion"]; const slot = slotNames[focusIndex]; if (me.equipment[slot]) socket.emit("unequip", slot); }
+        // Equipamento e Stats
+        const eq_slots = ["head", "body", "hand", "rune", "potion"];
+        
+        if (focusIndex >= 0 && focusIndex <= 4) { 
+            // Slots de equipamento (0 a 4)
+            const slotName = eq_slots[focusIndex];
+            // Ação primária: Unequip
+            if (me.equipment[slotName]) {
+                socket.emit("unequip", slotName);
+            }
+        } else if (focusIndex >= 5 && focusIndex <= 7) {
+            // Botões de Atributo (5 a 7)
+            const statNames = ['str', 'dex', 'int'];
+            const stat = statNames[focusIndex - 5];
+            // Ação primária: Add Stat
+            if (me.pts > 0) {
+                socket.emit("add_stat", stat);
+            }
         }
     } else if (uiState.inv && me.inventory.length > 0) {
+        // Inventário
         const item = me.inventory[focusIndex];
-        if (item) { if (item.slot && item.type !== "material" && item.type !== "consumable") socket.emit("equip", focusIndex); else if (item.key === "potion") socket.emit("potion"); }
+        if (item) { 
+            if (item.slot && item.type !== "material" && item.type !== "consumable") {
+                // Ação primária: Equipar
+                socket.emit("equip", focusIndex);
+            } else if (item.key === "potion") {
+                // Ação primária: Usar Poção
+                socket.emit("potion"); 
+            }
+        }
+    } else if (uiState.craft && recipes.length > 0) { // NOVO: Ação Crafting
+        const recipe = recipes[focusIndex];
+        if (recipe) {
+            socket.emit("craft", {action:"create", recipeIdx: focusIndex});
+        }
     }
+    updateUI();
 }
-function handleGamepadSecondaryAction() { if (!me) return; if (uiState.inv && me.inventory.length > 0 && me.inventory[focusIndex]) socket.emit("drop", focusIndex); }
+
+function handleGamepadSecondaryAction() { 
+    if (!me || !(uiState.inv || uiState.char || uiState.shop || uiState.craft)) return;
+    
+    if (uiState.inv && me.inventory.length > 0) {
+        // Ação secundária: Dropar (Apenas no Inventário)
+        const item = me.inventory[focusIndex];
+        if (item) {
+            socket.emit("drop", focusIndex);
+            if (focusIndex > 0) focusIndex = Math.max(0, focusIndex - 1);
+        }
+    } else if (uiState.char || uiState.craft || uiState.shop) {
+        // Ação secundária: Cancelar/Fechar Menu (para consistência)
+        uiState.inv = false; uiState.char = false; uiState.shop = false; uiState.craft = false;
+    }
+    updateUI(); 
+}
 
 let lastButtons = {};
 function handleGamepadInput() {
@@ -481,51 +594,73 @@ function handleGamepadInput() {
     sendInput(); 
     
     const processButton = (buttonIndex, action) => {
-        const button = gamepad.buttons[buttonIndex]; const isPressed = button?.pressed; const wasPressed = lastButtons[buttonIndex] || false;
+        const button = gamepad.buttons[buttonIndex]; 
+        const isPressed = button?.pressed; 
+        const wasPressed = lastButtons[buttonIndex] || false;
+        
+        // Lógica de Toggle para Botões de Block/Defesa (Botão 2: X/Square)
+        if (action === 'block') {
+            keys.q = isPressed; // keys.q controla o bloco no sendInput
+        }
+        
         if (isPressed && !wasPressed) {
             if (AudioCtrl.ctx.state === 'suspended') AudioCtrl.ctx.resume();
+            
+            // Lógica de Menus (A/X para Ação Primária, B/Circle para Ação Secundária)
             if (uiState.inv || uiState.char || uiState.shop || uiState.craft) {
-                if (action === 'attack') handleGamepadAction(); if (action === 'skill') handleGamepadSecondaryAction();
-            } else {
-                // Combate
+                if (action === 'attack') handleGamepadAction(); // A/Cross (Equip/Add Stat/Craft)
+                if (action === 'skill') handleGamepadSecondaryAction(); // B/Circle (Drop/Cancel)
+            } 
+            // Lógica de Combate
+            else {
                 const ang = getAttackAngle(); 
                 if (action === 'attack') socket.emit("attack", ang); 
                 if (action === 'skill') socket.emit("skill", {idx:1, angle:ang});
                 if (action === 'dash') socket.emit("dash", getDashAngle()); 
-                if (action === 'potion') socket.emit("potion"); // Botão Mapped do Gamepad para Poção
+                if (action === 'potion') socket.emit("potion"); 
             }
+            
+            // Lógica de Abertura de Menus
             if (action === 'inventory') { uiState.inv = !uiState.inv; uiState.char = false; uiState.shop = false; uiState.craft = false; }
             if (action === 'character') { uiState.char = !uiState.char; uiState.inv = false; uiState.shop = false; uiState.craft = false; }
-            if (action === 'inventory' || action === 'character') { focusIndex = 0; focusArea = (uiState.inv || uiState.char || uiState.shop || uiState.craft) ? (uiState.inv ? 'inventory' : uiState.char ? 'equipment' : 'none') : 'none'; }
+            if (action === 'craft') { uiState.craft = !uiState.craft; uiState.inv = false; uiState.char = false; uiState.shop = false; } // Crafting com RB/R1
+            
+            if (action === 'inventory' || action === 'character' || action === 'craft') { focusIndex = 0; focusArea = (uiState.inv ? 'inventory' : uiState.char ? 'equipment' : uiState.craft ? 'craft' : 'none'); }
+            
             updateUI();
         }
         lastButtons[buttonIndex] = isPressed;
     };
     
-    // Mapeamento Botões Gamepad (Ex: Xbox: 0=A, 1=B, 3=Y, 4=LB)
+    // Mapeamento Botões Gamepad (Xbox/PS)
     processButton(0, 'attack'); 
     processButton(1, 'skill'); 
+    processButton(2, 'block'); 
     processButton(3, 'dash'); 
     processButton(4, 'potion'); 
+    processButton(5, 'craft'); // Botão 5 (RB/R1) para Crafting
     processButton(9, 'inventory'); // Start/Menu button for Inventory
     processButton(8, 'character'); // Back/View button for Character
     
     // Navegação em menus (setas digitais e analógicas)
     if (uiState.inv || uiState.char || uiState.shop || uiState.craft) {
+        // D-pad
         if (gamepad.buttons[12]?.pressed && !lastButtons[12]) handleGamepadNavigation('up');
         if (gamepad.buttons[13]?.pressed && !lastButtons[13]) handleGamepadNavigation('down');
         if (gamepad.buttons[14]?.pressed && !lastButtons[14]) handleGamepadNavigation('left');
         if (gamepad.buttons[15]?.pressed && !lastButtons[15]) handleGamepadNavigation('right');
         
-        // Navegação Analógica com Delay
+        // Sticks (Left Stick)
         if (Math.abs(stickY) > deadzone && Math.abs(stickY) > Math.abs(stickX)) {
-             if (stickY < 0 && !lastNavTimestamp || stickY < 0 && Date.now() - lastNavTimestamp > NAV_DELAY) { handleGamepadNavigation('up'); }
-             else if (stickY > 0 && !lastNavTimestamp || stickY > 0 && Date.now() - lastNavTimestamp > NAV_DELAY) { handleGamepadNavigation('down'); }
+             if (stickY < 0 && (!lastNavTimestamp || Date.now() - lastNavTimestamp > NAV_DELAY)) { handleGamepadNavigation('up'); }
+             else if (stickY > 0 && (!lastNavTimestamp || Date.now() - lastNavTimestamp > NAV_DELAY)) { handleGamepadNavigation('down'); }
         } else if (Math.abs(stickX) > deadzone && Math.abs(stickX) > Math.abs(stickY)) {
-             if (stickX < 0 && !lastNavTimestamp || stickX < 0 && Date.now() - lastNavTimestamp > NAV_DELAY) { handleGamepadNavigation('left'); }
-             else if (stickX > 0 && !lastNavTimestamp || stickX > 0 && Date.now() - lastNavTimestamp > NAV_DELAY) { handleGamepadNavigation('right'); }
+             if (stickX < 0 && (!lastNavTimestamp || Date.now() - lastNavTimestamp > NAV_DELAY)) { handleGamepadNavigation('left'); }
+             else if (stickX > 0 && (!lastNavTimestamp || Date.now() - lastNavTimestamp > NAV_DELAY)) { handleGamepadNavigation('right'); }
         }
-        lastButtons[12] = gamepad.buttons[12]?.pressed; lastButtons[13] = gamepad.buttons[13]?.pressed; lastButtons[14] = gamepad.buttons[14]?.pressed; lastButtons[15] = gamepad.buttons[15]?.pressed;
+        
+        lastButtons[12] = gamepad.buttons[12]?.pressed; lastButtons[13] = gamepad.buttons[13]?.pressed; 
+        lastButtons[14] = gamepad.buttons[14]?.pressed; lastButtons[15] = gamepad.buttons[15]?.pressed;
     }
 }
 
@@ -573,39 +708,73 @@ function updateUI() {
     document.getElementById("shop-panel").style.display = uiState.shop ? "block" : "none";
     document.getElementById("craft-panel").style.display = uiState.craft ? "block" : "none";
 
+    // LÓGICA DE FOCO E TOOLTIP PARA EQUIPAMENTO E STATS
     const eq_slots = ["head","body","hand","rune","potion"];
     eq_slots.forEach((slot, index) => {
-        const el = document.getElementById("eq-"+slot); if (!el) return; el.innerHTML = ""; el.style.outline = 'none'; el.style.outlineOffset = '0px';
-        if (uiState.char && focusArea === 'equipment' && focusIndex === index) { el.style.outline = '2px solid yellow'; el.style.outlineOffset = '2px'; if (me.equipment[slot]) showTooltip(me.equipment[slot]); else hideTooltip(); }
+        const el = document.getElementById("eq-"+slot); if (!el) return; 
+        el.innerHTML = ""; el.style.outline = 'none'; el.style.outlineOffset = '0px';
+        
+        // Foco
+        if (uiState.char && focusArea === 'equipment' && focusIndex === index) { 
+            el.style.outline = '2px solid yellow'; el.style.outlineOffset = '2px'; 
+            if (me.equipment[slot]) {
+                showTooltip(me.equipment[slot]); 
+                document.getElementById('ui-btn-equip').innerText = 'DESEQUIPAR (A)';
+            } else { 
+                hideTooltip(); 
+                document.getElementById('ui-btn-equip').innerText = 'ESPAÇO VAZIO (A)'; 
+            }
+            document.getElementById('ui-btn-drop').innerText = 'CANCELAR (B)';
+        }
+        
+        // Item Visual e Interação
         if(me.equipment[slot]) {
             const it = me.equipment[slot];
             el.style.borderColor = it.color; el.innerHTML = getIcon(it.key); el.style.boxShadow = it.rarity === "legendary" ? "0 0 5px #f0f" : "none";
             el.onmouseover = () => showTooltip(it); el.onmouseout = hideTooltip; el.onclick = () => socket.emit("unequip", slot);
         } else { 
             el.style.borderColor = "#0f0"; el.style.boxShadow = "none"; el.onclick=null; 
-            if (uiState.char && focusArea === 'equipment' && focusIndex === index) { hideTooltip(); document.getElementById('ui-btn-equip').innerText = 'ESPAÇO VAZIO (A)'; }
-        }
-    });
-    const stat_btns = ['str', 'dex', 'int'];
-    stat_btns.forEach((stat, index) => {
-        const btn = document.getElementById("btn-"+stat); const focusIndexOffset = eq_slots.length; 
-        btn.style.outline = 'none'; btn.style.outlineOffset = '0px';
-        if (uiState.char && focusArea === 'equipment' && focusIndex === index + focusIndexOffset) {
-             btn.style.outline = '2px solid yellow'; btn.style.outlineOffset = '2px';
-             if (me.pts > 0) document.getElementById('ui-btn-equip').innerText = `ADICIONAR ${stat.toUpperCase()} (A)`; else document.getElementById('ui-btn-equip').innerText = `PONTOS ESGOTADOS`;
         }
     });
     
+    // LÓGICA DE FOCO PARA STATS
+    const stat_btns = ['str', 'dex', 'int'];
+    const focusIndexOffset = eq_slots.length; // 5
+    stat_btns.forEach((stat, index) => {
+        const btn = document.getElementById("btn-"+stat);
+        const globalIndex = index + focusIndexOffset;
+        btn.style.outline = 'none'; btn.style.outlineOffset = '0px';
+        
+        if (uiState.char && focusArea === 'equipment' && focusIndex === globalIndex) {
+             btn.style.outline = '2px solid yellow'; btn.style.outlineOffset = '2px';
+             hideTooltip();
+             if (me.pts > 0) document.getElementById('ui-btn-equip').innerText = `ADICIONAR ${stat.toUpperCase()} (A)`; 
+             else document.getElementById('ui-btn-equip').innerText = `PONTOS ESGOTADOS`;
+             document.getElementById('ui-btn-drop').innerText = 'CANCELAR (B)';
+        }
+    });
+    
+    // LÓGICA DE FOCO E TOOLTIP PARA INVENTÁRIO
     const ig = document.getElementById("inv-grid"); ig.innerHTML = "";
     if (uiState.inv && focusArea === 'inventory' && me.inventory.length > 0 && focusIndex >= me.inventory.length) focusIndex = Math.max(0, me.inventory.length - 1); else if (uiState.inv && me.inventory.length === 0) focusIndex = 0;
 
     me.inventory.forEach((it, idx) => {
         const d = document.createElement("div"); d.className = "slot"; d.style.borderColor = it.color; d.style.outline = 'none'; d.style.outlineOffset = '0px';
+        
+        // Foco
         if (uiState.inv && focusArea === 'inventory' && focusIndex === idx) {
              d.style.outline = '2px solid yellow'; d.style.outlineOffset = '2px'; showTooltip(it); 
-             if (it.slot && it.type !== "material" && it.type !== "consumable") document.getElementById('ui-btn-equip').innerText = 'EQUIPAR (A)'; else if (it.key === 'potion') document.getElementById('ui-btn-equip').innerText = 'USAR POÇÃO (A)'; else document.getElementById('ui-btn-equip').innerText = 'NÃO EQUIPÁVEL (A)';
+             if (it.slot && it.type !== "material" && it.type !== "consumable") {
+                document.getElementById('ui-btn-equip').innerText = 'EQUIPAR (A)';
+             } else if (it.key === 'potion') {
+                 document.getElementById('ui-btn-equip').innerText = 'USAR POÇÃO (A)';
+             } else { 
+                document.getElementById('ui-btn-equip').innerText = 'NÃO EQUIPÁVEL (A)';
+             }
              document.getElementById('ui-btn-drop').innerText = 'DROPAR (B)';
         } 
+        
+        // Item Visual
         if(it.rarity === "legendary") d.style.boxShadow = "0 0 4px " + it.color;
         d.innerHTML = getIcon(it.key);
         if(it.sockets && it.sockets.length > 0) {
@@ -618,9 +787,33 @@ function updateUI() {
         d.onmouseover = () => showTooltip(it); d.onmouseout = hideTooltip; d.oncontextmenu = (e) => { e.preventDefault(); if(it.slot) socket.emit("equip", idx); else socket.emit("drop", idx); };
         ig.appendChild(d);
     });
+
+    // LÓGICA DE FOCO E TOOLTIP PARA CRAFTING
+    if (uiState.craft) {
+        const craftList = document.getElementById("craft-list");
+        const recipeElements = Array.from(craftList.children);
+        
+        // Garante que o focusIndex não exceda o número de receitas
+        if (focusIndex >= recipes.length) focusIndex = Math.max(0, recipes.length - 1);
+        
+        recipeElements.forEach((d, idx) => {
+            d.style.outline = 'none';
+            const recipe = recipes[idx];
+            if (focusArea === 'craft' && focusIndex === idx) {
+                 d.style.outline = '2px solid yellow'; 
+                 document.getElementById('ui-btn-equip').innerText = `CRAFT ${recipe.res.toUpperCase()} (A)`;
+                 document.getElementById('ui-btn-drop').innerText = 'CANCELAR (B)';
+            }
+        });
+    }
     
-    if (uiState.inv && (me.inventory.length === 0 || focusArea !== 'inventory')) { hideTooltip(); document.getElementById('ui-btn-equip').innerText = 'INVENTÁRIO VAZIO'; document.getElementById('ui-btn-drop').innerText = 'DROPAR'; } 
-    if (!uiState.inv && !uiState.char) uiActionButtons.style.display = 'none';
+    // Caso especial: Inventário vazio
+    if (uiState.inv && (me.inventory.length === 0 || focusArea !== 'inventory')) { 
+        hideTooltip(); 
+        document.getElementById('ui-btn-equip').innerText = 'INVENTÁRIO VAZIO'; 
+        document.getElementById('ui-btn-drop').innerText = 'DROPAR (B)'; 
+    } 
+    if (!uiState.inv && !uiState.char && !uiState.craft && !uiState.shop) uiActionButtons.style.display = 'none';
 
     if(uiState.shop) {
         const sg = document.getElementById("shop-grid"); sg.innerHTML = "";
@@ -675,6 +868,7 @@ function draw() {
     const hudGold = document.getElementById("hud-gold");
     const hudBottom = document.querySelector('.hud-bottom');
     
+    // CORREÇÃO FINAL DA INTERFACE MOBILE
     if(isMobile) {
         // 1. HUD Display: Minimalista for all mobile
         mobileHorizontalHud.style.display = "flex"; 
