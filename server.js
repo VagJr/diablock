@@ -16,33 +16,52 @@ async function initializeServer() {
         try {
             pgPool = new Pool({
                 connectionString: process.env.DATABASE_URL,
-                ssl: process.env.NODE_ENV === "production" ? { rejectUnauthorized: false } : false
+                ssl: process.env.NODE_ENV === "production"
+                    ? { rejectUnauthorized: false }
+                    : false
             });
+
             console.log("PostgreSQL detected. Initializing connection...");
-            
+
+            // 🔥 WIPE CORRETO (ANTES de criar tabela)
+            if (process.env.WIPE_DB === "true") {
+                console.log("⚠️ WIPE_DB ativado — apagando banco...");
+                await pgPool.query("DROP TABLE IF EXISTS characters;");
+                console.log("✅ Banco zerado com sucesso.");
+            }
+
+            // Criação normal da tabela
             await pgPool.query(`
                 CREATE TABLE IF NOT EXISTS characters (
-                    id TEXT PRIMARY KEY,       
+                    id TEXT PRIMARY KEY,
                     user_name TEXT NOT NULL,
                     char_name TEXT NOT NULL,
                     data JSONB NOT NULL,
                     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
                 );
             `);
+
             isDbReady = true;
-            console.log("PostgreSQL connected. Persistence ENABLEED.");
+            console.log("PostgreSQL connected. Persistence ENABLED.");
 
         } catch (err) {
             console.error("FATAL ERROR: PostgreSQL connection failed.", err.message);
             DB_MODE = 'NONE';
         }
-    } 
-    
+    }
+
     server.listen(3000, () => {
-        console.log("🔥 Diablock V27 - EYES OF THE VOID (Stable) - Mode: " + DB_MODE);
+        console.log("🔥 Diablock V27 - Mode: " + DB_MODE);
     });
 }
+if (process.env.WIPE_DB === "true" && isDbReady) {
+    console.log("⚠️ WIPE_DB ativado — apagando banco...");
+    await pgPool.query("DROP TABLE IF EXISTS characters;");
+    console.log("✅ Banco zerado com sucesso.");
 
+    // Evita wipe infinito
+    delete process.env.WIPE_DB;
+}
 // 2. FUNÇÕES DE PERSISTÊNCIA
 let localCharacters = {};
 
