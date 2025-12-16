@@ -2,18 +2,22 @@
 <html lang="pt-BR">
 <head>
 <meta charset="utf-8"/>
-<title>DIABLOCK V18 - AURAS & CHAT</title>
+<title>DIABLOCK V20 - AUDIO & MOBILE COMBAT FIX</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Courier+New&display=swap');
-html,body{ margin:0; width:100%; height:100%; background:#000; overflow:hidden; font-family:'Courier New', monospace; user-select:none; color:#0f0; }
-canvas{ width:100%; height:100%; image-rendering:pixelated; cursor: crosshair; display:block;}
+html,body{ margin:0; width:100%; height:100%; background:#000; overflow:hidden; font-family:'Courier New', monospace; user-select:none; color:#0f0; touch-action: none; }
+canvas{ width:100%; height:100%; image-rendering:pixelated; cursor: crosshair; display:block; touch-action: none;}
 .scanlines { position: fixed; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; background: linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.25) 50%), linear-gradient(90deg, rgba(255, 0, 0, 0.06), rgba(0, 255, 0, 0.02), rgba(0, 0, 255, 0.06)); background-size: 100% 2px, 2px 100%; z-index: 999; }
 #ui-layer{ position:absolute; top:0; left:0; width:100%; height:100%; pointer-events:none; }
 .hud-bottom{ position:absolute; bottom:10px; left:50%; transform:translateX(-50%); display:flex; flex-direction:column; align-items:center; }
-.bar-box{ width:260px; padding:2px; background:#000; border:2px solid #0f0; margin-bottom:5px; }
-.bar{ width:100%; height:12px; background:#111; margin-bottom:2px; border:1px solid #040; }
+/* Melhoria da UI de PC */
+.bar-box{ width:300px; padding:5px 10px; background:rgba(0,0,0,0.8); border:2px solid #0f0; margin-bottom:5px; box-shadow: 0 0 10px #0f03; }
+.bar-status-text{ display:flex; justify-content:space-between; font-size:12px; color:#fff; margin-bottom:2px; font-weight:bold; }
+.bar-container{ width:100%; height:8px; background:#111; margin-bottom:4px; border:1px solid #040; position:relative; }
+.bar-container.xp { height: 4px; }
 .fill{ height:100%; transition:width 0.1s; }
-.fill.hp{ background:#f00; } .fill.mp{ background:#00f; } .fill.xp{ background:#fb0; height:4px; }
+.fill.hp{ background:#f00; } .fill.mp{ background:#00f; } .fill.xp{ background:#fb0; }
 .skills{ display:flex; gap:5px; pointer-events:auto; align-items: flex-end; }
 .skill-btn{ width:36px; height:36px; background:#000; border:2px solid #0f0; color:#0f0; display:flex; align-items:center; justify-content:center; font-size:10px; font-weight:bold; cursor:pointer; position: relative;}
 .skill-btn:hover { background: #0f0; color:#000; }
@@ -42,6 +46,118 @@ h1 { text-shadow: 2px 2px #f00; color: #d00; }
 /* CHAT INPUT */
 #chat-container { position: absolute; bottom: 100px; left: 50%; transform: translateX(-50%); width: 300px; display: none; pointer-events: auto; }
 #chat-input { width: 100%; background: rgba(0,0,0,0.8); border: 1px solid #0f0; color: #fff; padding: 5px; font-family: inherit; }
+
+/* MOBILE CONTROLS */
+#mobile-controls { 
+    display: none; 
+    position: fixed; 
+    bottom: 0; 
+    left: 0; 
+    width: 100%; 
+    height: 120px; 
+    pointer-events: none; 
+    z-index: 5; 
+}
+.control-area { position: absolute; bottom: 10px; pointer-events: auto; }
+
+/* D-PAD (Left Side) */
+#dpad-container { left: 15px; width: 100px; height: 100px; }
+.dpad-btn { 
+    position: absolute; 
+    width: 35px; 
+    height: 35px; 
+    background: rgba(0, 0, 0, 0.5); 
+    border: 1px solid #0f0; 
+    color: #0f0; 
+    display: flex; 
+    align-items: center; 
+    justify-content: center; 
+    font-size: 12px; 
+    border-radius: 5px; 
+}
+#dpad-up { top: 0; left: 33%; }
+#dpad-down { bottom: 0; left: 33%; }
+#dpad-left { left: 0; top: 33%; }
+#dpad-right { right: 0; top: 33%; }
+
+/* ACTION BUTTONS (Right Side) - Otimização de Layout */
+#action-container { 
+    right: 15px; 
+    width: 160px; 
+    height: 100px; 
+    bottom: 5px; 
+    position: absolute;
+    /* Usaremos posicionamento absoluto dentro para maior controle */
+}
+.action-btn { 
+    position: absolute; /* Para controlar a posição */
+    width: 45px; 
+    height: 45px; 
+    border-radius: 50%; 
+    background: rgba(0, 0, 0, 0.6); 
+    border: 2px solid; 
+    color: #f00; 
+    display: flex; 
+    align-items: center; 
+    justify-content: center; 
+    font-size: 14px; 
+    font-weight: bold; 
+    box-shadow: 0 0 5px rgba(255, 0, 0, 0.5);
+}
+
+/* Posicionamento dos botões de combate */
+#btn-atk { 
+    width: 55px; height: 55px; 
+    font-size: 16px; 
+    bottom: 5px; 
+    right: 5px;
+    z-index: 2; /* Mais visível */
+} 
+#btn-skill { 
+    width: 40px; height: 40px; 
+    font-size: 10px; 
+    border-color: #0ff; color: #0ff; 
+    bottom: 55px; 
+    right: 5px; 
+} 
+#btn-dash { 
+    width: 40px; height: 40px; 
+    font-size: 10px; 
+    border-color: #fff; color: #fff;
+    bottom: 5px; 
+    right: 65px; /* Ao lado do ATK */
+} 
+#btn-potion { 
+    width: 35px; height: 35px; 
+    font-size: 9px; 
+    border-color: #f33; color: #f33;
+    bottom: 60px; 
+    right: 55px; /* Posição superior esquerda dos botões de ação */
+}
+
+/* HUD MENU BUTTONS (INV/CHR) - MUDANÇA AQUI: Movidos para cima do action-container */
+#mobile-menu-buttons {
+    position: absolute; 
+    bottom: 110px; /* Posiciona acima da área de ação (altura aprox. 100px + 10px de margem) */
+    right: 5px; 
+    display: flex; 
+    gap: 5px; 
+    pointer-events: auto;
+    z-index: 10; 
+}
+#mobile-menu-buttons .skill-btn {
+    width: 38px; 
+    height: 38px; 
+    background: rgba(0,0,0,0.7); 
+    font-size: 10px;
+    border-radius: 5px;
+}
+
+@media (max-width: 768px) {
+    #mobile-controls { display: block; }
+    .hud-bottom { display: none; } 
+    #hud-gold { top: 10px; } 
+}
 </style>
 </head>
 <body oncontextmenu="return false">
@@ -52,12 +168,26 @@ h1 { text-shadow: 2px 2px #f00; color: #d00; }
 <div id="ui-layer">
     <div id="hud-gold">GOLD: 0</div>
     <div id="chat-container"><input type="text" id="chat-input" placeholder="Say something..." maxlength="30"></div>
+    
     <div class="hud-bottom">
         <div class="bar-box">
-            <div style="display:flex; justify-content:space-between; font-size:12px; color:#0f0; margin-bottom:2px;"><span>STATUS</span> <span id="lvl-txt">NORMAL [1]</span></div>
-            <div class="bar"><div class="fill hp" id="hp-bar"></div></div>
-            <div class="bar"><div class="fill mp" id="mp-bar"></div></div>
-            <div class="bar" style="height:4px"><div class="fill xp" id="xp-bar"></div></div>
+            <div class="bar-status-text">
+                <span id="lvl-txt">NORMAL [1]</span>
+                <span id="hp-txt">HP: 100/100</span>
+            </div>
+            <div class="bar-container hp"><div class="fill hp" id="hp-bar"></div></div>
+            
+            <div class="bar-status-text" style="color:#0ff;">
+                <span>MANA</span>
+                <span id="mp-txt">MP: 50/50</span>
+            </div>
+            <div class="bar-container mp"><div class="fill mp" id="mp-bar"></div></div>
+            
+            <div class="bar-status-text" style="color:#fb0;">
+                <span>EXP</span>
+                <span id="xp-txt">0%</span>
+            </div>
+            <div class="bar-container xp"><div class="fill xp" id="xp-bar"></div></div>
         </div>
         <div class="skills">
             <div class="skill-btn">ATK</div>
@@ -103,9 +233,30 @@ h1 { text-shadow: 2px 2px #f00; color: #d00; }
     </div>
 </div>
 
+<div id="mobile-controls">
+    <div id="dpad-container" class="control-area">
+        <div id="dpad-up" class="dpad-btn" data-key="w">⬆️</div>
+        <div id="dpad-down" class="dpad-btn" data-key="s">⬇️</div>
+        <div id="dpad-left" class="dpad-btn" data-key="a">⬅️</div>
+        <div id="dpad-right" class="dpad-btn" data-key="d">➡️</div>
+    </div>
+
+    <div id="action-container" class="control-area">
+        <div id="btn-potion" class="action-btn" data-action="potion">POT</div>
+        <div id="btn-skill" class="action-btn" data-action="skill">SKL</div>
+        <div id="btn-dash" class="action-btn" data-action="dash">DSH</div>
+        <div id="btn-atk" class="action-btn" data-action="attack">ATK</div>
+    </div>
+
+    <div id="mobile-menu-buttons">
+        <div id="btn-inv-mobile" class="skill-btn" data-action="toggle_inv">INV</div>
+        <div id="btn-char-mobile" class="skill-btn" data-action="toggle_char">CHR</div>
+    </div>
+</div>
+
 <div id="menu">
     <h1 style="font-size:50px; margin-bottom:0;">DIABLOCK</h1>
-    <p style="color:#d00; margin-bottom:20px;">V18 - AURAS & CHAT</p>
+    <p style="color:#d00; margin-bottom:20px;">V20 - AUDIO & MOBILE COMBAT FIX</p>
     <div id="login-form"><input type="text" id="username" placeholder="USER"><button class="btn" onclick="login()">LOGIN</button></div>
     <div id="char-select" style="display:none; text-align:center;">
         <div id="char-list" style="margin-bottom:20px;"></div>

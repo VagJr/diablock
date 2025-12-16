@@ -37,11 +37,15 @@ const SCALE = 16;
 const DIFFICULTY = {
     NORMAL:    { name: "NORMAL",    mult: 0.8,  drop: 1.0, color: "#222" },
     NIGHTMARE: { name: "NIGHTMARE", mult: 1.8,  drop: 1.8, color: "#311" },
-    INFERNO:   { name: "INFERNO",   mult: 3.5,  drop: 3.0, color: "#102" }
+    HELL:      { name: "HELL",      mult: 3.5,  drop: 3.0, color: "#102" }, // Inferno renomeado
+    HORDE_1:   { name: "HORDE I",   mult: 5.0,  drop: 4.0, color: "#f00" }, // Novo Nível
+    HORDE_2:   { name: "HORDE II",  mult: 7.0,  drop: 5.5, color: "#900" }  // Novo Nível
 };
 
 function getDifficulty(lvl) {
-    if(lvl >= 10) return DIFFICULTY.INFERNO;
+    if(lvl >= 15) return DIFFICULTY.HORDE_2; // Novo limite
+    if(lvl >= 12) return DIFFICULTY.HORDE_1; // Novo limite
+    if(lvl >= 9) return DIFFICULTY.HELL;     // Antigo Inferno
     if(lvl >= 5) return DIFFICULTY.NIGHTMARE;
     return DIFFICULTY.NORMAL;
 }
@@ -50,7 +54,10 @@ const GEMS = {
     ruby:    { name: "Ruby",    color: "#f00", stat: "dmg", val: 3, desc: "+3 Dmg" },
     sapphire:{ name: "Sapphire",color: "#00f", stat: "mp",  val: 10,desc: "+10 Mana" },
     emerald: { name: "Emerald", color: "#0f0", stat: "spd", val: 0.01, desc: "+Speed" },
-    diamond: { name: "Diamond", color: "#fff", stat: "hp",  val: 15, desc: "+15 HP" }
+    diamond: { name: "Diamond", color: "#fff", stat: "hp",  val: 15, desc: "+15 HP" },
+    // Novas Gemas para a progressão tardia (Horde)
+    topaz:   { name: "Topaz",   color: "#fb0", stat: "dmg_mp", val: 0.05, desc: "+5% Dmg/Mana" },
+    amethyst:{ name: "Amethyst",color: "#a0f", stat: "cd_red", val: 0.05, desc: "5% Cooldown Red."}
 };
 
 const ITEM_BASES = {
@@ -67,7 +74,9 @@ const ITEM_BASES = {
   ruby:  { slot: "mat", name: "Ruby", type: "gem", price: 100, ...GEMS.ruby },
   sapphire:{ slot: "mat", name: "Sapphire", type: "gem", price: 100, ...GEMS.sapphire },
   emerald:{ slot: "mat", name: "Emerald", type: "gem", price: 100, ...GEMS.emerald },
-  diamond:{ slot: "mat", name: "Diamond", type: "gem", price: 100, ...GEMS.diamond }
+  diamond:{ slot: "mat", name: "Diamond", type: "gem", price: 100, ...GEMS.diamond },
+  topaz: { slot: "mat", name: "Topaz", color: "#fb0", type: "gem", price: 200, ...GEMS.topaz },
+  amethyst: { slot: "mat", name: "Amethyst", color: "#a0f", type: "gem", price: 200, ...GEMS.amethyst }
 };
 
 const RECIPES = [
@@ -75,6 +84,8 @@ const RECIPES = [
     { res: "sapphire", req: { wood: 5, stone: 5 } },
     { res: "emerald", req: { wood: 5, stone: 5 } },
     { res: "diamond", req: { wood: 10, stone: 10 } },
+    { res: "topaz", req: { wood: 15, stone: 15 } }, // Novo
+    { res: "amethyst", req: { wood: 15, stone: 15 } }, // Novo
     { res: "potion", req: { wood: 2, stone: 0 } }
 ];
 
@@ -91,11 +102,19 @@ const MOB_DATA = {
     mage:     { hp: 50, dmg: 18,spd: 0.05, ai: "range", xp: 50, gold: 40, size: 12, range: 6, proj:"fireball", poise: 5 },
     ghost:    { hp: 60, dmg: 12,spd: 0.07, ai: "chase", xp: 60, gold: 35, size: 11, poise: 1 },
     demon:    { hp: 150,dmg: 25,spd: 0.09, ai: "lunge", xp: 120,gold: 80, size: 15, poise: 25 },
+    // Novos Mobs para Horde
+    imp:      { hp: 80, dmg: 20, spd: 0.15, ai: "chase", xp: 80, gold: 50, size: 8, poise: 0, color: "#f80" }, 
+    succubus: { hp: 120, dmg: 30, spd: 0.07, ai: "range", xp: 150, gold: 75, size: 12, range: 8, proj: "laser", poise: 5, color: "#f0f" },
+    hellknight: { hp: 250, dmg: 40, spd: 0.08, ai: "lunge", xp: 200, gold: 100, size: 16, poise: 30, color: "#900" },
+
     butcher:    { hp: 400, dmg: 25, spd: 0.07, ai: "boss_melee", xp: 800, gold: 200, size: 24, poise: 99, boss:true, name:"The Butcher" },
     lich:       { hp: 350, dmg: 35, spd: 0.04, ai: "boss_range", xp: 900, gold: 250, size: 20, poise: 99, boss:true, proj:"frostball", name:"Lich King" },
     broodmother:{ hp: 300, dmg: 20, spd: 0.09, ai: "boss_range", xp: 850, gold: 220, size: 28, poise: 99, boss:true, proj:"web", name:"Broodmother" },
     firelord:   { hp: 500, dmg: 40, spd: 0.05, ai: "boss_range", xp: 1200,gold: 400, size: 30, poise: 99, boss:true, proj:"meteor", name:"Fire Lord" },
     voidgazer:  { hp: 450, dmg: 50, spd: 0.06, ai: "boss_range", xp: 1500,gold: 500, size: 22, poise: 99, boss:true, proj:"laser", name:"Void Gazer" },
+    // Novo Boss Final do Patch
+    diablo:     { hp: 1000, dmg: 70, spd: 0.10, ai: "boss_range", xp: 5000, gold: 1000, size: 32, poise: 99, boss:true, proj: "fireball", name: "DIABLO" },
+
     chest:    { hp: 5,  dmg: 0, spd: 0,    ai: "static",xp: 0,  gold: 100,size: 12, loot: true },
     merchant: { hp: 999,dmg: 0, spd: 0,    ai: "npc",   xp: 0,  gold: 0,  size: 12, npc: true }
 };
@@ -111,10 +130,11 @@ function generateItem(level, diffMult=1, forceType=null) {
     if(Math.random() < 0.20) return { ...ITEM_BASES.potion, id: Math.random().toString(36).substr(2), key:"potion", rarity:"common", color:"#f33", stats:{heal:50+level*10} };
     if(Math.random() < 0.05 * diffMult) {
         const gemKeys = ["ruby", "sapphire", "emerald", "diamond"];
+        if (level >= 10) gemKeys.push("topaz", "amethyst"); // Novas gemas no late-game
         const k = gemKeys[Math.floor(Math.random()*gemKeys.length)];
         return { ...ITEM_BASES[k], id:Math.random().toString(36).substr(2), key:k, rarity:"magic", color:ITEM_BASES[k].color };
     }
-    const keys = Object.keys(ITEM_BASES).filter(k=>!["potion","wood","stone","ruby","sapphire","emerald","diamond"].includes(k));
+    const keys = Object.keys(ITEM_BASES).filter(k=>!["potion","wood","stone"].includes(k) && !k.includes("ruby") && !k.includes("sapphire") && !k.includes("emerald") && !k.includes("diamond") && !k.includes("topaz") && !k.includes("amethyst"));
     const key = keys[Math.floor(Math.random()*keys.length)];
     const base = ITEM_BASES[key];
     const r = Math.random();
@@ -145,6 +165,7 @@ function recalcStats(p) {
     if(!p.attrs) p.attrs = { str:5, dex:5, int:5 };
     let str=p.attrs.str, dex=p.attrs.dex, int=p.attrs.int;
     let addHp=0, addMp=0, addDmg=0, addDef=0, addSpd=0;
+    let cdRed=0;
     ["hand", "head", "body"].forEach(s => { 
         if(p.equipment[s]){ 
             const it = p.equipment[s];
@@ -155,13 +176,18 @@ function recalcStats(p) {
                 if(g.stat === "hp") addHp += g.val;
                 if(g.stat === "mp") addMp += g.val;
                 if(g.stat === "spd") addSpd += g.val;
+                if(g.stat === "cd_red") cdRed = Math.min(0.3, cdRed + g.val); // Cap 30% CDR
+                if(g.stat === "dmg_mp") addDmg += Math.floor(p.stats.maxMp * g.val); // Dmg baseado em Mana
             });
         }
     });
+    // Stats base
     p.stats.maxHp = 90 + (str*8) + addHp + (p.level*10);
     p.stats.maxMp = 30 + (int*5) + addMp + (p.level*4);
     p.stats.spd = 0.11 + (dex*0.001) + addSpd;
     p.stats.def = addDef;
+    
+    // Damage Calculation
     const wep = p.equipment.hand;
     let baseDmg = addDmg;
     if(wep) {
@@ -170,6 +196,8 @@ function recalcStats(p) {
         if(wep.type === "magic") baseDmg += int * 0.6;
     } else { baseDmg += str * 0.3; }
     p.stats.dmg = Math.floor(baseDmg);
+    p.stats.cd_mult = (1 - cdRed); // Multiplicador de cooldown (ex: 0.7 para 30% de redução)
+
     if(p.hp > p.stats.maxHp) p.hp = p.stats.maxHp;
 }
 
@@ -213,15 +241,19 @@ function generateDungeon(inst) {
         }
         if(i===0) return; 
         if(!inst.npcSpawned && i > 2 && Math.random() < 0.3) { spawnMob(inst, r.cx, r.cy, "merchant", 1); inst.npcSpawned = true; return; }
+        
+        let boss = null;
         if(i === inst.rooms.length - 1) { 
-            let boss = "butcher"; 
-            if(inst.level >= 3) boss = "lich";
-            if(inst.level >= 6) boss = "broodmother";
-            if(inst.level >= 9) boss = "firelord";
-            if(inst.level >= 12) boss = "voidgazer";
+            if(inst.level < 3) boss = "butcher";
+            else if(inst.level < 6) boss = "lich";
+            else if(inst.level < 9) boss = "broodmother";
+            else if(inst.level < 12) boss = "firelord";
+            else if(inst.level < 15) boss = "voidgazer";
+            else boss = "diablo"; // Novo boss final
             spawnMob(inst, r.cx, r.cy, boss, 1 + inst.level*0.3); 
             return; 
         }
+
         if(Math.random() < 0.15) spawnMob(inst, r.cx, r.cy, "chest", 1);
         const count = 2 + Math.random() * (inst.level * 0.8) | 0;
         let pool = ["rat", "bat"];
@@ -229,6 +261,8 @@ function generateDungeon(inst) {
         if(inst.level >= 4) pool.push("skeleton", "archer");
         if(inst.level >= 7) pool.push("orc", "mage");
         if(inst.level >= 10) pool.push("ghost", "demon");
+        if(inst.level >= 13) pool.push("imp", "succubus", "hellknight"); // Novos Mobs
+        
         for(let k=0; k<count; k++){
             spawnMob(inst, r.x+2+Math.random()*(r.w-4), r.y+2+Math.random()*(r.h-4), pool[Math.floor(Math.random()*pool.length)], diff.mult);
         }
@@ -243,9 +277,14 @@ function spawnMob(inst, x, y, type, mult) {
         hp: Math.floor(data.hp * mult), maxHp: Math.floor(data.hp * mult),
         dmg: Math.floor(data.dmg * mult), xp: Math.floor(data.xp * mult), gold: Math.floor(data.gold*mult),
         spd: data.spd, ai: data.ai, size: data.size, range: data.range, poise: data.poise, npc:data.npc, boss:data.boss,
-        drop: data.drop, proj: data.proj, state: "idle", timer: 0, hitFlash: 0, name: data.name || type.toUpperCase()
+        drop: data.drop, proj: data.proj, state: "idle", timer: 0, hitFlash: 0, name: data.name || type.toUpperCase(),
+        color: data.color || null
     };
-    if(data.npc) inst.mobs[mid].shop = [generateItem(inst.level), generateItem(inst.level), ITEM_BASES.potion, ITEM_BASES.ruby];
+    if(data.npc) {
+        let shopItems = [generateItem(inst.level), generateItem(inst.level), ITEM_BASES.potion, ITEM_BASES.ruby];
+        if (inst.level >= 10) shopItems.push(ITEM_BASES.topaz, ITEM_BASES.amethyst);
+        inst.mobs[mid].shop = shopItems;
+    }
 }
 
 io.on("connection", socket => {
@@ -277,7 +316,7 @@ io.on("connection", socket => {
     socket.on("dash", angle => {
         const p = instances[socket.instId]?.players[socket.id];
         if(!p || p.cd.dash > 0 || p.input.block || p.mp < 10) return;
-        p.mp -= 10; p.cd.dash = 30; 
+        p.mp -= 10; p.cd.dash = Math.floor(30 * (p.stats.cd_mult || 1)); // Aplica CDR
         p.vx = Math.cos(angle) * 0.7; p.vy = Math.sin(angle) * 0.7;
         p.dashTime = 5;
         io.to(instances[socket.instId].id).emit("fx", { type: "dash", x: p.x, y: p.y });
@@ -287,7 +326,7 @@ io.on("connection", socket => {
         if(!p || !p.equipment.potion) return;
         const pot = p.equipment.potion;
         p.hp = Math.min(p.stats.maxHp, p.hp + pot.stats.heal);
-        io.to(instances[socket.instId].id).emit("fx", { type: "nova", x: p.x, y: p.y });
+        io.to(inst.id).emit("fx", { type: "nova", x: p.x, y: p.y });
         p.equipment.potion = null; 
         const idx = p.inventory.findIndex(i => i.key === "potion");
         if(idx !== -1) { p.equipment.potion = p.inventory[idx]; p.inventory.splice(idx, 1); }
@@ -298,7 +337,7 @@ io.on("connection", socket => {
         if(!p || p.cd.atk > 0 || p.input.block) return;
         const wep = p.equipment.hand;
         const type = wep ? wep.type : "melee";
-        p.cd.atk = wep ? wep.cd : 10;
+        p.cd.atk = Math.floor((wep ? wep.cd : 10) * (p.stats.cd_mult || 1)); // Aplica CDR
         let clickedNPC = false;
         Object.values(inst.mobs).forEach(m => { 
             if(m.npc && Math.hypot(m.x-p.x, m.y-p.y) < 3) { socket.emit("open_shop", m.shop); clickedNPC = true; } 
@@ -317,16 +356,20 @@ io.on("connection", socket => {
         const p = inst?.players[socket.id];
         if(!p || p.cd.skill > 0 || p.input.block) return;
         const ang = angle || Math.atan2(p.input.y||0, p.input.x||1);
+        let base_cd = 0;
+        
         if(p.class === "knight") {
-            if(p.mp < 15) return; p.mp -= 15; p.cd.skill = 60;
+            if(p.mp < 15) return; p.mp -= 15; base_cd = 60;
             io.to(inst.id).emit("fx", { type: "spin", x: p.x, y: p.y }); hitArea(inst, p, p.x, p.y, 3.5, null, 0, p.stats.dmg * 2, 40);
         } else if(p.class === "hunter") {
-            if(p.mp < 15) return; p.mp -= 15; p.cd.skill = 50;
+            if(p.mp < 15) return; p.mp -= 15; base_cd = 50;
             [-0.3, 0, 0.3].forEach(off => { inst.projectiles.push({ x:p.x, y:p.y, vx:Math.cos(ang+off)*0.5, vy:Math.sin(ang+off)*0.5, life: 25, dmg: p.stats.dmg, owner: p.id, type: "arrow", angle: ang+off }); });
         } else if(p.class === "mage") {
-            if(p.mp < 25) return; p.mp -= 25; p.cd.skill = 80;
+            if(p.mp < 25) return; p.mp -= 25; base_cd = 80;
             inst.projectiles.push({ x:p.x, y:p.y, vx:Math.cos(ang)*0.2, vy:Math.sin(ang)*0.2, life: 50, dmg: p.stats.dmg * 3, owner: p.id, type: "meteor", angle: ang });
         }
+        
+        p.cd.skill = Math.floor(base_cd * (p.stats.cd_mult || 1)); // Aplica CDR
     });
     socket.on("craft", ({action, recipeIdx, itemIdx, gemIdx}) => {
         const inst = instances[socket.instId];
@@ -355,6 +398,7 @@ io.on("connection", socket => {
                 if(item.sockets && item.gems.length < item.sockets.length) {
                     item.gems.push(gem);
                     p.inventory.splice(gemIdx, 1);
+                    recalcStats(p); // Recalcula stats após socket
                     io.to(inst.id).emit("txt", {x:p.x, y:p.y, val:"SOCKETED!", color:"#0ff"});
                 }
             }
@@ -609,4 +653,4 @@ setInterval(() => {
         io.to(inst.id).emit("u", { pl:inst.players, mb:inst.mobs, it:inst.items, pr:inst.projectiles, props:inst.props, lvl:inst.level, map:inst.dungeon, theme:inst.theme });
     });
 }, TICK);
-server.listen(3000, () => console.log("🔥 Diablock V18 - Auras & Chat"));
+server.listen(3000, () => console.log("🔥 Diablock V20.5 - Audio Revert Fix"));

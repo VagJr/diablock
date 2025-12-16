@@ -12,21 +12,23 @@ let inputState = { x:0, y:0, block: false };
 let shopItems = [];
 const tooltip = document.getElementById("tooltip");
 let dragItem = null;
+const isMobile = window.matchMedia("(max-width: 768px)").matches;
 
-// --- AUDIO SYSTEM ---
+// --- AUDIO SYSTEM (REVERTED TO STABLE VERSION) ---
 const AudioCtrl = {
     ctx: new (window.AudioContext || window.webkitAudioContext)(),
     bgm: null,
     muted: false,
     init: function() {
-        if(this.ctx.state === 'suspended') this.ctx.resume();
+        // Tenta tocar o BGM logo após o login (gesto do usuário)
         if(!this.bgm) {
             this.bgm = new Audio("/assets/bgm.mp3");
             this.bgm.loop = true;
             this.bgm.volume = 0.3;
-            this.bgm.play().catch(e => console.log("Click to play audio"));
+            this.bgm.play().catch(e => console.log("Click/Tap required to play audio."));
         }
     },
+    // Funções SFX (sem resume() embutido, confiando no estado inicial)
     playTone: function(freq, type, dur, vol=0.1) {
         if(this.muted || this.ctx.state === 'suspended') return;
         const o = this.ctx.createOscillator(); const g = this.ctx.createGain();
@@ -70,7 +72,7 @@ socket.on("char_list", list => {
         d.onclick=()=>{ 
             socket.emit("enter_game", n); 
             document.getElementById("menu").style.display="none"; 
-            AudioCtrl.init();
+            AudioCtrl.init(); // Tenta iniciar o BGM no login (gating the experience)
         };
         l.appendChild(d);
     }
@@ -97,12 +99,22 @@ socket.on("chat", d => {
 });
 socket.on("open_shop", items => { shopItems = items; uiState.shop = true; updateUI(); });
 
+// --- INPUT HANDLERS (PC) ---
 const keys = { w:false, a:false, s:false, d:false, q:false };
 function sendInput() {
     let dx = keys.a?-1:keys.d?1:0, dy = keys.w?-1:keys.s?1:0;
     if(dx!==inputState.x || dy!==inputState.y || keys.q !== inputState.block){ inputState={x:dx,y:dy,block:keys.q}; socket.emit("input", inputState); }
 }
 function getAngle() { return Math.atan2((mouse.y - canvas.height/2), (mouse.x - canvas.width/2)); }
+// Nova função para obter ângulo baseado no movimento (para mobile)
+function getMovementAngle() {
+    const dx = keys.d - keys.a;
+    const dy = keys.s - keys.w;
+    if (dx === 0 && dy === 0) {
+        return me ? Math.atan2(me.vy || 0, me.vx || 1) : 0;
+    }
+    return Math.atan2(dy, dx);
+}
 
 // CHAT INPUT
 const chatInput = document.getElementById("chat-input");
@@ -117,7 +129,8 @@ chatInput.onkeydown = (e) => {
 };
 
 window.onkeydown = e => {
-    if(uiState.chat) return; // Typing
+    if (document.getElementById("menu").style.display !== "none") return;
+    if(uiState.chat) return;
     let k=e.key.toLowerCase();
     if(k === "enter") {
         uiState.chat = true;
@@ -131,20 +144,119 @@ window.onkeydown = e => {
     if(k==="k") uiState.craft = !uiState.craft;
     if(k==="escape") { uiState.inv=false; uiState.char=false; uiState.shop=false; uiState.craft=false; uiState.chat=false; document.getElementById("chat-container").style.display="none"; }
     if(k===" ") { socket.emit("dash", getAngle()); }
-    if(k==="e") socket.emit("potion");
+    if(k==="q") { socket.emit("potion"); }
     updateUI();
 };
 window.onkeyup = e => { let k=e.key.toLowerCase(); if(keys.hasOwnProperty(k)){ keys[k]=false; sendInput(); } };
 window.onmousemove = e => { mouse.x=e.clientX; mouse.y=e.clientY; tooltip.style.left = (mouse.x+10)+"px"; tooltip.style.top = (mouse.y+10)+"px"; };
 window.onmousedown = e => {
+    // Ação do mouse/clique para garantir que o AudioContext comece
+    if (AudioCtrl.ctx.state === 'suspended') AudioCtrl.ctx.resume().catch(err => console.error("Could not resume AudioContext on mousedown", err));
     AudioCtrl.init();
-    if(!me || uiState.chat) return;
+    
+    if(!me || uiState.chat || isMobile || document.getElementById("menu").style.display !== "none") return;
     const isPanel = (id) => { const r = document.getElementById(id).getBoundingClientRect(); return mouse.x > r.left && mouse.x < r.right && mouse.y > r.top && mouse.y < r.bottom && document.getElementById(id).style.display==="block"; };
     if(isPanel("inventory") || isPanel("char-panel") || isPanel("shop-panel") || isPanel("craft-panel")) return;
     const ang = getAngle();
     if(e.button===0) socket.emit("attack", ang);
     if(e.button===2) socket.emit("skill", {idx:1, angle:ang});
 };
+
+
+// --- INPUT HANDLERS (MOBILE) ---
+let touchMap = {};
+
+const handleTouchStart = (e) => {
+    // Tenta iniciar o áudio no toque
+    if (AudioCtrl.ctx.state === 'suspended') AudioCtrl.ctx.resume().catch(err => console.error("Could not resume AudioContext on touch", err));
+    AudioCtrl.init();
+
+    if (uiState.chat || document.getElementById("menu").style.display !== "none") return;
+
+    for (let i = 0; i < e.changedTouches.length; i++) {
+        const touch = e.changedTouches[i];
+        const target = touch.target;
+        const id = touch.identifier;
+        let processed = false;
+
+        // 1. D-Pad
+        if (target.closest('.dpad-btn')) {
+            const key = target.closest('.dpad-btn').dataset.key;
+            if (keys.hasOwnProperty(key)) {
+                keys[key] = true;
+                sendInput();
+                touchMap[id] = { type: 'dpad', key: key };
+                processed = true;
+            }
+        } 
+        
+        // 2. Action Buttons: Usa getMovementAngle()
+        else if (target.closest('.action-btn')) {
+            const action = target.closest('.action-btn').dataset.action;
+            const ang = getMovementAngle(); // Mira na direção do movimento
+
+            if (action === "attack") {
+                socket.emit("attack", ang);
+            } else if (action === "skill") {
+                socket.emit("skill", {idx:1, angle:ang});
+            } else if (action === "dash") {
+                socket.emit("dash", ang);
+            } else if (action === "potion") {
+                socket.emit("potion");
+            }
+            touchMap[id] = { type: 'action', action: action };
+            processed = true;
+        }
+        
+        // 3. Menus de HUD (Abrir/Fechar)
+        // **LÓGICA DE BOTÕES DE MENU DEDICADOS**
+        else if (target.closest('#btn-inv-mobile')) {
+            uiState.inv = !uiState.inv;
+            uiState.char = false; // Fecha o outro painel
+            updateUI();
+            processed = true;
+        }
+        else if (target.closest('#btn-char-mobile')) {
+            uiState.char = !uiState.char;
+            uiState.inv = false; // Fecha o outro painel
+            updateUI();
+            processed = true;
+        }
+        // Lógica de fallback para o ícone "☰" desenhado no canvas
+        else if (isMobile) {
+            const rect = canvas.getBoundingClientRect();
+            // Área de toque aproximada do botão de menu (canto superior direito do HUD Mobile)
+            if (touch.clientX > rect.width - 50 && touch.clientY < 30) { 
+                 uiState.inv = !uiState.inv; // Assume INV como padrão do '☰'
+                 updateUI();
+                 processed = true;
+            }
+        }
+
+        if (processed) e.preventDefault();
+    }
+};
+
+const handleTouchEnd = (e) => {
+    for (let i = 0; i < e.changedTouches.length; i++) {
+        const touch = e.changedTouches[i];
+        const id = touch.identifier;
+        
+        if (touchMap[id]) {
+            if (touchMap[id].type === 'dpad') {
+                keys[touchMap[id].key] = false;
+                sendInput();
+            }
+            delete touchMap[id];
+        }
+    }
+};
+
+document.addEventListener('touchstart', handleTouchStart, { passive: false });
+document.addEventListener('touchend', handleTouchEnd);
+document.addEventListener('touchcancel', handleTouchEnd);
+
+// --- UI AND DRAWING FUNCTIONS ---
 
 function renderCrafting() {
     const list = document.getElementById("craft-list"); list.innerHTML = "";
@@ -158,10 +270,26 @@ function renderCrafting() {
 
 function updateUI() {
     if(!me) return;
-    document.getElementById("hp-bar").style.width = (me.hp/me.stats.maxHp)*100 + "%";
-    document.getElementById("mp-bar").style.width = (me.mp/me.stats.maxMp)*100 + "%";
-    document.getElementById("xp-bar").style.width = (me.xp/(me.level*100))*100 + "%";
-    document.getElementById("lvl-txt").innerText = `${state.theme==="#102"?"INFERNO":state.theme==="#311"?"NIGHTMARE":"NORMAL"} [${me.level}]`;
+    
+    // Atualização de Barras (PC DOM UI) - Melhorada na V20
+    if (!isMobile) {
+        const hpPct = (me.hp/me.stats.maxHp)*100;
+        const mpPct = (me.mp/me.stats.maxMp)*100;
+        const xpPct = (me.xp/(me.level*100))*100;
+
+        document.getElementById("hp-bar").style.width = hpPct + "%";
+        document.getElementById("mp-bar").style.width = mpPct + "%";
+        document.getElementById("xp-bar").style.width = xpPct + "%";
+        
+        document.getElementById("hp-txt").innerText = `HP: ${Math.floor(me.hp)}/${me.stats.maxHp}`;
+        document.getElementById("mp-txt").innerText = `MP: ${Math.floor(me.mp)}/${me.stats.maxMp}`;
+        document.getElementById("xp-txt").innerText = `${Math.floor(xpPct)}%`;
+
+        let diffName = state.theme === "#f00" ? "HORDE I" : state.theme === "#900" ? "HORDE II" : state.theme === "#102" ? "HELL" : state.theme === "#311" ? "NIGHTMARE" : "NORMAL";
+        document.getElementById("lvl-txt").innerText = `${diffName} [${me.level}]`;
+    }
+
+    // Atualização de Status e Inventário (Comum)
     document.getElementById("cp-pts").innerText = me.pts;
     document.getElementById("val-str").innerText = me.attrs.str;
     document.getElementById("val-dex").innerText = me.attrs.dex;
@@ -227,6 +355,7 @@ function getIcon(key) {
     if(key.includes("helm")) return "🪖"; if(key.includes("armor")) return "👕"; if(key.includes("wood")) return "🪵";
     if(key.includes("stone")) return "🪨"; if(key.includes("ruby")) return "💎"; if(key.includes("sapphire")) return "🔹";
     if(key.includes("emerald")) return "🟩"; if(key.includes("diamond")) return "⚪";
+    if(key.includes("topaz")) return "🔶"; if(key.includes("amethyst")) return "🟣";
     return "📦";
 }
 
@@ -327,7 +456,7 @@ function draw() {
 
         ctx.save(); ctx.translate(x, y);
         let blink = e.hitFlash>0; let dirX = (e.vx > 0.01) ? 1 : (e.vx < -0.01) ? -1 : 1; 
-        if(e.id === myId) dirX = (mouse.x > canvas.width/2) ? 1 : -1;
+        if(e.id === myId) dirX = (isMobile && (keys.a || keys.d || keys.w || keys.s)) ? (keys.d||keys.w)?1:-1 : ((mouse.x > canvas.width/2) ? 1 : -1); // Força a direção de movimento no mobile
         ctx.scale(dirX, 1);
 
         // --- ART ---
@@ -343,6 +472,9 @@ function draw() {
             ctx.fillStyle="#f00"; ctx.fillRect(-8,-8,4,4); ctx.fillRect(4,-8,4,4);
             ctx.shadowBlur=0;
         }
+        else if(e.type === "imp") { ctx.fillStyle = blink?"#fff":e.color||"#f80"; ctx.fillRect(-4,-4,8,8); ctx.fillStyle="#000"; ctx.fillRect(-2,-2,4,4); }
+        else if(e.type === "succubus") { ctx.fillStyle = blink?"#fff":e.color||"#f0f"; ctx.fillRect(-5,-8,10,14); ctx.fillStyle="#000"; ctx.fillRect(-3,-4,6,2); }
+        else if(e.type === "hellknight") { ctx.fillStyle = blink?"#fff":e.color||"#900"; ctx.fillRect(-7, -8, 14, 14); ctx.fillStyle = "#000"; ctx.fillRect(-8, -10, 16, 2); }
         else if(e.type === "rat") { ctx.fillStyle = blink?"#fff":"#864"; ctx.fillRect(-5, 0, 10, 6); ctx.fillStyle = "#f88"; ctx.fillRect(-6, 2, 2, 2); ctx.fillRect(5, 4, 4, 1); } 
         else if(e.type === "bat") { ctx.fillStyle = blink?"#fff":"#444"; ctx.beginPath(); ctx.moveTo(0,0); ctx.lineTo(-8,-5); ctx.lineTo(0,-2); ctx.lineTo(8,-5); ctx.fill(); } 
         else if(e.type === "slime") { ctx.fillStyle = blink?"#fff":`rgba(0,255,0,0.7)`; ctx.fillRect(-5, -2, 10, 8); ctx.fillStyle = "#0f0"; ctx.fillRect(-3, -4, 6, 2); }
@@ -393,9 +525,43 @@ function draw() {
     });
 
     for(let i=texts.length-1; i>=0; i--){ let t=texts[i]; t.y+=t.vy; t.life--; ctx.fillStyle=t.color; ctx.font="10px Courier New"; ctx.fillText(t.val, ox+t.x*SCALE, oy+t.y*SCALE); if(t.life<=0) texts.splice(i,1); }
+
+    // RENDERIZAÇÃO DE HUD MOBILE (dentro do canvas, no topo)
+    if (isMobile && me) {
+        ctx.fillStyle = "rgba(0,0,0,0.5)"; ctx.fillRect(0, 0, canvas.width, 30);
+        
+        ctx.fillStyle = "#0f0"; ctx.font = "12px Courier New"; ctx.textAlign = "left";
+        let diffName = state.theme === "#f00" ? "HORDE I" : state.theme === "#900" ? "HORDE II" : state.theme === "#102" ? "HELL" : state.theme === "#311" ? "NIGHTMARE" : "NORMAL";
+        ctx.fillText(`LVL ${me.level} ${diffName}`, 5, 12);
+        
+        const barX = 5;
+        const barY = 15;
+        const barW = canvas.width / 4;
+        
+        // HP
+        ctx.fillStyle = "#111"; ctx.fillRect(barX, barY, barW, 5);
+        ctx.fillStyle = "#f00"; ctx.fillRect(barX, barY, barW * (me.hp/me.stats.maxHp), 5);
+        
+        // MP
+        ctx.fillStyle = "#111"; ctx.fillRect(barX + barW + 5, barY, barW, 5);
+        ctx.fillStyle = "#00f"; ctx.fillRect(barX + barW + 5, barY, barW * (me.mp/me.stats.maxMp), 5);
+        
+        // XP
+        ctx.fillStyle = "#111"; ctx.fillRect(barX, barY + 6, (barW*2) + 5, 3);
+        ctx.fillStyle = "#fb0"; ctx.fillRect(barX, barY + 6, ((barW*2) + 5) * (me.xp/(me.level*100)), 3);
+
+        // Inventory/Stats Button (Área de clique foi ajustada no handleTouchStart)
+        ctx.fillStyle = "#0f0"; ctx.font = "bold 18px Courier New"; ctx.textAlign = "right";
+        ctx.fillText("☰", canvas.width - 10, 20);
+    }
 }
 
-window.login = () => { AudioCtrl.init(); socket.emit("login", document.getElementById("username").value); };
+window.login = () => { 
+    // Tenta resumir o contexto de áudio se for no mobile e o login for bem-sucedido
+    if (AudioCtrl.ctx.state === 'suspended') AudioCtrl.ctx.resume().catch(err => console.error("Could not resume AudioContext after login click", err));
+    AudioCtrl.init(); 
+    socket.emit("login", document.getElementById("username").value); 
+};
 window.create = () => socket.emit("create_char", {name:document.getElementById("cname").value, cls:document.getElementById("cclass").value});
 window.addStat = (s) => socket.emit("add_stat", s);
 window.buy = (idx) => socket.emit("buy", shopItems[idx]);
