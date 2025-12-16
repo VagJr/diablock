@@ -12,7 +12,27 @@ let inputState = { x:0, y:0, block: false };
 let shopItems = [];
 const tooltip = document.getElementById("tooltip");
 let dragItem = null;
-const isMobile = window.matchMedia("(max-width: 768px)").matches;
+let isMobile = window.matchMedia("(max-width: 768px)").matches;
+let gamepad = null;
+let gamepadActive = false;
+
+// Variáveis de estado global para controle (leitura pelo draw)
+let isGamepadAiming = false;
+let isMouseAiming = false; 
+
+window.addEventListener("gamepadconnected", (e) => {
+    console.log("Gamepad connected:", e.gamepad.id);
+    gamepad = e.gamepad;
+    gamepadActive = true;
+    document.getElementById("mobile-controls").style.display = "none";
+});
+window.addEventListener("gamepaddisconnected", (e) => {
+    console.log("Gamepad disconnected:", e.gamepad.id);
+    gamepad = null;
+    gamepadActive = false;
+    if (isMobile) document.getElementById("mobile-controls").style.display = "block";
+});
+
 
 // --- AUDIO SYSTEM (REVERTED TO STABLE VERSION) ---
 const AudioCtrl = {
@@ -20,7 +40,6 @@ const AudioCtrl = {
     bgm: null,
     muted: false,
     init: function() {
-        // Tenta tocar o BGM logo após o login (gesto do usuário)
         if(!this.bgm) {
             this.bgm = new Audio("/assets/bgm.mp3");
             this.bgm.loop = true;
@@ -28,7 +47,6 @@ const AudioCtrl = {
             this.bgm.play().catch(e => console.log("Click/Tap required to play audio."));
         }
     },
-    // Funções SFX (sem resume() embutido, confiando no estado inicial)
     playTone: function(freq, type, dur, vol=0.1) {
         if(this.muted || this.ctx.state === 'suspended') return;
         const o = this.ctx.createOscillator(); const g = this.ctx.createGain();
@@ -72,7 +90,7 @@ socket.on("char_list", list => {
         d.onclick=()=>{ 
             socket.emit("enter_game", n); 
             document.getElementById("menu").style.display="none"; 
-            AudioCtrl.init(); // Tenta iniciar o BGM no login (gating the experience)
+            AudioCtrl.init();
         };
         l.appendChild(d);
     }
@@ -99,22 +117,86 @@ socket.on("chat", d => {
 });
 socket.on("open_shop", items => { shopItems = items; uiState.shop = true; updateUI(); });
 
-// --- INPUT HANDLERS (PC) ---
-const keys = { w:false, a:false, s:false, d:false, q:false };
+// --- INPUT HANDLERS ---
+const keys = { w:false, a:false, s:false, d:false, q:false, game_x: 0, game_y: 0, aim_x: 0, aim_y: 0 };
 function sendInput() {
     let dx = keys.a?-1:keys.d?1:0, dy = keys.w?-1:keys.s?1:0;
+    
+    // Sobrescreve com input do Gamepad (se ativo e movendo)
+    if (gamepadActive && (Math.abs(keys.game_x) > 0.1 || Math.abs(keys.game_y) > 0.1)) {
+        dx = keys.game_x;
+        dy = keys.game_y;
+    }
+    
+    // Envia o estado
     if(dx!==inputState.x || dy!==inputState.y || keys.q !== inputState.block){ inputState={x:dx,y:dy,block:keys.q}; socket.emit("input", inputState); }
 }
-function getAngle() { return Math.atan2((mouse.y - canvas.height/2), (mouse.x - canvas.width/2)); }
-// Nova função para obter ângulo baseado no movimento (para mobile)
-function getMovementAngle() {
-    const dx = keys.d - keys.a;
-    const dy = keys.s - keys.w;
-    if (dx === 0 && dy === 0) {
-        return me ? Math.atan2(me.vy || 0, me.vx || 1) : 0;
+
+function getMouseAngle() { return Math.atan2((mouse.y - canvas.height/2), (mouse.x - canvas.width/2)); }
+
+// Encontra o inimigo mais próximo para Auto-Aim
+function getClosestEnemyAngle() {
+    if (!me || !state.mb) return null;
+    let closestEnemy = null;
+    let minDistSq = Infinity;
+
+    Object.values(state.mb).forEach(m => {
+        if (m.ai === "static" || m.ai === "npc" || m.ai === "resource" || m.hp <= 0) return;
+        
+        const dx = m.x - me.x;
+        const dy = m.y - me.y;
+        const distSq = dx * dx + dy * dy;
+
+        // Limita o auto-aim a 8 unidades de distância
+        if (distSq < minDistSq && distSq < 64) { 
+            minDistSq = distSq;
+            closestEnemy = m;
+        }
+    });
+
+    if (closestEnemy) {
+        return Math.atan2(closestEnemy.y - me.y, closestEnemy.x - me.x);
     }
-    return Math.atan2(dy, dx);
+    return null;
 }
+
+// Retorna o ângulo de ataque baseado na prioridade (Mira Manual > Auto-Aim > Movimento)
+function getAttackAngle() {
+    // 1. Prioridade (Mira Manual Forçada: Mouse ou Gamepad Right Stick)
+    const isMouseAimingLocal = !isMobile && (mouse.x !== canvas.width / 2 || mouse.y !== canvas.height / 2);
+    const isGamepadAimingLocal = gamepadActive && (Math.abs(keys.aim_x) > 0.3 || Math.abs(keys.aim_y) > 0.3);
+    
+    // ATUALIZA VARIÁVEIS GLOBAIS DE MIRA para uso no draw()
+    isMouseAiming = isMouseAimingLocal;
+    isGamepadAiming = isGamepadAimingLocal;
+
+
+    if (isMouseAimingLocal && !gamepadActive) { // Mouse só funciona para PC
+        return getMouseAngle();
+    }
+    if (isGamepadAimingLocal) {
+        return Math.atan2(keys.aim_y, keys.aim_x);
+    }
+
+    // 2. Auto-Aim (Trava no inimigo mais próximo, independente do movimento do Left Stick)
+    const closestAngle = getClosestEnemyAngle();
+    if (closestAngle !== null) {
+        return closestAngle;
+    }
+
+    // 3. Mira de Movimento (Fallback se não houver alvo e estiver se movendo)
+    const isMoving = (keys.d - keys.a !== 0) || (keys.s - keys.w !== 0) || (Math.abs(keys.game_x) > 0.1) || (Math.abs(keys.game_y) > 0.1);
+    
+    if (isMoving) {
+        const dx = (keys.d - keys.a) || keys.game_x;
+        const dy = (keys.s - keys.w) || keys.game_y;
+        return Math.atan2(dy, dx);
+    }
+
+    // 4. Fallback (Última direção ou padrão 0)
+    return me ? Math.atan2(me.vy || 0, me.vx || 1) : 0;
+}
+
 
 // CHAT INPUT
 const chatInput = document.getElementById("chat-input");
@@ -127,6 +209,17 @@ chatInput.onkeydown = (e) => {
         canvas.focus();
     }
 };
+
+// Define as funções globais para o HTML (login e create)
+window.login = () => { 
+    if (AudioCtrl.ctx.state === 'suspended') AudioCtrl.ctx.resume().catch(err => console.error("Could not resume AudioContext after login click", err));
+    AudioCtrl.init(); 
+    socket.emit("login", document.getElementById("username").value); 
+};
+window.create = () => socket.emit("create_char", {name:document.getElementById("cname").value, cls:document.getElementById("cclass").value});
+window.addStat = (s) => socket.emit("add_stat", s);
+window.buy = (idx) => socket.emit("buy", shopItems[idx]);
+
 
 window.onkeydown = e => {
     if (document.getElementById("menu").style.display !== "none") return;
@@ -143,31 +236,33 @@ window.onkeydown = e => {
     if(k==="c") uiState.char = !uiState.char; 
     if(k==="k") uiState.craft = !uiState.craft;
     if(k==="escape") { uiState.inv=false; uiState.char=false; uiState.shop=false; uiState.craft=false; uiState.chat=false; document.getElementById("chat-container").style.display="none"; }
-    if(k===" ") { socket.emit("dash", getAngle()); }
+    if(k===" ") { socket.emit("dash", getAttackAngle()); }
     if(k==="q") { socket.emit("potion"); }
     updateUI();
 };
 window.onkeyup = e => { let k=e.key.toLowerCase(); if(keys.hasOwnProperty(k)){ keys[k]=false; sendInput(); } };
 window.onmousemove = e => { mouse.x=e.clientX; mouse.y=e.clientY; tooltip.style.left = (mouse.x+10)+"px"; tooltip.style.top = (mouse.y+10)+"px"; };
 window.onmousedown = e => {
-    // Ação do mouse/clique para garantir que o AudioContext comece
     if (AudioCtrl.ctx.state === 'suspended') AudioCtrl.ctx.resume().catch(err => console.error("Could not resume AudioContext on mousedown", err));
     AudioCtrl.init();
     
-    if(!me || uiState.chat || isMobile || document.getElementById("menu").style.display !== "none") return;
+    if(!me || uiState.chat || isMobile || gamepadActive || document.getElementById("menu").style.display !== "none") return;
     const isPanel = (id) => { const r = document.getElementById(id).getBoundingClientRect(); return mouse.x > r.left && mouse.x < r.right && mouse.y > r.top && mouse.y < r.bottom && document.getElementById(id).style.display==="block"; };
     if(isPanel("inventory") || isPanel("char-panel") || isPanel("shop-panel") || isPanel("craft-panel")) return;
-    const ang = getAngle();
+    
+    const ang = getAttackAngle(); 
+    
     if(e.button===0) socket.emit("attack", ang);
     if(e.button===2) socket.emit("skill", {idx:1, angle:ang});
 };
 
 
-// --- INPUT HANDLERS (MOBILE) ---
+// --- INPUT HANDLERS (MOBILE/TOUCH) ---
 let touchMap = {};
 
 const handleTouchStart = (e) => {
-    // Tenta iniciar o áudio no toque
+    if (gamepadActive) return;
+
     if (AudioCtrl.ctx.state === 'suspended') AudioCtrl.ctx.resume().catch(err => console.error("Could not resume AudioContext on touch", err));
     AudioCtrl.init();
 
@@ -190,11 +285,11 @@ const handleTouchStart = (e) => {
             }
         } 
         
-        // 2. Action Buttons: Usa getMovementAngle()
+        // 2. Action Buttons: Usa getAttackAngle()
         else if (target.closest('.action-btn')) {
             const action = target.closest('.action-btn').dataset.action;
-            const ang = getMovementAngle(); // Mira na direção do movimento
-
+            const ang = getAttackAngle(); // Usa mira automática/direcional
+            
             if (action === "attack") {
                 socket.emit("attack", ang);
             } else if (action === "skill") {
@@ -208,26 +303,24 @@ const handleTouchStart = (e) => {
             processed = true;
         }
         
-        // 3. Menus de HUD (Abrir/Fechar)
-        // **LÓGICA DE BOTÕES DE MENU DEDICADOS**
+        // 3. Menus de HUD (INV/CHR)
         else if (target.closest('#btn-inv-mobile')) {
             uiState.inv = !uiState.inv;
-            uiState.char = false; // Fecha o outro painel
+            uiState.char = false;
             updateUI();
             processed = true;
         }
         else if (target.closest('#btn-char-mobile')) {
             uiState.char = !uiState.char;
-            uiState.inv = false; // Fecha o outro painel
+            uiState.inv = false;
             updateUI();
             processed = true;
         }
         // Lógica de fallback para o ícone "☰" desenhado no canvas
         else if (isMobile) {
             const rect = canvas.getBoundingClientRect();
-            // Área de toque aproximada do botão de menu (canto superior direito do HUD Mobile)
             if (touch.clientX > rect.width - 50 && touch.clientY < 30) { 
-                 uiState.inv = !uiState.inv; // Assume INV como padrão do '☰'
+                 uiState.inv = !uiState.inv;
                  updateUI();
                  processed = true;
             }
@@ -255,6 +348,90 @@ const handleTouchEnd = (e) => {
 document.addEventListener('touchstart', handleTouchStart, { passive: false });
 document.addEventListener('touchend', handleTouchEnd);
 document.addEventListener('touchcancel', handleTouchEnd);
+
+// --- GAMEPAD POLLING AND MAPPING ---
+let lastButtons = {};
+
+function handleGamepadInput() {
+    const gamepads = navigator.getGamepads ? navigator.getGamepads() : [];
+    gamepad = gamepads[0]; 
+
+    if (!gamepad) {
+        gamepadActive = false;
+        if (isMobile) document.getElementById("mobile-controls").style.display = "block";
+        return;
+    }
+    
+    gamepadActive = true;
+    document.getElementById("mobile-controls").style.display = "none";
+    
+    gamepad = navigator.getGamepads()[gamepad.index];
+
+    // --- 1. MOVEMENT (AXES 0, 1: Left Stick) ---
+    const deadzone = 0.3;
+    const stickX = gamepad.axes[0] || 0;
+    const stickY = gamepad.axes[1] || 0;
+    
+    keys.game_x = (Math.abs(stickX) > deadzone) ? stickX : 0;
+    keys.game_y = (Math.abs(stickY) > deadzone) ? stickY : 0;
+    
+    // Mapeamento do D-Pad (Botões 12, 13, 14, 15)
+    if (gamepad.buttons[14]?.pressed) keys.game_x = -1; 
+    if (gamepad.buttons[15]?.pressed) keys.game_x = 1;  
+    if (gamepad.buttons[12]?.pressed) keys.game_y = -1; 
+    if (gamepad.buttons[13]?.pressed) keys.game_y = 1;  
+
+    // --- 2. AIMING (AXES 2, 3: Right Stick) ---
+    const aimX = gamepad.axes[2] || 0; 
+    const aimY = gamepad.axes[3] || 0;
+    
+    keys.aim_x = (Math.abs(aimX) > deadzone) ? aimX : 0;
+    keys.aim_y = (Math.abs(aimY) > deadzone) ? aimY : 0;
+
+    sendInput(); // Envia o novo estado de movimento
+
+    // --- 3. ACTIONS (BUTTONS) ---
+    
+    const processButton = (buttonIndex, action) => {
+        const button = gamepad.buttons[buttonIndex];
+        const isPressed = button?.pressed;
+        const wasPressed = lastButtons[buttonIndex] || false;
+        
+        if (isPressed && !wasPressed) {
+            if (AudioCtrl.ctx.state === 'suspended') AudioCtrl.ctx.resume().catch(err => console.error("Could not resume AudioContext on button press", err));
+
+            const ang = getAttackAngle(); // Usa mira baseada na prioridade
+            
+            if (action === 'attack') {
+                socket.emit("attack", ang);
+            } else if (action === 'skill') {
+                socket.emit("skill", {idx:1, angle:ang});
+            } else if (action === 'dash') {
+                 socket.emit("dash", ang);
+            } else if (action === 'potion') {
+                 socket.emit("potion");
+            } else if (action === 'inventory') {
+                uiState.inv = !uiState.inv;
+                uiState.char = false;
+                updateUI();
+            } else if (action === 'character') {
+                uiState.char = !uiState.char;
+                uiState.inv = false;
+                updateUI();
+            }
+        }
+        lastButtons[buttonIndex] = isPressed;
+    };
+
+    // Mapeamento de Botões Padrão (Xbox Layout)
+    processButton(0, 'attack');       // A (Bottom Face)
+    processButton(1, 'skill');        // B (Right Face)
+    processButton(3, 'dash');         // Y (Top Face)
+    processButton(4, 'potion');       // LB (Left Shoulder)
+    processButton(9, 'inventory');    // Start (Options)
+    processButton(8, 'character');    // Select (View/Back)
+}
+
 
 // --- UI AND DRAWING FUNCTIONS ---
 
@@ -380,6 +557,10 @@ function drawAura(x, y, color, intensity) {
 
 function draw() {
     requestAnimationFrame(draw);
+    
+    // --- GAMEPAD CHECK & POLLING ---
+    handleGamepadInput();
+    
     ctx.fillStyle = "#000"; ctx.fillRect(0,0,canvas.width,canvas.height);
     if(!me) return;
 
@@ -456,12 +637,33 @@ function draw() {
 
         ctx.save(); ctx.translate(x, y);
         let blink = e.hitFlash>0; let dirX = (e.vx > 0.01) ? 1 : (e.vx < -0.01) ? -1 : 1; 
-        if(e.id === myId) dirX = (isMobile && (keys.a || keys.d || keys.w || keys.s)) ? (keys.d||keys.w)?1:-1 : ((mouse.x > canvas.width/2) ? 1 : -1); // Força a direção de movimento no mobile
+        
+        // --- DETERMINAÇÃO DA DIREÇÃO VISUAL (dirX) ---
+        if (e.id === myId) {
+            if (isMouseAiming && !gamepadActive) {
+                // PC Mouse Aiming
+                dirX = Math.cos(getMouseAngle()) > 0 ? 1 : -1;
+            } else if (isGamepadAiming) {
+                // Gamepad Right Stick Aiming
+                dirX = Math.cos(Math.atan2(keys.aim_y, keys.aim_x)) > 0 ? 1 : -1;
+            } else {
+                // Keyboard/Left Stick Movement
+                const currentInputX = (keys.a ? -1 : keys.d ? 1 : keys.game_x);
+                if (Math.abs(currentInputX) > 0.1) {
+                    dirX = Math.sign(currentInputX);
+                } else if (Math.abs(e.vx) > 0.01) {
+                    dirX = Math.sign(e.vx); // Fallback para a velocidade
+                }
+            }
+        }
+        // ---------------------------------------------
+
+
         ctx.scale(dirX, 1);
 
         // --- ART ---
         if(e.ai==="resource") { 
-            if(e.drop==="wood") { ctx.fillStyle="#420"; ctx.fillRect(-3,-2,6,8); ctx.fillStyle="#141"; ctx.beginPath(); ctx.moveTo(0,-12); ctx.lineTo(-8,-2); ctx.lineTo(8,-2); ctx.fill(); }
+            if(e.drop==="wood") { ctx.fillStyle="#420"; ctx.fillRect(-3,-2,6,8); ctx.fillStyle="#141"; ctx.beginPath(); ctx.moveTo(0,-12); ctx.lineTo(-8,-2); ctx.lineTo(0,-2); ctx.lineTo(8,-2); ctx.fill(); }
             else { ctx.fillStyle="#666"; ctx.beginPath(); ctx.arc(0,0,7,0,Math.PI*2); ctx.fill(); }
         }
         else if(e.npc) { ctx.fillStyle="#0aa"; ctx.fillRect(-5,-8,10,14); ctx.fillStyle="#fff"; ctx.fillRect(-2,-6,4,4); ctx.font="10px monospace"; ctx.fillStyle="#0f0"; ctx.fillText("$", -3, -15); }
@@ -501,7 +703,7 @@ function draw() {
 
         // NAME & HP BAR
         if(e.hp < e.maxHp && e.ai!=="static" && !e.npc && e.ai!=="resource") { 
-            const pct = Math.max(0, e.hp/e.maxHp); 
+            const pct = Math.max(0, e.hp/e.stats.maxHp); 
             const bw = e.boss ? 30 : 16;
             ctx.fillStyle="#000"; ctx.fillRect(x-bw/2, y-s-4, bw, 3); 
             ctx.fillStyle=e.boss?"#d00":"#f00"; ctx.fillRect(x-bw/2, y-s-4, bw*pct, 3); 
@@ -527,7 +729,7 @@ function draw() {
     for(let i=texts.length-1; i>=0; i--){ let t=texts[i]; t.y+=t.vy; t.life--; ctx.fillStyle=t.color; ctx.font="10px Courier New"; ctx.fillText(t.val, ox+t.x*SCALE, oy+t.y*SCALE); if(t.life<=0) texts.splice(i,1); }
 
     // RENDERIZAÇÃO DE HUD MOBILE (dentro do canvas, no topo)
-    if (isMobile && me) {
+    if (isMobile && me && !gamepadActive) { // Renderiza apenas se não houver Gamepad ativo
         ctx.fillStyle = "rgba(0,0,0,0.5)"; ctx.fillRect(0, 0, canvas.width, 30);
         
         ctx.fillStyle = "#0f0"; ctx.font = "12px Courier New"; ctx.textAlign = "left";
@@ -556,14 +758,5 @@ function draw() {
     }
 }
 
-window.login = () => { 
-    // Tenta resumir o contexto de áudio se for no mobile e o login for bem-sucedido
-    if (AudioCtrl.ctx.state === 'suspended') AudioCtrl.ctx.resume().catch(err => console.error("Could not resume AudioContext after login click", err));
-    AudioCtrl.init(); 
-    socket.emit("login", document.getElementById("username").value); 
-};
-window.create = () => socket.emit("create_char", {name:document.getElementById("cname").value, cls:document.getElementById("cclass").value});
-window.addStat = (s) => socket.emit("add_stat", s);
-window.buy = (idx) => socket.emit("buy", shopItems[idx]);
-
+// Inicia o loop de desenho/jogo
 draw();

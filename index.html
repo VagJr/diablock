@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="utf-8"/>
-<title>DIABLOCK V20 - AUDIO & MOBILE COMBAT FIX</title>
+<title>DIABLOCK V22 - GAMEPAD AUTO-AIM</title>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Courier+New&display=swap');
@@ -80,17 +80,16 @@ h1 { text-shadow: 2px 2px #f00; color: #d00; }
 #dpad-left { left: 0; top: 33%; }
 #dpad-right { right: 0; top: 33%; }
 
-/* ACTION BUTTONS (Right Side) - Otimização de Layout */
+/* ACTION BUTTONS (Right Side) */
 #action-container { 
     right: 15px; 
     width: 160px; 
     height: 100px; 
     bottom: 5px; 
     position: absolute;
-    /* Usaremos posicionamento absoluto dentro para maior controle */
 }
 .action-btn { 
-    position: absolute; /* Para controlar a posição */
+    position: absolute; 
     width: 45px; 
     height: 45px; 
     border-radius: 50%; 
@@ -111,7 +110,7 @@ h1 { text-shadow: 2px 2px #f00; color: #d00; }
     font-size: 16px; 
     bottom: 5px; 
     right: 5px;
-    z-index: 2; /* Mais visível */
+    z-index: 2; 
 } 
 #btn-skill { 
     width: 40px; height: 40px; 
@@ -125,20 +124,20 @@ h1 { text-shadow: 2px 2px #f00; color: #d00; }
     font-size: 10px; 
     border-color: #fff; color: #fff;
     bottom: 5px; 
-    right: 65px; /* Ao lado do ATK */
+    right: 65px; 
 } 
 #btn-potion { 
     width: 35px; height: 35px; 
     font-size: 9px; 
     border-color: #f33; color: #f33;
     bottom: 60px; 
-    right: 55px; /* Posição superior esquerda dos botões de ação */
+    right: 55px; 
 }
 
-/* HUD MENU BUTTONS (INV/CHR) - MUDANÇA AQUI: Movidos para cima do action-container */
+/* HUD MENU BUTTONS (INV/CHR) - Ajuste final de altura */
 #mobile-menu-buttons {
     position: absolute; 
-    bottom: 110px; /* Posiciona acima da área de ação (altura aprox. 100px + 10px de margem) */
+    bottom: 110px; 
     right: 5px; 
     display: flex; 
     gap: 5px; 
@@ -256,7 +255,7 @@ h1 { text-shadow: 2px 2px #f00; color: #d00; }
 
 <div id="menu">
     <h1 style="font-size:50px; margin-bottom:0;">DIABLOCK</h1>
-    <p style="color:#d00; margin-bottom:20px;">V20 - AUDIO & MOBILE COMBAT FIX</p>
+    <p style="color:#d00; margin-bottom:20px;">V22 - GAMEPAD AUTO-AIM</p>
     <div id="login-form"><input type="text" id="username" placeholder="USER"><button class="btn" onclick="login()">LOGIN</button></div>
     <div id="char-select" style="display:none; text-align:center;">
         <div id="char-list" style="margin-bottom:20px;"></div>
