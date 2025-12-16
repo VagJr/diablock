@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="utf-8"/>
-<title>DIABLOCK V17.5 - CRAFTING</title>
+<title>DIABLOCK V18 - AURAS & CHAT</title>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Courier+New&display=swap');
 html,body{ margin:0; width:100%; height:100%; background:#000; overflow:hidden; font-family:'Courier New', monospace; user-select:none; color:#0f0; }
@@ -38,15 +38,10 @@ canvas{ width:100%; height:100%; image-rendering:pixelated; cursor: crosshair; d
 .craft-item:hover { background: #303; }
 input, select{ padding:10px; background:#000; border:2px solid #0f0; color:#0f0; margin:5px; font-family:inherit;}
 h1 { text-shadow: 2px 2px #f00; color: #d00; }
-/* NOVO: Display de Ouro no HUD */
-#hud-gold {
-    position: absolute;
-    top: 10px; left: 10px;
-    font-size: 18px;
-    color: #fb0;
-    font-weight: bold;
-    text-shadow: 1px 1px #000;
-}
+#hud-gold { position: absolute; top: 10px; left: 10px; font-size: 18px; color: #fb0; font-weight: bold; text-shadow: 1px 1px #000; }
+/* CHAT INPUT */
+#chat-container { position: absolute; bottom: 100px; left: 50%; transform: translateX(-50%); width: 300px; display: none; pointer-events: auto; }
+#chat-input { width: 100%; background: rgba(0,0,0,0.8); border: 1px solid #0f0; color: #fff; padding: 5px; font-family: inherit; }
 </style>
 </head>
 <body oncontextmenu="return false">
@@ -56,6 +51,7 @@ h1 { text-shadow: 2px 2px #f00; color: #d00; }
 
 <div id="ui-layer">
     <div id="hud-gold">GOLD: 0</div>
+    <div id="chat-container"><input type="text" id="chat-input" placeholder="Say something..." maxlength="30"></div>
     <div class="hud-bottom">
         <div class="bar-box">
             <div style="display:flex; justify-content:space-between; font-size:12px; color:#0f0; margin-bottom:2px;"><span>STATUS</span> <span id="lvl-txt">NORMAL [1]</span></div>
@@ -109,7 +105,7 @@ h1 { text-shadow: 2px 2px #f00; color: #d00; }
 
 <div id="menu">
     <h1 style="font-size:50px; margin-bottom:0;">DIABLOCK</h1>
-    <p style="color:#d00; margin-bottom:20px;">V17.5 - CRAFTING & BOSSES</p>
+    <p style="color:#d00; margin-bottom:20px;">V18 - AURAS & CHAT</p>
     <div id="login-form"><input type="text" id="username" placeholder="USER"><button class="btn" onclick="login()">LOGIN</button></div>
     <div id="char-select" style="display:none; text-align:center;">
         <div id="char-list" style="margin-bottom:20px;"></div>
