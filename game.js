@@ -13,11 +13,13 @@ let shopItems = [];
 const tooltip = document.getElementById("tooltip");
 let dragItem = null;
 // Aumentando a detecção de mobile para garantir que a interface minimalista seja usada
-let isMobile = window.matchMedia("(max-width: 1024px)").matches || /Mobi|Android/i.test(navigator.userAgent);
+let isMobile = /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent);
 let gamepad = null;
 let gamepadActive = false; 
 let focusIndex = 0;
 let focusArea = 'equipment'; 
+// NOVO: Log de Jogo
+const gameLog = document.getElementById("game-log");
 
 window.addEventListener("gamepadconnected", (e) => { gamepad = e.gamepad; gamepadActive = true; document.getElementById("mobile-controls").style.display = "none"; document.getElementById("mobile-menu-buttons").style.display = "flex"; });
 window.addEventListener("gamepaddisconnected", (e) => { gamepad = null; gamepadActive = false; });
@@ -64,6 +66,20 @@ function playSfx(name) {
 const resize = () => { canvas.width=innerWidth; canvas.height=innerHeight; ctx.imageSmoothingEnabled=false; isMobile = window.matchMedia("(max-width: 1024px)").matches || /Mobi|Android/i.test(navigator.userAgent); updateUI(); };
 resize(); window.onresize=resize;
 
+// NOVO: Função para adicionar mensagem ao Log de Jogo
+function addLog(msg, color="#0f0") {
+    const d = new Date();
+    const time = `[${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}]`;
+    const logEntry = document.createElement("div");
+    logEntry.innerHTML = `<span style="color:#666">${time}</span> <span style="color:${color}">${msg}</span>`;
+    gameLog.prepend(logEntry); // Adiciona ao topo
+    // Limita o número de logs
+    if (gameLog.children.length > 50) {
+        gameLog.removeChild(gameLog.lastChild);
+    }
+}
+
+
 socket.on("connect", () => myId=socket.id);
 socket.on("char_list", list => {
     document.getElementById("login-form").style.display="none"; document.getElementById("char-select").style.display="block";
@@ -101,6 +117,8 @@ socket.on("fx", d => {
 // Somente toca som, o balão vem pelo update "u"
 socket.on("chat", d => { playSfx("chat"); });
 socket.on("open_shop", items => { uiState.shop = true; shopItems = items; updateUI(); });
+// NOVO: Log de Jogo
+socket.on("log", d => addLog(d.msg, d.color));
 
 const keys = { w:false, a:false, s:false, d:false, q:false, game_x: 0, game_y: 0 };
 function sendInput() {
@@ -275,7 +293,7 @@ window.onmousedown = e => {
     if (AudioCtrl.ctx.state === 'suspended') AudioCtrl.ctx.resume();
     AudioCtrl.init();
     // Bloqueia se não for jogador, chat aberto, mobile ou gamepad ativo (já que eles usam touch/gamepad events)
-    if(!me || uiState.chat || isMobile || gamepadActive || document.getElementById("menu").style.display !== "none") return;
+    if(!me || uiState.chat || gamepadActive || document.getElementById("menu").style.display !== "none") return;
     
     // Verifica se clicou em um painel da UI (Inventário, Char, etc.)
     const isPanel = (id) => { const r = document.getElementById(id).getBoundingClientRect(); return mouse.x > r.left && mouse.x < r.right && mouse.y > r.top && mouse.y < r.bottom && document.getElementById(id).style.display==="block"; };
@@ -354,6 +372,7 @@ const handleTouchStart = (e) => {
             else if (action === "skill") socket.emit("skill", {idx:1, angle:ang}); 
             else if (action === "dash") socket.emit("dash", getDashAngle()); 
             else if (action === "potion") socket.emit("potion");
+            else if (action === "block") keys.q = !keys.q; sendInput(); // NOVO: Botão de Bloqueio (Q)
             processed = true;
         }
         else if (target.closest('#btn-inv-mobile')) { uiState.inv = !uiState.inv; uiState.char = false; uiState.craft = false; updateUI(); processed = true; } // Fecha Crafting
@@ -471,6 +490,23 @@ function handleGamepadNavigation(direction) {
         lastNavTimestamp = Date.now();
         return; 
     }
+    // NOVO: Navegação no Shop
+    else if (uiState.shop) {
+        elements = Array.from(document.querySelectorAll('#shop-grid .slot')); 
+        cols = 5; 
+        focusArea = 'shop';
+        
+        let newIndex = focusIndex;
+        if (direction === 'left') newIndex--; 
+        else if (direction === 'right') newIndex++; 
+        else if (direction === 'up') newIndex -= cols; 
+        else if (direction === 'down') newIndex += cols;
+        
+        focusIndex = Math.max(0, Math.min(newIndex, elements.length - 1));
+        updateUI();
+        lastNavTimestamp = Date.now();
+        return; 
+    }
     else { return; } // Nenhum menu aberto
 
     maxIndex = elements.length - 1;
@@ -513,6 +549,11 @@ function handleGamepadNavigation(direction) {
     lastNavTimestamp = Date.now();
 }
 
+function closeAllMenus() {
+    uiState.inv=false; uiState.char=false; uiState.shop=false; uiState.craft=false;
+    updateUI();
+}
+
 function handleGamepadAction() {
     if (!me || !(uiState.inv || uiState.char || uiState.shop || uiState.craft)) return;
     
@@ -523,9 +564,11 @@ function handleGamepadAction() {
         if (focusIndex >= 0 && focusIndex <= 4) { 
             // Slots de equipamento (0 a 4)
             const slotName = eq_slots[focusIndex];
-            // Ação primária: Unequip
-            if (me.equipment[slotName]) {
-                socket.emit("unequip", slotName);
+            // CORREÇÃO: Usar poção no slot de poção, desequipar outros
+            if (slotName === "potion") {
+                 socket.emit("potion");
+            } else if (me.equipment[slotName]) {
+                 socket.emit("unequip", slotName);
             }
         } else if (focusIndex >= 5 && focusIndex <= 7) {
             // Botões de Atributo (5 a 7)
@@ -540,25 +583,30 @@ function handleGamepadAction() {
         // Inventário
         const item = me.inventory[focusIndex];
         if (item) { 
-            if (item.slot && item.type !== "material" && item.type !== "consumable") {
+            if (item.key === "potion") {
+                // CORREÇÃO: Ação primária no inventário usa poção
+                socket.emit("potion");
+            } else if (item.slot && item.type !== "material" && item.type !== "consumable") {
                 // Ação primária: Equipar
                 socket.emit("equip", focusIndex);
-            } else if (item.key === "potion") {
-                // Ação primária: Usar Poção
-                socket.emit("potion"); 
-            }
+            } 
         }
-    } else if (uiState.craft && recipes.length > 0) { // NOVO: Ação Crafting
+    } else if (uiState.craft && recipes.length > 0) { 
         const recipe = recipes[focusIndex];
         if (recipe) {
             socket.emit("craft", {action:"create", recipeIdx: focusIndex});
+        }
+    } else if (uiState.shop && shopItems.length > 0) {
+        const item = shopItems[focusIndex];
+        if (item) {
+            window.buy(focusIndex); // Chama função de compra
         }
     }
     updateUI();
 }
 
 function handleGamepadSecondaryAction() { 
-    if (!me || !(uiState.inv || uiState.char || uiState.shop || uiState.craft)) return;
+    if (!me) return;
     
     if (uiState.inv && me.inventory.length > 0) {
         // Ação secundária: Dropar (Apenas no Inventário)
@@ -567,9 +615,23 @@ function handleGamepadSecondaryAction() {
             socket.emit("drop", focusIndex);
             if (focusIndex > 0) focusIndex = Math.max(0, focusIndex - 1);
         }
-    } else if (uiState.char || uiState.craft || uiState.shop) {
-        // Ação secundária: Cancelar/Fechar Menu (para consistência)
-        uiState.inv = false; uiState.char = false; uiState.shop = false; uiState.craft = false;
+    } else if (uiState.shop) {
+        // NOVO: Ação secundária: Vender (Shop)
+        // Se o foco estiver no inventário, vende; caso contrário, fecha
+        if (focusArea === 'inventory' && me.inventory.length > 0 && focusIndex < me.inventory.length) {
+            const item = me.inventory[focusIndex];
+            if (item) {
+                socket.emit("sell", focusIndex);
+                if (focusIndex > 0) focusIndex = Math.max(0, focusIndex - 1);
+            } else {
+                 closeAllMenus();
+            }
+        } else {
+            closeAllMenus();
+        }
+    } else {
+        // Ação secundária: Cancelar/Fechar Menu
+        closeAllMenus();
     }
     updateUI(); 
 }
@@ -608,8 +670,8 @@ function handleGamepadInput() {
             
             // Lógica de Menus (A/X para Ação Primária, B/Circle para Ação Secundária)
             if (uiState.inv || uiState.char || uiState.shop || uiState.craft) {
-                if (action === 'attack') handleGamepadAction(); // A/Cross (Equip/Add Stat/Craft)
-                if (action === 'skill') handleGamepadSecondaryAction(); // B/Circle (Drop/Cancel)
+                if (action === 'attack') handleGamepadAction(); // A/Cross (Equip/Add Stat/Craft/Buy)
+                if (action === 'skill') handleGamepadSecondaryAction(); // B/Circle (Drop/Sell/Cancel)
             } 
             // Lógica de Combate
             else {
@@ -635,7 +697,7 @@ function handleGamepadInput() {
     // Mapeamento Botões Gamepad (Xbox/PS)
     processButton(0, 'attack'); 
     processButton(1, 'skill'); 
-    processButton(2, 'block'); 
+    processButton(2, 'block'); // NOVO: Botão 2 (X/Square) para Block
     processButton(3, 'dash'); 
     processButton(4, 'potion'); 
     processButton(5, 'craft'); // Botão 5 (RB/R1) para Crafting
@@ -697,11 +759,17 @@ function updateUI() {
 
     document.getElementById("cp-pts").innerText = me.pts;
     document.getElementById("val-str").innerText = me.attrs.str; document.getElementById("val-dex").innerText = me.attrs.dex; document.getElementById("val-int").innerText = me.attrs.int;
-    document.getElementById("stat-dmg").innerText = me.stats.dmg + ` (CRIT: ${Math.floor(me.stats.crit*100)}%)`; document.getElementById("stat-spd").innerText = Math.floor(me.stats.spd*100);
+    document.getElementById("stat-dmg").innerText = me.stats.dmg + ` (CRIT: ${Math.floor((me.stats.crit || 0.01)*100)}%)`; document.getElementById("stat-spd").innerText = Math.floor(me.stats.spd*100);
     document.getElementById("hud-gold").innerText = "GOLD: " + me.gold;
 
     const uiActionButtons = document.getElementById("ui-action-buttons");
-    if (uiState.inv || uiState.char || uiState.shop || uiState.craft) { uiActionButtons.style.display = 'flex'; } else { uiActionButtons.style.display = 'none'; hideTooltip(); }
+    if (uiState.inv || uiState.char || uiState.shop || uiState.craft) { 
+        uiActionButtons.style.display = 'flex'; 
+        hideTooltip(); 
+    } else { 
+        uiActionButtons.style.display = 'none'; 
+        hideTooltip(); 
+    }
 
     document.getElementById("inventory").style.display = uiState.inv ? "block" : "none";
     document.getElementById("char-panel").style.display = uiState.char ? "block" : "none";
@@ -719,7 +787,12 @@ function updateUI() {
             el.style.outline = '2px solid yellow'; el.style.outlineOffset = '2px'; 
             if (me.equipment[slot]) {
                 showTooltip(me.equipment[slot]); 
-                document.getElementById('ui-btn-equip').innerText = 'DESEQUIPAR (A)';
+                // CORREÇÃO: Potion usa, outros desequipam
+                if (slot === 'potion') {
+                    document.getElementById('ui-btn-equip').innerText = 'USAR (A)';
+                } else {
+                    document.getElementById('ui-btn-equip').innerText = 'DESEQUIPAR (A)';
+                }
             } else { 
                 hideTooltip(); 
                 document.getElementById('ui-btn-equip').innerText = 'ESPAÇO VAZIO (A)'; 
@@ -731,7 +804,9 @@ function updateUI() {
         if(me.equipment[slot]) {
             const it = me.equipment[slot];
             el.style.borderColor = it.color; el.innerHTML = getIcon(it.key); el.style.boxShadow = it.rarity === "legendary" ? "0 0 5px #f0f" : "none";
-            el.onmouseover = () => showTooltip(it); el.onmouseout = hideTooltip; el.onclick = () => socket.emit("unequip", slot);
+            el.onmouseover = () => showTooltip(it); el.onmouseout = hideTooltip; 
+            // CORREÇÃO: Poção no slot de equipment usa ao clicar
+            el.onclick = () => slot === 'potion' ? socket.emit("potion") : socket.emit("unequip", slot);
         } else { 
             el.style.borderColor = "#0f0"; el.style.boxShadow = "none"; el.onclick=null; 
         }
@@ -756,20 +831,26 @@ function updateUI() {
     
     // LÓGICA DE FOCO E TOOLTIP PARA INVENTÁRIO
     const ig = document.getElementById("inv-grid"); ig.innerHTML = "";
-    if (uiState.inv && focusArea === 'inventory' && me.inventory.length > 0 && focusIndex >= me.inventory.length) focusIndex = Math.max(0, me.inventory.length - 1); else if (uiState.inv && me.inventory.length === 0) focusIndex = 0;
+    const invCount = me.inventory.length;
+    if (uiState.inv && focusArea === 'inventory' && invCount > 0 && focusIndex >= invCount) focusIndex = Math.max(0, invCount - 1); else if (uiState.inv && invCount === 0) focusIndex = 0;
 
+    // CORREÇÃO: Garante que o inventário é renderizado corretamente no PC e no Mobile.
     me.inventory.forEach((it, idx) => {
+        // CORREÇÃO: Adiciona verificação de item para evitar erro de item undefined
+        if (!it) return;
+
         const d = document.createElement("div"); d.className = "slot"; d.style.borderColor = it.color; d.style.outline = 'none'; d.style.outlineOffset = '0px';
         
         // Foco
         if (uiState.inv && focusArea === 'inventory' && focusIndex === idx) {
              d.style.outline = '2px solid yellow'; d.style.outlineOffset = '2px'; showTooltip(it); 
-             if (it.slot && it.type !== "material" && it.type !== "consumable") {
-                document.getElementById('ui-btn-equip').innerText = 'EQUIPAR (A)';
-             } else if (it.key === 'potion') {
+             if (it.key === 'potion') {
+                 // CORREÇÃO: Poção no inventário usa, não equipa
                  document.getElementById('ui-btn-equip').innerText = 'USAR POÇÃO (A)';
+             } else if (it.slot && it.type !== "material" && it.type !== "consumable") {
+                document.getElementById('ui-btn-equip').innerText = 'EQUIPAR (A)';
              } else { 
-                document.getElementById('ui-btn-equip').innerText = 'NÃO EQUIPÁVEL (A)';
+                document.getElementById('ui-btn-equip').innerText = 'ITEM DE CRAFT/VENDA';
              }
              document.getElementById('ui-btn-drop').innerText = 'DROPAR (B)';
         } 
@@ -784,7 +865,24 @@ function updateUI() {
         }
         d.draggable = true; d.ondragstart = (e) => { dragItem = { idx, item: it }; }; d.ondragover = (e) => e.preventDefault();
         d.ondrop = (e) => { e.preventDefault(); if(dragItem && dragItem.item.type === "gem" && it.type !== "gem") socket.emit("craft", {action:"socket", itemIdx:idx, gemIdx:dragItem.idx}); };
-        d.onmouseover = () => showTooltip(it); d.onmouseout = hideTooltip; d.oncontextmenu = (e) => { e.preventDefault(); if(it.slot) socket.emit("equip", idx); else socket.emit("drop", idx); };
+        d.onmouseover = () => showTooltip(it); d.onmouseout = hideTooltip; 
+        
+        // FIX: CLIQUE MOUSE 1 (ESQUERDO) - Removendo e.preventDefault()/e.stopPropagation() para clique simples.
+        d.onclick = () => { 
+            if(it.key === "potion") {
+                socket.emit("potion"); 
+            } else if(it.slot && it.type !== "material" && it.type !== "consumable") {
+                // EQUIPA o item no clique simples
+                socket.emit("equip", idx); 
+            }
+        }; 
+        
+        // MOUSE DIREITO (DROPAR)
+        d.oncontextmenu = (e) => { 
+            e.preventDefault(); 
+            socket.emit("drop", idx); 
+        };
+        
         ig.appendChild(d);
     });
 
@@ -793,7 +891,6 @@ function updateUI() {
         const craftList = document.getElementById("craft-list");
         const recipeElements = Array.from(craftList.children);
         
-        // Garante que o focusIndex não exceda o número de receitas
         if (focusIndex >= recipes.length) focusIndex = Math.max(0, recipes.length - 1);
         
         recipeElements.forEach((d, idx) => {
@@ -802,43 +899,296 @@ function updateUI() {
             if (focusArea === 'craft' && focusIndex === idx) {
                  d.style.outline = '2px solid yellow'; 
                  document.getElementById('ui-btn-equip').innerText = `CRAFT ${recipe.res.toUpperCase()} (A)`;
-                 document.getElementById('ui-btn-drop').innerText = 'CANCELAR (B)';
+                 document.getElementById('ui-btn-drop').innerText = 'SAIR (B)';
             }
         });
     }
     
-    // Caso especial: Inventário vazio
-    if (uiState.inv && (me.inventory.length === 0 || focusArea !== 'inventory')) { 
-        hideTooltip(); 
-        document.getElementById('ui-btn-equip').innerText = 'INVENTÁRIO VAZIO'; 
-        document.getElementById('ui-btn-drop').innerText = 'DROPAR (B)'; 
-    } 
-    if (!uiState.inv && !uiState.char && !uiState.craft && !uiState.shop) uiActionButtons.style.display = 'none';
-
+    // LÓGICA DE FOCO E BOTÕES PARA SHOP
     if(uiState.shop) {
         const sg = document.getElementById("shop-grid"); sg.innerHTML = "";
+        const shopCount = shopItems.length;
+        if (focusIndex >= shopCount) focusIndex = Math.max(0, shopCount - 1);
+
         shopItems.forEach((it, idx) => {
-            const d = document.createElement("div"); d.className = "slot"; d.style.borderColor = it.color;
+            const d = document.createElement("div"); d.className = "slot"; d.style.borderColor = it.color; d.style.outline = 'none'; d.style.outlineOffset = '0px';
+            
+            // Foco
+            if (focusArea === 'shop' && focusIndex === idx) {
+                d.style.outline = '2px solid yellow'; d.style.outlineOffset = '2px'; showTooltip(it);
+                document.getElementById('ui-btn-equip').innerText = `COMPRAR ${it.price}G (A)`;
+                document.getElementById('ui-btn-drop').innerText = 'VENDER/SAIR (B)';
+            }
+            
             d.innerHTML = getIcon(it.key); d.onmouseover = () => showTooltip(it); d.onmouseout = hideTooltip; d.onclick = () => window.buy(idx);
             sg.appendChild(d);
         });
+        document.getElementById("btn-shop-close").onclick = closeAllMenus;
     }
+    
+    // Caso especial: Inventário vazio
+    if ((uiState.inv && invCount === 0) || (uiState.shop && shopItems.length === 0)) { 
+        hideTooltip(); 
+        document.getElementById('ui-btn-equip').innerText = 'SEM ITENS'; 
+        document.getElementById('ui-btn-drop').innerText = 'SAIR (B)'; 
+    } 
+    
+    if (!uiState.inv && !uiState.char && !uiState.craft && !uiState.shop) uiActionButtons.style.display = 'none';
 }
 
+// Apenas a seção updateUI e getIcon precisa ser ajustada.
+
 function getIcon(key) {
-    if(key.includes("sword")) return "🗡️"; if(key.includes("axe")) return "🪓"; if(key.includes("dagger")) return "🔪";
-    if(key.includes("bow")) return "🏹"; if(key.includes("staff")) return "🪄"; if(key.includes("potion")) return "🧪";
-    if(key.includes("helm")) return "🪖"; if(key.includes("armor")) return "👕"; if(key.includes("wood")) return "🪵";
-    if(key.includes("stone")) return "🪨"; if(key.includes("ruby")) return "💎"; if(key.includes("sapphire")) return "🔹";
-    if(key.includes("emerald")) return "🟩"; if(key.includes("diamond")) return "⚪";
-    if(key.includes("topaz")) return "🔶"; if(key.includes("amethyst")) return "🟣"; if(key.includes("runa")) return "⚛️";
+    // CORREÇÃO: Adiciona verificação de key
+    if (!key) return "❓"; 
+    
+    // EXPANSÃO: Mais variação visual para tipos de armas
+    if(key.includes("sword")) {
+        const swords = ["🗡️", "⚔️", "🔪"]; return swords[Math.floor(Math.random()*swords.length)];
+    }
+    if(key.includes("axe")) {
+        const axes = ["🪓", "⚒️", "⛏️"]; return axes[Math.floor(Math.random()*axes.length)];
+    }
+    if(key.includes("dagger")) {
+        const daggers = ["🗡️", "🔪", "✂️"]; return daggers[Math.floor(Math.random()*daggers.length)];
+    }
+    if(key.includes("bow")) return "🏹"; 
+    if(key.includes("staff")) return "🪄"; 
+    if(key.includes("helm")) return "🪖"; 
+    if(key.includes("armor")) return "👕"; 
+    if(key.includes("potion")) return "🧪";
+    if(key.includes("wood")) return "🪵";
+    if(key.includes("stone")) return "🪨"; 
+    if(key.includes("ruby")) return "💎"; 
+    if(key.includes("sapphire")) return "🔹";
+    if(key.includes("emerald")) return "🟩"; 
+    if(key.includes("diamond")) return "⚪";
+    if(key.includes("topaz")) return "🔶"; 
+    if(key.includes("amethyst")) return "🟣"; 
+    if(key.includes("runa")) return "⚛️";
     return "📦";
 }
 
+function updateUI() {
+    if(!me) return;
+    const hpPct = (me.hp/me.stats.maxHp)*100; const mpPct = (me.mp/me.stats.maxMp)*100; const xpPct = (me.xp/(me.level*100))*100;
+    let diffName = state.theme === "#f00" ? "HORDE I" : state.theme === "#900" ? "HORDE II" : state.theme === "#102" ? "HELL" : state.theme === "#311" ? "NIGHTMARE" : "NORMAL";
+
+    // 1. ATUALIZAÇÃO DO HUD PC (Sempre atualiza)
+    document.getElementById("hp-bar").style.width = hpPct + "%"; 
+    document.getElementById("mp-bar").style.width = mpPct + "%"; 
+    document.getElementById("xp-bar").style.width = xpPct + "%";
+    document.getElementById("hp-txt").innerText = `HP: ${Math.floor(me.hp)}/${me.stats.maxHp}`; 
+    document.getElementById("mp-txt").innerText = `MP: ${Math.floor(me.mp)}/${me.stats.maxMp}`; 
+    document.getElementById("xp-txt").innerText = `${Math.floor(xpPct)}%`; 
+    document.getElementById("lvl-txt").innerText = `${diffName} [${me.level}]`;
+    
+    // 2. ATUALIZAÇÃO DO HUD MOBILE HORIZONTAL/MINIMALISTA (Sempre atualiza)
+    document.getElementById("h-lvl-txt").innerText = `${diffName} [${me.level}]`; 
+    document.getElementById("h-gold-txt").innerText = `${me.gold}G`;
+    document.getElementById("h-hp-bar").style.width = hpPct + "%"; 
+    document.getElementById("h-mp-bar").style.width = mpPct + "%"; 
+    document.getElementById("h-xp-bar").style.width = xpPct + "%";
+
+    document.getElementById("cp-pts").innerText = me.pts;
+    document.getElementById("val-str").innerText = me.attrs.str; document.getElementById("val-dex").innerText = me.attrs.dex; document.getElementById("val-int").innerText = me.attrs.int;
+    document.getElementById("stat-dmg").innerText = me.stats.dmg + ` (CRIT: ${Math.floor((me.stats.crit || 0.01)*100)}%)`; document.getElementById("stat-spd").innerText = Math.floor(me.stats.spd*100);
+    document.getElementById("hud-gold").innerText = "GOLD: " + me.gold;
+
+    const uiActionButtons = document.getElementById("ui-action-buttons");
+    if (uiState.inv || uiState.char || uiState.shop || uiState.craft) { 
+        uiActionButtons.style.display = 'flex'; 
+        hideTooltip(); 
+    } else { 
+        uiActionButtons.style.display = 'none'; 
+        hideTooltip(); 
+    }
+
+    document.getElementById("inventory").style.display = uiState.inv ? "block" : "none";
+    document.getElementById("char-panel").style.display = uiState.char ? "block" : "none";
+    document.getElementById("shop-panel").style.display = uiState.shop ? "block" : "none";
+    document.getElementById("craft-panel").style.display = uiState.craft ? "block" : "none";
+
+    // LÓGICA DE FOCO E TOOLTIP PARA EQUIPAMENTO E STATS
+    const eq_slots = ["head","body","hand","rune","potion"];
+    eq_slots.forEach((slot, index) => {
+        const el = document.getElementById("eq-"+slot); if (!el) return; 
+        el.innerHTML = ""; el.style.outline = 'none'; el.style.outlineOffset = '0px';
+        
+        // Foco
+        if (uiState.char && focusArea === 'equipment' && focusIndex === index) { 
+            el.style.outline = '2px solid yellow'; el.style.outlineOffset = '2px'; 
+            if (me.equipment[slot]) {
+                showTooltip(me.equipment[slot]); 
+                // CORREÇÃO: Potion usa, outros desequipam
+                if (slot === 'potion') {
+                    document.getElementById('ui-btn-equip').innerText = 'USAR (A)';
+                } else {
+                    document.getElementById('ui-btn-equip').innerText = 'DESEQUIPAR (A)';
+                }
+            } else { 
+                hideTooltip(); 
+                document.getElementById('ui-btn-equip').innerText = 'ESPAÇO VAZIO (A)'; 
+            }
+            document.getElementById('ui-btn-drop').innerText = 'CANCELAR (B)';
+        }
+        
+        // Item Visual e Interação
+        if(me.equipment[slot]) {
+            const it = me.equipment[slot];
+            el.style.borderColor = it.color; el.innerHTML = getIcon(it.key); el.style.boxShadow = it.rarity === "legendary" ? "0 0 5px #f0f" : "none";
+            el.onmouseover = () => showTooltip(it); el.onmouseout = hideTooltip; 
+            // CORREÇÃO: Poção no slot de equipment usa ao clicar. Outros desequipam.
+            el.onclick = () => slot === 'potion' ? socket.emit("potion") : socket.emit("unequip", slot);
+        } else { 
+            el.style.borderColor = "#0f0"; el.style.boxShadow = "none"; el.onclick=null; 
+        }
+    });
+    
+    // LÓGICA DE FOCO PARA STATS
+    const stat_btns = ['str', 'dex', 'int'];
+    const focusIndexOffset = eq_slots.length; // 5
+    stat_btns.forEach((stat, index) => {
+        const btn = document.getElementById("btn-"+stat);
+        const globalIndex = index + focusIndexOffset;
+        btn.style.outline = 'none'; btn.style.outlineOffset = '0px';
+        
+        if (uiState.char && focusArea === 'equipment' && focusIndex === globalIndex) {
+             btn.style.outline = '2px solid yellow'; btn.style.outlineOffset = '2px';
+             hideTooltip();
+             if (me.pts > 0) document.getElementById('ui-btn-equip').innerText = `ADICIONAR ${stat.toUpperCase()} (A)`; 
+             else document.getElementById('ui-btn-equip').innerText = `PONTOS ESGOTADOS`;
+             document.getElementById('ui-btn-drop').innerText = 'CANCELAR (B)';
+        }
+    });
+    
+    // LÓGICA DE FOCO E TOOLTIP PARA INVENTÁRIO
+    const ig = document.getElementById("inv-grid"); ig.innerHTML = "";
+    const invCount = me.inventory.length;
+    if (uiState.inv && focusArea === 'inventory' && invCount > 0 && focusIndex >= invCount) focusIndex = Math.max(0, invCount - 1); else if (uiState.inv && invCount === 0) focusIndex = 0;
+
+    // CORREÇÃO: Garante que o inventário é renderizado corretamente no PC e no Mobile.
+    me.inventory.forEach((it, idx) => {
+        // CORREÇÃO: Adiciona verificação de item para evitar erro de item undefined
+        if (!it) return;
+
+        const d = document.createElement("div"); d.className = "slot"; d.style.borderColor = it.color; d.style.outline = 'none'; d.style.outlineOffset = '0px';
+        
+        // Foco
+        if (uiState.inv && focusArea === 'inventory' && focusIndex === idx) {
+             d.style.outline = '2px solid yellow'; d.style.outlineOffset = '2px'; showTooltip(it); 
+             if (it.key === 'potion') {
+                 // CORREÇÃO: Poção no inventário usa, não equipa
+                 document.getElementById('ui-btn-equip').innerText = 'USAR POÇÃO (A)';
+             } else if (it.slot && it.type !== "material" && it.type !== "consumable") {
+                document.getElementById('ui-btn-equip').innerText = 'EQUIPAR (A)';
+             } else { 
+                document.getElementById('ui-btn-equip').innerText = 'ITEM DE CRAFT/VENDA';
+             }
+             document.getElementById('ui-btn-drop').innerText = 'DROPAR (B)';
+        } 
+        
+        // Item Visual
+        if(it.rarity === "legendary") d.style.boxShadow = "0 0 4px " + it.color;
+        d.innerHTML = getIcon(it.key);
+        if(it.sockets && it.sockets.length > 0) {
+            const socks = document.createElement("div"); socks.style.cssText="position:absolute;bottom:0;right:0;display:flex;";
+            it.sockets.forEach((s, i) => { const dot = document.createElement("div"); dot.style.cssText=`width:4px;height:4px;background:${it.gems[i]?it.gems[i].color:"#222"};border:1px solid #555;margin-right:1px;`; socks.appendChild(dot); });
+            d.appendChild(socks);
+        }
+        d.draggable = true; d.ondragstart = (e) => { dragItem = { idx, item: it }; }; d.ondragover = (e) => e.preventDefault();
+        d.ondrop = (e) => { e.preventDefault(); if(dragItem && dragItem.item.type === "gem" && it.type !== "gem") socket.emit("craft", {action:"socket", itemIdx:idx, gemIdx:dragItem.idx}); };
+        d.onmouseover = () => showTooltip(it); d.onmouseout = hideTooltip; 
+        
+        // CORREÇÃO CRÍTICA: O clique no PC agora deve funcionar corretamente para Equipar/Usar.
+        // Item equipável ou consumível (poção)
+        d.onclick = () => { 
+            if(it.key === "potion") {
+                socket.emit("potion"); 
+            } else if(it.slot && it.type !== "material" && it.type !== "consumable") {
+                socket.emit("equip", idx); 
+            }
+        }; 
+        
+        // CORREÇÃO: Mouse direito (contextmenu) deve prevenir o menu padrão
+        d.oncontextmenu = (e) => { 
+            e.preventDefault(); 
+            socket.emit("drop", idx); 
+        };
+        
+        ig.appendChild(d);
+    });
+
+    // LÓGICA DE FOCO E TOOLTIP PARA CRAFTING
+    if (uiState.craft) {
+        const craftList = document.getElementById("craft-list");
+        const recipeElements = Array.from(craftList.children);
+        
+        if (focusIndex >= recipes.length) focusIndex = Math.max(0, recipes.length - 1);
+        
+        recipeElements.forEach((d, idx) => {
+            d.style.outline = 'none';
+            const recipe = recipes[idx];
+            if (focusArea === 'craft' && focusIndex === idx) {
+                 d.style.outline = '2px solid yellow'; 
+                 document.getElementById('ui-btn-equip').innerText = `CRAFT ${recipe.res.toUpperCase()} (A)`;
+                 document.getElementById('ui-btn-drop').innerText = 'SAIR (B)';
+            }
+        });
+    }
+    
+    // LÓGICA DE FOCO E BOTÕES PARA SHOP
+    if(uiState.shop) {
+        const sg = document.getElementById("shop-grid"); sg.innerHTML = "";
+        const shopCount = shopItems.length;
+        if (focusIndex >= shopCount) focusIndex = Math.max(0, shopCount - 1);
+
+        shopItems.forEach((it, idx) => {
+            const d = document.createElement("div"); d.className = "slot"; d.style.borderColor = it.color; d.style.outline = 'none'; d.style.outlineOffset = '0px';
+            
+            // Foco
+            if (focusArea === 'shop' && focusIndex === idx) {
+                d.style.outline = '2px solid yellow'; d.style.outlineOffset = '2px'; showTooltip(it);
+                document.getElementById('ui-btn-equip').innerText = `COMPRAR ${it.price}G (A)`;
+                document.getElementById('ui-btn-drop').innerText = 'VENDER/SAIR (B)';
+            }
+            
+            d.innerHTML = getIcon(it.key); d.onmouseover = () => showTooltip(it); d.onmouseout = hideTooltip; d.onclick = () => window.buy(idx);
+            sg.appendChild(d);
+        });
+        document.getElementById("btn-shop-close").onclick = closeAllMenus;
+    }
+    
+    // Caso especial: Inventário vazio
+    if ((uiState.inv && invCount === 0) || (uiState.shop && shopItems.length === 0)) { 
+        hideTooltip(); 
+        document.getElementById('ui-btn-equip').innerText = 'SEM ITENS'; 
+        document.getElementById('ui-btn-drop').innerText = 'SAIR (B)'; 
+    } 
+    
+    if (!uiState.inv && !uiState.char && !uiState.craft && !uiState.shop) uiActionButtons.style.display = 'none';
+}
+
 function showTooltip(it) {
-    let html = `<b style="color:${it.color}">${it.name}</b><br><span style="color:#aaa">${it.type.toUpperCase()}</span>`;
+    // CORREÇÃO: Adiciona verificação de item para evitar erro de item undefined
+    if (!it) return;
+
+    let html = `<b style="color:${it.color}">${it.name}</b><br><span style="color:#aaa">${(it.type || "UNKNOWN").toUpperCase()}</span>`;
     if(it.price) html += `<br>Price: ${it.price}G`;
-    if(it.stats) { for(let k in it.stats) { if(k==="crit") html += `<br>Crit Chance: ${Math.floor(it.stats[k]*100)}%`; else html += `<br>${k.toUpperCase()}: ${it.stats[k]}`; } }
+    
+    // Adiciona o preço de venda se estiver no shop ou inventário
+    const isSellable = (uiState.inv || uiState.shop) && it.key !== 'gold';
+    if (isSellable) {
+        const sellPrice = Math.floor((it.price || 1) * 0.5);
+        html += `<br><span style="color:#fff">Sell Value: ${sellPrice}G</span>`;
+    }
+
+    if(it.stats) { for(let k in it.stats) { 
+        if(k==="crit") html += `<br>Crit Chance: ${Math.floor(it.stats[k]*100)}%`; 
+        else if(k==="cd_red") html += `<br>Cooldown Red: ${Math.floor(it.stats[k]*100)}%`;
+        else if(k==="spd" && it.stats[k] > 0.01) html += `<br>Speed: +${Math.floor(it.stats[k]*100)}%`;
+        else if (k !== "spd") html += `<br>${k.toUpperCase()}: ${it.stats[k]}`; 
+    } }
     if(it.sockets && it.sockets.length > 0) { html += `<br><br>SOCKETS [${it.gems.length}/${it.sockets.length}]`; it.gems.forEach(g => html += `<br><span style="color:${g.color}">* ${g.desc}</span>`); }
     tooltip.innerHTML = html; tooltip.style.display = "block";
 }
@@ -928,12 +1278,14 @@ function draw() {
     const mobileHorizontalHud = document.getElementById("hud-horizontal-mobile");
     const hudGold = document.getElementById("hud-gold");
     const hudBottom = document.querySelector('.hud-bottom');
+    const gameLogContainer = document.getElementById("game-log-container");
     
     // CORREÇÃO FINAL DA INTERFACE MOBILE
     if(isMobile) {
         // 1. HUD Display: Minimalista for all mobile
         mobileHorizontalHud.style.display = "flex"; 
         hudBottom.style.display = "none"; 
+        gameLogContainer.style.display = "none"; // Esconde log no mobile para simplicidade
 
         // 2. Control Display: Show Joystick only when Gamepad is NOT active
         if (!gamepadActive) {
@@ -951,6 +1303,7 @@ function draw() {
         mobileHorizontalHud.style.display = "none"; 
         hudBottom.style.display = "flex";
         hudGold.style.display = "block"; 
+        gameLogContainer.style.display = "block"; // Mostra log no PC
     }
 
     ctx.fillStyle = "#000"; ctx.fillRect(0,0,canvas.width,canvas.height);
@@ -1068,7 +1421,19 @@ function draw() {
             const pct = Math.max(0, e.hp/maxHp); const bw = e.boss ? 30 : 16;
             ctx.fillStyle="#000"; ctx.fillRect(x-bw/2, y-s-4, bw, 3); ctx.fillStyle=e.boss?"#d00":"#f00"; ctx.fillRect(x-bw/2, y-s-4, bw*pct, 3); 
         }
-        if(e.class || e.boss || e.npc) { ctx.fillStyle = e.npc ? "#0ff" : e.boss ? "#f00" : "#fff"; ctx.font = "8px Courier New"; ctx.textAlign="center"; ctx.fillText(e.name, x, y - s - 8); }
+        // NOVO: Exibe Nível + Nome para Jogadores
+        if(e.class || e.boss || e.npc) { 
+            ctx.fillStyle = e.npc ? "#0ff" : e.boss ? "#f00" : (e.id === myId ? "#0f0" : "#fff"); 
+            ctx.font = "8px Courier New"; 
+            ctx.textAlign="center"; 
+            
+            let displayName = e.name;
+            if (e.class) { // É um jogador
+                displayName = `[Lvl ${e.level}] ${e.name}`;
+            }
+            
+            ctx.fillText(displayName, x, y - s - 8); 
+        }
 
         if(e.chatMsg && e.chatTimer > 0) {
             ctx.fillStyle = "rgba(0,0,0,0.7)"; ctx.strokeStyle="#fff";
@@ -1114,5 +1479,11 @@ window.login = () => { if (AudioCtrl.ctx.state === 'suspended') AudioCtrl.ctx.re
 window.create = () => socket.emit("create_char", {name:document.getElementById("cname").value, cls:document.getElementById("cclass").value});
 window.addStat = (s) => socket.emit("add_stat", s);
 window.buy = (idx) => socket.emit("buy", shopItems[idx]);
+window.sell = () => { 
+    if(!me || !uiState.shop || focusArea !== 'inventory' || me.inventory.length === 0) return;
+    socket.emit("sell", focusIndex);
+    updateUI(); 
+};
+window.closeShop = closeAllMenus;
 
 draw();

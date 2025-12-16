@@ -47,6 +47,30 @@ h1 { text-shadow: 2px 2px #f00; color: #d00; }
 /* CHAT INPUT */
 #chat-container { position: absolute; bottom: 100px; left: 50%; transform: translateX(-50%); width: 300px; display: none; pointer-events: auto; }
 #chat-input { width: 100%; background: rgba(0,0,0,0.8); border: 1px solid #0f0; color: #fff; padding: 5px; font-family: inherit; }
+/* NOVO: GAME LOG */
+#game-log-container {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    width: 250px;
+    height: 150px;
+    background: rgba(0, 0, 0, 0.7);
+    border: 1px solid #0f0;
+    padding: 5px;
+    pointer-events: none; /* Não bloqueia o mouse na tela principal */
+    overflow-y: hidden; /* Mantém apenas o topo visível */
+    font-size: 10px;
+}
+#game-log {
+    display: flex;
+    flex-direction: column-reverse; /* Novas mensagens no topo */
+    gap: 3px;
+    height: 100%;
+    overflow-y: scroll;
+}
+#game-log::-webkit-scrollbar { width: 4px; }
+#game-log::-webkit-scrollbar-thumb { background: #0f0; border-radius: 2px; }
+
 
 /* MOBILE CONTROLS */
 #mobile-controls { 
@@ -102,12 +126,12 @@ h1 { text-shadow: 2px 2px #f00; color: #d00; }
     transition: transform 0.05s ease-out;
 }
 
-/* ACTION BUTTONS (Right Side) */
+/* ACTION BUTTONS (Right Side) - ESPACAMENTO CORRIGIDO E DEFESA ADICIONADA */
 #action-container { 
     right: 15px; 
-    width: 160px; 
-    height: 100px; 
-    bottom: 5px; 
+    width: 160px; /* Aumentado para acomodar 3 botões na horizontal */
+    height: 110px; /* Aumentado para melhor espaçamento */
+    bottom: 0px; 
     position: absolute;
     pointer-events: auto;
 }
@@ -124,42 +148,57 @@ h1 { text-shadow: 2px 2px #f00; color: #d00; }
     font-size: 14px; 
     font-weight: bold; 
     box-shadow: 0 0 5px rgba(255, 0, 0, 0.5);
-    z-index: 2; /* Sobrepõe o joystick base */
+    z-index: 2; 
 }
 
-/* Posicionamento dos botões de combate */
+/* Posicionamento dos botões de combate - AJUSTADO */
 #btn-atk { 
     width: 55px; height: 55px; 
     font-size: 16px; 
-    bottom: 5px; 
-    right: 5px;
+    bottom: 0px; 
+    right: 0px;
+    border-color: #f00; 
+    color: #f00;
 } 
 #btn-skill { 
-    width: 40px; height: 40px; 
-    font-size: 10px; 
-    border-color: #0ff; color: #0ff; 
+    width: 45px; height: 45px; 
+    font-size: 12px; 
+    border-color: #0ff; 
+    color: #0ff; 
     bottom: 55px; 
-    right: 5px; 
+    right: 55px; 
 } 
 #btn-dash { 
-    width: 40px; height: 40px; 
-    font-size: 10px; 
-    border-color: #fff; color: #fff;
-    bottom: 5px; 
-    right: 65px; 
+    width: 45px; height: 45px; 
+    font-size: 12px; 
+    border-color: #fff; 
+    color: #fff;
+    bottom: 0px; 
+    right: 60px; 
 } 
 #btn-potion { 
-    width: 35px; height: 35px; 
-    font-size: 9px; 
-    border-color: #f33; color: #f33;
+    width: 45px; height: 45px; 
+    font-size: 10px; 
+    border-color: #f33; 
+    color: #f33;
     bottom: 60px; 
-    right: 55px; 
+    right: 0px; 
 }
 
-/* HUD MENU BUTTONS (INV/CHR/CFT) */
+/* NOVO: Botão de Bloqueio/Defesa */
+#btn-block {
+    width: 45px; height: 45px;
+    font-size: 12px;
+    border-color: #0f0;
+    color: #0f0;
+    bottom: 60px;
+    right: 110px;
+}
+
+/* HUD MENU BUTTONS (INV/CHR/CFT) - AJUSTADO */
 #mobile-menu-buttons {
     position: absolute; 
-    bottom: 110px; 
+    bottom: 115px; /* Mais alto para liberar espaço de ação */
     right: 5px; 
     display: flex; 
     gap: 5px; 
@@ -221,7 +260,7 @@ h1 { text-shadow: 2px 2px #f00; color: #d00; }
     }
 }
 
-/* NOVO: Botões de Ação UI (Aparecem apenas com INV/CHR/CFT abertos) */
+/* NOVO: Botões de Ação UI (Aparecem apenas com INV/CHR/CFT/SHOP abertos) */
 .ui-action-buttons {
     position: absolute;
     bottom: 50px;
@@ -255,6 +294,8 @@ h1 { text-shadow: 2px 2px #f00; color: #d00; }
 
 <div id="ui-layer">
     <div id="hud-gold">GOLD: 0</div>
+    
+    <div id="game-log-container"><div id="game-log"></div></div>
 
     <div id="hud-horizontal-mobile">
         <span id="h-lvl-txt" style="color:#0f0;">NORMAL [1]</span>
@@ -320,9 +361,14 @@ h1 { text-shadow: 2px 2px #f00; color: #d00; }
     </div>
 
     <div id="shop-panel" class="panel">
-        <div style="text-align:center; border-bottom:1px dashed #0ff; font-size:14px; padding-bottom:5px;">[ MERCHANT ]</div>
+        <div style="text-align:center; border-bottom:1px dashed #0ff; font-size:14px; padding-bottom:5px; margin-bottom: 10px;">[ MERCHANT ]</div>
         <div class="grid" id="shop-grid" style="grid-template-columns:repeat(5, 1fr);"></div>
         <div style="text-align:center; margin-top:5px; font-size:10px;">Click to Buy</div>
+        
+        <div style="display: flex; justify-content: space-between; margin-top: 10px;">
+            <button class="btn" style="border-color:#0ff; color:#0ff;" onclick="window.closeShop()" id="btn-shop-close">CLOSE</button>
+            <button class="btn" style="border-color:#f00; color:#f00;" onclick="window.sell()">SELL INVENTORY</button>
+        </div>
     </div>
     
     <div id="char-panel" class="panel">
@@ -354,6 +400,7 @@ h1 { text-shadow: 2px 2px #f00; color: #d00; }
     <div id="joystick-area" class="control-area"></div>
 
     <div id="action-container">
+        <div id="btn-block" class="action-btn" data-action="block">BLK</div> 
         <div id="btn-potion" class="action-btn" data-action="potion">POT</div>
         <div id="btn-skill" class="action-btn" data-action="skill">SKL</div>
         <div id="btn-dash" class="action-btn" data-action="dash">DSH</div>

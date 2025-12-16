@@ -212,22 +212,66 @@ const MOB_DATA = {
     merchant: { hp: 999,dmg: 0, spd: 0,    ai: "npc",   xp: 0,  gold: 0,  size: 12, npc: true }
 };
 
+// ===================================
+// NOVO: GERAÇÃO PROCEDURAL DE NOMES
+// ===================================
+
+const ITEM_ADJECTIVES = [
+    "Shadow", "Grave", "Holy", "Blessed", "Rune", "Blood", "Void", "Dragon", "Silent",
+    "Ancient", "Mystic", "Iron", "Steel", "Obsidian", "Golden", "Emerald", "Sapphire", 
+    "Topaz", "Amethyst", "Warrior's", "Hunter's", "Mage's"
+];
+
+const ITEM_NOUNS = [
+    "Fury", "Justice", "Doom", "Whispers", "Echoes", "Vengeance", "Aura", "Storm",
+    "Prowess", "Guiding", "Fortune", "Sorrow", "Exile", "Warden", "Revenant"
+];
+
+function generateRandomName(baseName, rarity) {
+    if (rarity === "common") return baseName;
+    
+    // Chance de usar Adjetivo + Nome-Base
+    if (Math.random() < 0.6) {
+        const adj = ITEM_ADJECTIVES[Math.floor(Math.random() * ITEM_ADJECTIVES.length)];
+        return `${adj} ${baseName}`;
+    }
+    // Chance de usar Nome-Base of/of the + Substantivo
+    const of = Math.random() < 0.5 ? "of" : "of the";
+    const noun = ITEM_NOUNS[Math.floor(Math.random() * ITEM_NOUNS.length)];
+    return `${baseName} ${of} ${noun}`;
+}
+
+
 function generateItem(level, diffMult=1, forceType=null) {
     if(forceType) {
         const base = ITEM_BASES[forceType];
+        // CORREÇÃO: Item material/consumível não deve ter stats vazios se for gerado
+        if (base.type === "material" || base.type === "consumable") {
+             return { ...base, id: Math.random().toString(36).substr(2), key:forceType, rarity:"common", color:base.color||"#aaa", stats: base.stats || {} };
+        }
+        
         return { 
             id: Math.random().toString(36).substr(2), key:forceType, rarity:"common", color:"#aaa", 
             slot: base.slot, type: base.type, name: base.name, price: base.price, stats:{}, sockets:[], gems:[]
         };
     }
+    // DROPS DE CONSUMÍVEIS/MATERIAIS (MANTIDOS SIMPLES)
     if(Math.random() < 0.20) return { ...ITEM_BASES.potion, id: Math.random().toString(36).substr(2), key:"potion", rarity:"common", color:"#f33", stats:{heal:50+level*10} };
-    if(Math.random() < 0.05 * diffMult) {
+    
+    // AJUSTE: Reduzir a chance de gemas raras em níveis baixos (Nível 1-4, diffMult 0.8-1.0)
+    let gemDropChance = 0.05 * diffMult;
+    if (level <= 4) gemDropChance *= 0.5; // Reduz chance de gema em 50% para níveis baixos
+    
+    if(Math.random() < gemDropChance) {
         const gemKeys = ["ruby", "sapphire", "emerald", "diamond"];
         if (level >= 10) gemKeys.push("topaz", "amethyst"); 
         const k = gemKeys[Math.floor(Math.random()*gemKeys.length)];
         return { ...ITEM_BASES[k], id:Math.random().toString(36).substr(2), key:k, rarity:"magic", color:ITEM_BASES[k].color };
     }
-    if (level >= 12 && Math.random() < 0.02 * diffMult) { 
+    
+    // AJUSTE: Reduzir a chance de runas em níveis baixos (Nível 1-11)
+    let runeDropChance = 0.02 * diffMult;
+    if (level >= 12 && Math.random() < runeDropChance) { 
         const runeKeys = ["runa_dano", "runa_crit"];
         const k = runeKeys[Math.floor(Math.random()*runeKeys.length)];
         const base = ITEM_BASES[k];
@@ -241,30 +285,76 @@ function generateItem(level, diffMult=1, forceType=null) {
         if (base.crit) item.stats.crit = base.crit + power * 0.005; 
         return item;
     }
-    const keys = Object.keys(ITEM_BASES).filter(k=>!["potion","wood","stone","runa_dano","runa_crit"].includes(k) && !k.includes("ruby") && !k.includes("sapphire") && !k.includes("emerald") && !k.includes("diamond") && !k.includes("topaz") && !k.includes("amethyst"));
+    
+    // GERAÇÃO DE ITENS COMUNS/EQUIPÁVEIS
+    const keys = Object.keys(ITEM_BASES).filter(k=>!["potion","wood","stone","runa_dano","runa_crit","ruby","sapphire","emerald","diamond","topaz","amethyst"].includes(k));
     const key = keys[Math.floor(Math.random()*keys.length)];
     const base = ITEM_BASES[key];
-    const r = Math.random();
-    const rarity = r>0.97?"legendary":r>0.85?"rare":r>0.6?"magic":"common";
+    
+    // AJUSTE: Aumentar a chance de drops comuns em níveis baixos.
+    let r = Math.random();
+    let rarity;
+    if (level <= 3) {
+        rarity = r > 0.95 * diffMult ? "magic" : "common"; // Chance de Raro/Lendário quase nula
+    } else {
+        rarity = r > 0.97?"legendary":r>0.85?"rare":r>0.6?"magic":"common";
+    }
+
     const meta = {
         common:   {c:"#aaa", m:1, s:0}, 
         magic:    {c:"#4ff", m:1.3, s:1}, 
         rare:     {c:"#ff0", m:1.8, s:1}, 
         legendary:{c:"#f0f", m:3.0, s:2}
     };
+    
     const power = (level * meta[rarity].m) * diffMult;
+    const itemName = generateRandomName(base.name, rarity);
+    
     const item = {
         id: Math.random().toString(36).substr(2),
         key, rarity, color: meta[rarity].c, slot: base.slot, type: base.type, proj: base.proj, cd: base.cd,
-        name: (rarity!=="common"?rarity.toUpperCase()+" ":"") + base.name,
+        // CORREÇÃO: Nome agora gerado proceduralmente
+        name: itemName,
         price: Math.floor(base.price * meta[rarity].m),
         stats: {}, sockets: [], gems: []
     };
-    if(Math.random() < 0.5) { for(let i=0; i<meta[rarity].s; i++) item.sockets.push(null); }
-    if(base.dmg) item.stats.dmg = Math.floor(base.dmg + power);
-    if(base.hp) item.stats.hp = Math.floor(base.hp + power * 3);
-    if(base.def) item.stats.def = Math.floor(base.def + power);
-    if(base.mp) item.stats.mp = Math.floor(base.mp + power * 2);
+    
+    // Geração de Sockets
+    const maxSockets = meta[rarity].s;
+    if(Math.random() < 0.5 || maxSockets > 0) { // Garante sockets para raridades altas
+        for(let i=0; i<maxSockets; i++) item.sockets.push(null); 
+    }
+    
+    // Geração de Stats (Ajuste para maior diversidade)
+    if(base.dmg) {
+        // Gera um valor base de dano com variação aleatória
+        const dmgMod = 0.5 + Math.random() * 0.5; // Varia de 0.5 a 1.0
+        item.stats.dmg = Math.floor(base.dmg + power * dmgMod);
+    }
+    if(base.hp) {
+        const hpMod = 0.8 + Math.random() * 0.4; // Varia de 0.8 a 1.2
+        item.stats.hp = Math.floor(base.hp + power * 3 * hpMod);
+    }
+    if(base.def) {
+        const defMod = 0.7 + Math.random() * 0.6; // Varia de 0.7 a 1.3
+        item.stats.def = Math.floor(base.def + power * defMod);
+    }
+    if(base.mp) {
+        const mpMod = 0.8 + Math.random() * 0.4;
+        item.stats.mp = Math.floor(base.mp + power * 2 * mpMod);
+    }
+    
+    // Adiciona um stat secundário aleatório para itens raros/lendários
+    if (rarity === "rare" || rarity === "legendary") {
+        const secondaryStats = ["crit", "cd_red", "spd"];
+        const secondaryStat = secondaryStats[Math.floor(Math.random() * secondaryStats.length)];
+        const secondaryPower = power * 0.005; // Base de poder secundário
+
+        if (secondaryStat === "crit") { item.stats.crit = (item.stats.crit || 0) + 0.01 + Math.random() * secondaryPower; }
+        else if (secondaryStat === "cd_red") { item.stats.cd_red = (item.stats.cd_red || 0) + 0.01 + Math.random() * secondaryPower; }
+        else if (secondaryStat === "spd") { item.stats.spd = (item.stats.spd || 0) + 0.005 + Math.random() * secondaryPower; }
+    }
+
     return item;
 }
 
@@ -272,6 +362,7 @@ function recalcStats(p) {
     if(!p.attrs) p.attrs = { str:5, dex:5, int:5 };
     let str=p.attrs.str, dex=p.attrs.dex, int=p.attrs.int;
     let addHp=0, addMp=0, addDmg=0, addDef=0, addSpd=0;
+    // AJUSTE: Garante que critChance tem um valor inicial para somar o stat secundário do item
     let critChance=0.01 + (dex * 0.002);
     let cdRed=0;
     let baseLightRadius = 15; 
@@ -279,9 +370,13 @@ function recalcStats(p) {
     ["hand", "head", "body", "rune"].forEach(s => { 
         if(p.equipment[s]){ 
             const it = p.equipment[s];
-            addHp+=it.stats.hp||0; addMp+=it.stats.mp||0; 
-            addDmg+=it.stats.dmg||0; addDef+=it.stats.def||0;
-            critChance+=it.stats.crit||0; 
+            // CORREÇÃO: Adiciona verificação de it.stats antes de acessar as propriedades
+            addHp+=it.stats?.hp||0; addMp+=it.stats?.mp||0; 
+            addDmg+=it.stats?.dmg||0; addDef+=it.stats?.def||0;
+            critChance+=it.stats?.crit||0; // Soma crit chance
+            cdRed+=it.stats?.cd_red||0; // Soma cd_red
+            addSpd+=it.stats?.spd||0; // Soma spd
+
             if(it.gems) it.gems.forEach(g => {
                 if(g.stat === "dmg") addDmg += g.val;
                 if(g.stat === "hp") addHp += g.val;
@@ -410,6 +505,11 @@ function sendPlayerUpdate(p) {
     io.to(p.id).emit("u", playerState);
 }
 
+// NOVO: Função para emitir log para todos os jogadores na instância
+function sendLog(instId, msg, color="#0f0") {
+    io.to(instId).emit("log", { msg, color });
+}
+
 io.on("connection", socket => {
     let user = null, charName = null;
     socket.on("login", async u => { user=u; const chars = await loadUserChars(user); socket.emit("char_list", chars); });
@@ -437,6 +537,7 @@ io.on("connection", socket => {
         };
         recalcStats(inst.players[socket.id]); 
         socket.emit("game_start", {recipes: RECIPES});
+        sendLog(inst.id, `${name} entrou no calabouço!`, "#0ff");
     });
 
     // CORREÇÃO DO CHAT: Armazena o texto no servidor para não ser sobrescrito
@@ -471,13 +572,31 @@ io.on("connection", socket => {
     socket.on("potion", () => {
         const p = instances[socket.instId]?.players[socket.id];
         const inst = instances[socket.instId];
-        if(!p || !p.equipment.potion) return;
-        const pot = p.equipment.potion;
-        p.hp = Math.min(p.stats.maxHp, p.hp + pot.stats.heal);
+        
+        // Procura a poção primeiro no equipamento e depois no inventário
+        let pot = p.equipment.potion;
+        let invIdx = -1;
+        
+        if (!pot) {
+            invIdx = p.inventory.findIndex(i => i.key === "potion");
+            if (invIdx !== -1) {
+                pot = p.inventory[invIdx];
+            }
+        }
+        
+        if(!p || !pot) return;
+        
+        p.hp = Math.min(p.stats.maxHp, p.hp + (pot.stats?.heal || 50));
         io.to(inst.id).emit("fx", { type: "nova", x: p.x, y: p.y });
-        p.equipment.potion = null; 
-        const idx = p.inventory.findIndex(i => i.key === "potion");
-        if(idx !== -1) { p.equipment.potion = p.inventory[idx]; p.inventory.splice(idx, 1); }
+        
+        // Remove a poção
+        if (p.equipment.potion) {
+            p.equipment.potion = null; 
+        } else if (invIdx !== -1) {
+            p.inventory.splice(invIdx, 1);
+        }
+
+        recalcStats(p); 
         sendPlayerUpdate(p);
     });
     
@@ -560,10 +679,18 @@ io.on("connection", socket => {
             if(woodCount >= recipe.req.wood && stoneCount >= recipe.req.stone && p.inventory.length < 20) {
                 for(let k=0; k<recipe.req.wood; k++) { const i=p.inventory.findIndex(x=>x.key==="wood"); if(i>-1) p.inventory.splice(i,1); }
                 for(let k=0; k<recipe.req.stone; k++) { const i=p.inventory.findIndex(x=>x.key==="stone"); if(i>-1) p.inventory.splice(i,1); }
-                if(recipe.res === "potion") p.inventory.push({...ITEM_BASES.potion, id:Math.random(), stats:{heal:50+p.level*5}});
-                else { const gemBase = ITEM_BASES[recipe.res]; p.inventory.push({...gemBase, id:Math.random(), key:recipe.res}); }
+                
+                // AJUSTE: O item craftado também passa por generateItem para ter nome e stats procedurais
+                const craftedItem = generateItem(p.level, 1, recipe.res);
+                if(craftedItem.key === "potion") {
+                    craftedItem.stats = { heal: 50 + p.level * 5 };
+                }
+                
+                if(p.inventory.length < 20) p.inventory.push(craftedItem);
+                
                 io.to(inst.id).emit("txt", {x:p.x, y:p.y, val:"CRAFT!", color:"#0f0"});
                 sendPlayerUpdate(p); 
+                sendLog(inst.id, `${p.name} craftou ${craftedItem.name}`, "#d0d");
             }
         }
         else if(action === "socket") {
@@ -582,6 +709,13 @@ io.on("connection", socket => {
         const p = instances[socket.instId]?.players[socket.id];
         if(!p || !p.inventory[idx]) return;
         const it = p.inventory[idx];
+        
+        // CORREÇÃO: Usar poção se clicada no inventário
+        if(it.key === "potion") {
+            socket.emit("potion");
+            return;
+        }
+
         const old = p.equipment[it.slot];
         if(it.type === "material" || it.type === "gem") return;
         p.equipment[it.slot] = it; p.inventory.splice(idx, 1);
@@ -590,7 +724,15 @@ io.on("connection", socket => {
     });
     socket.on("unequip", slot => {
         const p = instances[socket.instId]?.players[socket.id];
-        if(p && p.equipment[slot] && p.inventory.length < 20) { 
+        if(!p) return;
+
+        // CORREÇÃO: Usar poção se clicada no slot de poção
+        if (slot === "potion" && p.equipment.potion) {
+             socket.emit("potion");
+             return;
+        }
+
+        if(p.equipment[slot] && p.inventory.length < 20) { 
             p.inventory.push(p.equipment[slot]); p.equipment[slot] = null; recalcStats(p); sendPlayerUpdate(p);
         }
     });
@@ -605,12 +747,40 @@ io.on("connection", socket => {
     });
     socket.on("buy", item => {
         const p = instances[socket.instId]?.players[socket.id];
-        if(p && p.gold >= item.price && p.inventory.length < 20) { p.gold -= item.price; p.inventory.push(item); sendPlayerUpdate(p); }
+        if(p && p.gold >= item.price && p.inventory.length < 20) { 
+            p.gold -= item.price; 
+            // AJUSTE: Item comprado também deve ser gerado para ter nome e id únicos
+            const boughtItem = generateItem(p.level, 1, item.key); 
+            boughtItem.price = item.price; // Mantém o preço do shop
+            if(boughtItem.key === "potion") boughtItem.stats = { heal: 50 + p.level * 5 };
+            p.inventory.push(boughtItem); 
+            sendPlayerUpdate(p); 
+        }
     });
+    // NOVO: Lógica de Venda de Itens
+    socket.on("sell", idx => {
+        const p = instances[socket.instId]?.players[socket.id];
+        if(!p || !p.inventory[idx]) return;
+        
+        const itemToSell = p.inventory[idx];
+        // Preço de venda: 50% do preço de compra base
+        const sellPrice = Math.floor((itemToSell.price || 1) * 0.5); 
+        
+        p.gold += sellPrice;
+        p.inventory.splice(idx, 1);
+        
+        io.to(p.instId).emit("txt", {x:p.x, y:p.y, val:`+${sellPrice}G`, color:"#fb0"});
+        sendPlayerUpdate(p);
+    });
+
     socket.on("disconnect", async () => { 
         const inst = instances[socket.instId];
         const p = inst?.players[socket.id];
-        if(p) { await saveCharData(p.user, p.charName, p); delete inst.players[socket.id]; }
+        if(p) { 
+            sendLog(inst.id, `${p.name} saiu do calabouço.`, "#f00");
+            await saveCharData(p.user, p.charName, p); 
+            delete inst.players[socket.id]; 
+        }
     });
 });
 
@@ -656,6 +826,7 @@ function damageMob(inst, m, dmg, owner, kx, ky, kbForce=10, isCrit=false) {
         if(m.hp <= 0) {
             delete inst.mobs[m.id];
             const iid="r"+(++inst.itemId);
+            // AJUSTE: Drop de recurso agora é garantido como material simples
             inst.items[iid] = { id:iid, x:m.x, y:m.y, item: generateItem(inst.level, 1, m.drop), pickupDelay: Date.now()+500 };
             io.to(inst.id).emit("txt", {x:m.x, y:m.y, val:`+${m.drop}`, color:"#fff"});
         }
@@ -680,6 +851,29 @@ function damageMob(inst, m, dmg, owner, kx, ky, kbForce=10, isCrit=false) {
     io.to(inst.id).emit("txt", {x:m.x, y:m.y-1, val:textVal, color:color, isCrit:isCrit});
     
     if(m.hp <= 0) {
+        // ENCONTRA JOGADORES NA ÁREA PARA COMPARTILHAMENTO DE XP (Raio de 15 tiles)
+        const nearbyPlayers = Object.values(inst.players).filter(p => Math.hypot(p.x - m.x, p.y - m.y) <= 15);
+        const xpPerPlayer = nearbyPlayers.length > 0 ? Math.floor(m.xp / nearbyPlayers.length) : 0;
+        
+        // Distribui XP e verifica Level Up
+        nearbyPlayers.forEach(p => {
+            p.xp += xpPerPlayer;
+            if(p.xp >= p.level*100) {
+                p.level++; p.pts += 2; p.xp -= (p.level-1)*100; // XP remanescente
+                recalcStats(p); p.hp=p.stats.maxHp;
+                io.to(p.id).emit("txt", {x:p.x, y:p.y-2, val:"LEVEL UP!", color:"#fb0"});
+                io.to(p.id).emit("fx", {type:"levelup"});
+                sendLog(inst.id, `${p.name} subiu para o nível ${p.level}!`, "#fb0");
+            }
+        });
+
+        // Log da Morte de Boss/Elite
+        if (m.boss) {
+             sendLog(inst.id, `${owner.name} derrotou o BOSS ${m.name}!`, "#f0f");
+        } else if (m.xp >= 100) { // Elite-mob (aprox. level 10+)
+             sendLog(inst.id, `${owner.name} derrotou ${m.name}`, "#ff0");
+        }
+        
         delete inst.mobs[m.id];
         // ... (Lógica de Drop de Gold e Itens)
         if(m.gold > 0) {
@@ -696,7 +890,6 @@ function damageMob(inst, m, dmg, owner, kx, ky, kbForce=10, isCrit=false) {
             return;
         }
         
-        owner.xp += m.xp;
         if(Math.random() < 0.3 * diff.drop) { 
             const iid="i"+(++inst.itemId); 
             let droppedItem = generateItem(inst.level, diff.drop);
@@ -706,11 +899,6 @@ function damageMob(inst, m, dmg, owner, kx, ky, kbForce=10, isCrit=false) {
                  droppedItem.name = "Rune of " + (droppedItem.key.includes("dano") ? "Might" : "Fortune");
             }
             inst.items[iid] = { id:iid, x:m.x, y:m.y, item: droppedItem, pickupDelay: Date.now()+1000 }; 
-        }
-        if(owner.xp >= owner.level*100) {
-            owner.level++; owner.pts += 2; owner.xp=0; recalcStats(owner); owner.hp=owner.stats.maxHp;
-            io.to(inst.id).emit("txt", {x:owner.x, y:owner.y-2, val:"LEVEL UP!", color:"#fb0"});
-            io.to(inst.id).emit("fx", {type:"levelup"});
         }
     }
 }
@@ -764,6 +952,7 @@ function damagePlayer(p, dmg, sourceX=p.x, sourceY=p.y) {
 
         io.to(p.instId).emit("txt", { x: p.x, y: p.y, val: `DEATH! Lost ${lostGold}G`, color: "#f00", size: "18px" });
         io.to(p.instId).emit("fx", { type: "nova", x: p.x, y: p.y, life: 30 });
+        sendLog(inst.id, `${p.name} morreu e perdeu ${lostGold} de ouro.`, "#f00");
     }
 }
 
@@ -939,6 +1128,7 @@ setInterval(() => {
                 p.x=inst.rooms[0].cx; p.y=inst.rooms[0].cy; 
                 p.explored = Array.from({length: SIZE}, () => Array(SIZE).fill(0));
             });
+            sendLog(inst.id, `Calabouço Limpo! Próximo Andar: Nível ${inst.level}`, "#0f0");
         }
         // ENVIA A ATUALIZAÇÃO PARA TODOS OS JOGADORES NA INSTÂNCIA
         Object.values(inst.players).forEach(p => sendPlayerUpdate(p));
