@@ -12,7 +12,6 @@ let inputState = { x:0, y:0, block: false };
 let shopItems = [];
 const tooltip = document.getElementById("tooltip");
 let dragItem = null;
-// MUDANÇA: 'isMobile' e 'gamepadActive' são as flags de controle.
 let isMobile = window.matchMedia("(max-width: 768px)").matches; 
 let gamepad = null;
 let gamepadActive = false; 
@@ -35,7 +34,6 @@ const AudioCtrl = {
     playTone: function(freq, type, dur, vol=0.1) {
         if(this.muted || this.ctx.state === 'suspended') return;
         const o = this.ctx.createOscillator(); const g = this.ctx.createGain();
-        // CORREÇÃO: type="slide" não é válido. Usando "sawtooth".
         o.type = type; o.frequency.setValueAtTime(freq, this.ctx.currentTime);
         g.gain.setValueAtTime(vol, this.ctx.currentTime); g.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime+dur);
         o.connect(g); g.connect(this.ctx.destination); o.start(); o.stop(this.ctx.currentTime+dur);
@@ -224,9 +222,8 @@ window.onkeydown = e => {
             uiState.inv=false; uiState.char=false; uiState.shop=false; uiState.craft=false; 
         }
     }
-    // MUDANÇA: Usa getDashAngle() atualizado
     if(k===" ") { socket.emit("dash", getDashAngle()); } 
-    if(k==="q") { socket.emit("potion"); }
+    if(k==="e") { socket.emit("potion"); } // Potion is now correctly mapped to 'E'
     
     if (k === 'i' || k === 'c' || k === 'k' || k === 'escape') {
         focusIndex = 0;
@@ -356,7 +353,8 @@ function handleGamepadInput() {
                 // MUDANÇA: Usa getAttackAngle() e getDashAngle() para gamepad
                 const ang = getAttackAngle(); 
                 if (action === 'attack') socket.emit("attack", ang); if (action === 'skill') socket.emit("skill", {idx:1, angle:ang});
-                if (action === 'dash') socket.emit("dash", getDashAngle()); if (action === 'potion') socket.emit("potion"); 
+                if (action === 'dash') socket.emit("dash", getDashAngle()); if (action === 'potion') socket.emit("potion");
+                if (action === 'potion') socket.emit("potion"); // O botão Mapped do Gamepad ainda chama 'potion'				
             }
             if (action === 'inventory') { uiState.inv = !uiState.inv; uiState.char = false; uiState.shop = false; uiState.craft = false; }
             if (action === 'character') { uiState.char = !uiState.char; uiState.inv = false; uiState.shop = false; uiState.craft = false; }
@@ -397,15 +395,21 @@ function updateUI() {
     const hpPct = (me.hp/me.stats.maxHp)*100; const mpPct = (me.mp/me.stats.maxMp)*100; const xpPct = (me.xp/(me.level*100))*100;
     let diffName = state.theme === "#f00" ? "HORDE I" : state.theme === "#900" ? "HORDE II" : state.theme === "#102" ? "HELL" : state.theme === "#311" ? "NIGHTMARE" : "NORMAL";
 
-    if (!isMobile || (isMobile && innerWidth < innerHeight)) {
-        document.getElementById("hp-bar").style.width = hpPct + "%"; document.getElementById("mp-bar").style.width = mpPct + "%"; document.getElementById("xp-bar").style.width = xpPct + "%";
-        document.getElementById("hp-txt").innerText = `HP: ${Math.floor(me.hp)}/${me.stats.maxHp}`; document.getElementById("mp-txt").innerText = `MP: ${Math.floor(me.mp)}/${me.stats.maxMp}`; document.getElementById("xp-txt").innerText = `${Math.floor(xpPct)}%`; document.getElementById("lvl-txt").innerText = `${diffName} [${me.level}]`;
-    }
-    const mobileHorizontalHud = document.getElementById("hud-horizontal-mobile");
-    if (isMobile && innerWidth > innerHeight) {
-         document.getElementById("h-lvl-txt").innerText = `${diffName} [${me.level}]`; document.getElementById("h-gold-txt").innerText = `${me.gold}G`;
-         document.getElementById("h-hp-bar").style.width = hpPct + "%"; document.getElementById("h-mp-bar").style.width = mpPct + "%"; document.getElementById("h-xp-bar").style.width = xpPct + "%";
-    } 
+    // 1. ATUALIZAÇÃO DO HUD PC (Sempre atualiza, a visibilidade é controlada por CSS)
+    document.getElementById("hp-bar").style.width = hpPct + "%"; 
+    document.getElementById("mp-bar").style.width = mpPct + "%"; 
+    document.getElementById("xp-bar").style.width = xpPct + "%";
+    document.getElementById("hp-txt").innerText = `HP: ${Math.floor(me.hp)}/${me.stats.maxHp}`; 
+    document.getElementById("mp-txt").innerText = `MP: ${Math.floor(me.mp)}/${me.stats.maxMp}`; 
+    document.getElementById("xp-txt").innerText = `${Math.floor(xpPct)}%`; 
+    document.getElementById("lvl-txt").innerText = `${diffName} [${me.level}]`;
+    
+    // 2. ATUALIZAÇÃO DO HUD MOBILE HORIZONTAL/MINIMALISTA (Sempre atualiza, visibilidade controlada por JS/CSS)
+    document.getElementById("h-lvl-txt").innerText = `${diffName} [${me.level}]`; 
+    document.getElementById("h-gold-txt").innerText = `${me.gold}G`;
+    document.getElementById("h-hp-bar").style.width = hpPct + "%"; 
+    document.getElementById("h-mp-bar").style.width = mpPct + "%"; 
+    document.getElementById("h-xp-bar").style.width = xpPct + "%";
 
     document.getElementById("cp-pts").innerText = me.pts;
     document.getElementById("val-str").innerText = me.attrs.str; document.getElementById("val-dex").innerText = me.attrs.dex; document.getElementById("val-int").innerText = me.attrs.int;
@@ -516,12 +520,31 @@ function draw() {
     requestAnimationFrame(draw);
     handleGamepadInput();
     
-    const mobileControls = document.getElementById("mobile-controls"); const mobileMenuButtons = document.getElementById("mobile-menu-buttons"); const mobileHorizontalHud = document.getElementById("hud-horizontal-mobile");
+    const mobileControls = document.getElementById("mobile-controls"); 
+    const mobileMenuButtons = document.getElementById("mobile-menu-buttons"); 
+    const mobileHorizontalHud = document.getElementById("hud-horizontal-mobile");
+    
     if(isMobile) {
-        if (innerWidth > innerHeight) { mobileControls.style.display = "none"; document.getElementById("hud-gold").style.display = "none"; mobileHorizontalHud.style.display = "flex"; } 
-        else { if (!gamepadActive) mobileControls.style.display = "block"; else mobileControls.style.display = "none"; document.getElementById("hud-gold").style.display = "block"; mobileHorizontalHud.style.display = "none"; }
+        // NOVO: Sempre mostra o HUD minimalista HTML no mobile (horizontal e vertical)
+        mobileHorizontalHud.style.display = "flex"; 
+
+        // Lógica de controles de toque e barra de ouro (PC-like gold display)
+        if (!gamepadActive) {
+            // Controles de Movimento/Ação
+            if (innerWidth > innerHeight) { mobileControls.style.display = "none"; document.getElementById("hud-gold").style.display = "none"; } 
+            else { mobileControls.style.display = "block"; document.getElementById("hud-gold").style.display = "block"; } 
+        } else { 
+            mobileControls.style.display = "none"; 
+            document.getElementById("hud-gold").style.display = "block"; // Visível para gamepad/PC
+        }
         mobileMenuButtons.style.display = "flex";
-    } else { mobileControls.style.display = "none"; mobileMenuButtons.style.display = "none"; mobileHorizontalHud.style.display = "none"; }
+    } else { 
+        // PC (Desktop)
+        mobileControls.style.display = "none"; 
+        mobileMenuButtons.style.display = "none"; 
+        mobileHorizontalHud.style.display = "none"; 
+        document.getElementById("hud-gold").style.display = "block"; 
+    }
 
     ctx.fillStyle = "#000"; ctx.fillRect(0,0,canvas.width,canvas.height);
     if(!me) return;
@@ -675,16 +698,8 @@ function draw() {
         ctx.globalAlpha = t.life / 100; ctx.fillStyle=t.color; ctx.font=t.size || "10px Courier New"; ctx.textAlign="center"; ctx.fillText(t.val, ox+t.x*SCALE, oy+t.y*SCALE); ctx.globalAlpha = 1.0; 
         if(t.life<=0) texts.splice(i,1); 
     }
-    if (isMobile && innerWidth < innerHeight && me && !gamepadActive) { 
-        ctx.fillStyle = "rgba(0,0,0,0.5)"; ctx.fillRect(0, 0, canvas.width, 30);
-        ctx.fillStyle = "#0f0"; ctx.font = "12px Courier New"; ctx.textAlign = "left";
-        let diffName = state.theme === "#f00" ? "HORDE I" : state.theme === "#900" ? "HORDE II" : state.theme === "#102" ? "HELL" : state.theme === "#311" ? "NIGHTMARE" : "NORMAL";
-        ctx.fillText(`LVL ${me.level} ${diffName}`, 5, 12);
-        const barX = 5; const barY = 15; const barW = canvas.width / 4;
-        ctx.fillStyle = "#111"; ctx.fillRect(barX, barY, barW, 5); ctx.fillStyle = "#f00"; ctx.fillRect(barX, barY, barW * (me.hp/me.stats.maxHp), 5);
-        ctx.fillStyle = "#111"; ctx.fillRect(barX + barW + 5, barY, barW, 5); ctx.fillStyle = "#00f"; ctx.fillRect(barX + barW + 5, barY, barW * (me.mp/me.stats.maxMp), 5);
-        ctx.fillStyle = "#111"; ctx.fillRect(barX, barY + 6, (barW*2) + 5, 3); ctx.fillStyle = "#fb0"; ctx.fillRect(barX, barY + 6, ((barW*2) + 5) * (me.xp/(me.level*100)), 3);
-    }
+    
+    // REMOVIDO: A lógica antiga que desenhava o HUD minimalista no CANVAS para mobile portrait
 }
 
 window.login = () => { if (AudioCtrl.ctx.state === 'suspended') AudioCtrl.ctx.resume(); AudioCtrl.init(); socket.emit("login", document.getElementById("username").value); };
