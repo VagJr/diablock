@@ -2,78 +2,119 @@ const http = require("http");
 const fs = require("fs");
 const path = require("path");
 const { Server } = require("socket.io");
-const { Pool } = require("pg");
+const { Pool } = require("pg"); // Importa pg para PostgreSQL
 
-// 1. CONFIGURAÇÃO DO BANCO DE DADOS
-const DB_MODE = process.env.DATABASE_URL ? 'POSTGRES' : 'NONE';
-let pool = null;
-let isDbReady = false; // Novo flag para saber se a conexão e setup foram bem-sucedidos
+// ===============================
+// DATABASE AUTO-DETECTION (SAFE)
+// ===============================
+let DB_MODE = "NONE";
 
-// FUNÇÃO ASYNC PARA CONECTAR E CONFIGURAR O DB
-async function initializeDatabase() {
-    if (DB_MODE !== 'POSTGRES') {
-        console.warn("WARNING: DATABASE_URL not set. Running without persistence (DB_MODE: NONE).");
-        return true; // Sucesso (sem DB)
-    }
+// MongoDB (Atlas)
+let mongoose, CharModel;
 
-    try {
-        // 1. Inicializa o pool de conexões PostgreSQL
-        pool = new Pool({
-            connectionString: process.env.DATABASE_URL,
-            ssl: process.env.NODE_ENV === "production" 
-                ? { rejectUnauthorized: false } 
-                : false
-        });
-        console.log("PostgreSQL Pool initialized successfully.");
+// PostgreSQL (Render)
+let pgPool = null;
 
-        // 2. Tenta uma query para validar a conexão e configurar a tabela
-        // O pool.connect().query() garante que a conexão está ativa
-        await pool.query(`
-            CREATE TABLE IF NOT EXISTS characters (
-                id TEXT PRIMARY KEY,       
-                user_name TEXT NOT NULL,
-                char_name TEXT NOT NULL,
-                data JSONB NOT NULL,
-                updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-            );
-        `);
-        console.log("PostgreSQL table 'characters' checked/created and connection established.");
-        isDbReady = true;
-        return true;
+// ---- DETECT MONGO FIRST ----
+if (process.env.MONGO_URL) {
+  DB_MODE = "MONGO";
+  // Requer o Mongoose aqui, para evitar problemas de dependência se não for usado.
+  mongoose = require("mongoose"); 
+  console.log("MongoDB detected. Initializing connection...");
 
-    } catch (err) {
-        console.error("FATAL ERROR: Failed to setup PostgreSQL database. Please check DATABASE_URL.", err);
-        // Não encerra o processo aqui, mas retorna falso para evitar o início do loop do jogo.
-        return false;
-    }
+  mongoose.connect(process.env.MONGO_URL, {
+    useNewUrlParser: true,
+    useUnifiedTopology: true,
+    serverSelectionTimeoutMS: 5000, // Timeout de 5s para conexão
+  })
+    .then(() => {
+      console.log("MongoDB Atlas connected successfully.");
+    })
+    .catch(err => {
+      console.error("FATAL ERROR: MongoDB connection failed. Please check MONGO_URL:", err.message);
+      process.exit(1); // Encerra se a conexão falhar
+    });
+
+  const CharSchema = new mongoose.Schema({
+    _id: String, // Usaremos "user:charname" como ID
+    user: String,
+    name: String,
+    data: Object,
+    updatedAt: { type: Date, default: Date.now }
+  });
+
+  CharModel = mongoose.model("Character", CharSchema);
 }
 
-// 2. FUNÇÕES DE PERSISTÊNCIA ABSTRATAS (Sem Alterações)
-// ... (Mantenha as funções loadUserChars, createChar, loadCharData, saveCharData como estão)
+// ---- ELSE DETECT POSTGRES ----
+else if (process.env.DATABASE_URL) {
+  DB_MODE = "POSTGRES";
+  console.log("PostgreSQL detected. Initializing connection and table setup...");
 
-async function loadUserChars(username) {
-    if (DB_MODE !== 'POSTGRES' || !isDbReady) return {};
-    // ... (restante da função)
-    try {
-        const res = await pool.query(
-            "SELECT char_name, data->>'level' as level FROM characters WHERE user_name = $1",
-            [username]
-        );
-        const chars = {};
-        res.rows.forEach(row => {
-            chars[row.char_name] = { level: parseInt(row.level) || 1 };
-        });
-        return chars;
-    } catch (error) {
-        console.error("Error loading user characters:", error);
-        return {};
+  pgPool = new Pool({
+    connectionString: process.env.DATABASE_URL,
+    // SSL é obrigatório no Render
+    ssl: process.env.NODE_ENV === "production" ? { rejectUnauthorized: false } : false
+  });
+
+  pgPool.query(`
+    CREATE TABLE IF NOT EXISTS characters (
+      id TEXT PRIMARY KEY,
+      user_name TEXT NOT NULL,
+      char_name TEXT NOT NULL,
+      data JSONB NOT NULL,
+      updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+    );
+  `).then(() => {
+    console.log("PostgreSQL connected and table 'characters' ready.");
+  }).catch(err => {
+    // Isso é o que falhava antes (ENOTFOUND)
+    console.error("FATAL ERROR: PostgreSQL init failed. Check DATABASE_URL for correct format and hostname:", err.message);
+    process.exit(1); // Encerra se a inicialização falhar
+  });
+}
+else {
+  console.warn("⚠️ No database configured. Running WITHOUT persistence (DB_MODE: NONE).");
+}
+
+
+// 2. FUNÇÕES DE PERSISTÊNCIA (Compatível com Dual-DB)
+
+async function loadUserChars(user) {
+    if (DB_MODE === "MONGO") {
+        try {
+            const docs = await CharModel.find({ user }).select("_id data.level");
+            const chars = {};
+            docs.forEach(d => chars[d._id.split(":")[1]] = { level: d.data.level });
+            return chars;
+        } catch (error) {
+            console.error("Mongo loadUserChars error:", error);
+            return {};
+        }
     }
+
+    if (DB_MODE === "POSTGRES") {
+        try {
+            const r = await pgPool.query(
+                "SELECT char_name, data->>'level' AS level FROM characters WHERE user_name=$1",
+                [user]
+            );
+            const chars = {};
+            r.rows.forEach(c => chars[c.char_name] = { level: Number(c.level) });
+            return chars;
+        } catch (error) {
+            console.error("Postgres loadUserChars error:", error);
+            return {};
+        }
+    }
+
+    return {};
 }
 
 async function createChar(user, name, cls) {
-    if (DB_MODE !== 'POSTGRES' || !isDbReady) return false;
+    if (DB_MODE === "NONE") return true; // Permite a criação em modo sem DB
 
-    const charId = `${user}:${name}`;
+    const id = `${user}:${name}`;
     const newCharData = { 
         class: cls, level: 1, xp: 0, pts: 0, gold: 0, 
         attrs: { str: 5, dex: 5, int: 5 }, hp: 100, mp: 50, 
@@ -82,64 +123,94 @@ async function createChar(user, name, cls) {
     };
 
     try {
-        await pool.query(
-            `
-            INSERT INTO characters (id, user_name, char_name, data)
-            VALUES ($1, $2, $3, $4)
-            ON CONFLICT (id) DO NOTHING
-            `,
-            [charId, user, name, newCharData]
-        );
+        if (DB_MODE === "MONGO") {
+            // MongoDB usa findByIdAndUpdate com upsert para criar/atualizar
+            await CharModel.findByIdAndUpdate(
+                id,
+                { user, name, data: newCharData },
+                { upsert: true, new: true }
+            );
+        }
+
+        if (DB_MODE === "POSTGRES") {
+            await pgPool.query(`
+                INSERT INTO characters (id, user_name, char_name, data)
+                VALUES ($1, $2, $3, $4)
+                ON CONFLICT (id) DO NOTHING
+            `, [id, user, name, newCharData]);
+        }
         return true;
     } catch (error) {
-        console.error("Error creating character:", error);
+        // Ignora erro de PK duplicada, mas registra outros
+        if (!error.message.includes('duplicate key')) {
+             console.error(`Error creating character in ${DB_MODE}:`, error);
+        }
         return false;
     }
 }
 
 async function loadCharData(user, name) {
-    if (DB_MODE !== 'POSTGRES' || !isDbReady) return null;
+    if (DB_MODE === "NONE") return null;
 
-    const charId = `${user}:${name}`;
+    const id = `${user}:${name}`;
+
     try {
-        const res = await pool.query(
-            "SELECT data FROM characters WHERE id = $1",
-            [charId]
-        );
-        return res.rows[0]?.data || null;
+        if (DB_MODE === "MONGO") {
+            const doc = await CharModel.findById(id);
+            return doc?.data || null;
+        }
+
+        if (DB_MODE === "POSTGRES") {
+            const r = await pgPool.query(
+                "SELECT data FROM characters WHERE id=$1",
+                [id]
+            );
+            return r.rows[0]?.data || null;
+        }
     } catch (error) {
-        console.error("Error loading character data:", error);
+        console.error(`Error loading character data in ${DB_MODE}:`, error);
         return null;
     }
+
+    return null;
 }
 
 async function saveCharData(user, name, data) {
-    if (DB_MODE !== 'POSTGRES' || !isDbReady) return;
+    if (DB_MODE === "NONE") return;
+
+    const id = `${user}:${name}`;
     
+    // Remove dados de runtime que não devem ser salvos
     const savableData = { ...data };
     delete savableData.x; delete savableData.y; delete savableData.vx; delete savableData.vy; 
     delete savableData.input; delete savableData.stats; delete savableData.cd; delete savableData.id;
     delete savableData.user; delete savableData.charName; 
 
-    const charId = `${user}:${name}`;
     try {
-        await pool.query(
-            `
-            INSERT INTO characters (id, user_name, char_name, data)
-            VALUES ($1, $2, $3, $4)
-            ON CONFLICT (id)
-            DO UPDATE SET data = EXCLUDED.data, updated_at = NOW()
-            `,
-            [charId, user, name, savableData]
-        );
+        if (DB_MODE === "MONGO") {
+            await CharModel.findByIdAndUpdate(
+                id,
+                { user, name, data: savableData, updatedAt: new Date() },
+                { upsert: true }
+            );
+        }
+
+        if (DB_MODE === "POSTGRES") {
+            await pgPool.query(`
+                INSERT INTO characters (id, user_name, char_name, data)
+                VALUES ($1,$2,$3,$4)
+                ON CONFLICT (id)
+                DO UPDATE SET data=$4, updated_at=NOW()
+            `, [id, user, name, savableData]);
+        }
     } catch (error) {
-        console.error("Error saving character data:", error);
+        console.error(`Error saving character data in ${DB_MODE}:`, error);
     }
 }
 
 
 // 3. INFRAESTRUTURA E CONFIGURAÇÕES DO JOGO
-// ... (Resto do Código Sem Alterações, Incluindo a Lógica do Jogo e setInterval)
+
 const server = http.createServer((req, res) => {
   const safeUrl = decodeURI(req.url === "/" ? "/index.html" : req.url);
   const p = path.join(__dirname, safeUrl);
@@ -474,8 +545,18 @@ io.on("connection", socket => {
         socket.join(inst.id); socket.instId = inst.id;
         
         const data = await loadCharData(user, name); 
-        if (!data) return;
-
+        if (!data) { 
+            // Se o char não existe, mas foi criado (ex: createChar falhou silenciosamente antes), 
+            // ou se for modo NONE (onde loadCharData retorna null), criamos um default:
+            if (DB_MODE === 'NONE') {
+                await createChar(user, name, 'knight'); // Cria um default
+                const createdData = await loadCharData(user, name);
+                data = createdData || { class: 'knight', level: 1, xp: 0, pts: 0, gold: 0, attrs: { str: 5, dex: 5, int: 5 }, hp: 100, mp: 50, inventory: [], equipment: {}, explored: Array.from({length: SIZE}, () => Array(SIZE).fill(0)) };
+            } else {
+                 return; // Se DB está ativo e não carregou, algo está errado, aborta.
+            }
+        }
+        
         if(!data.attrs) data.attrs = { str:5, dex:5, int:5 };
         
         if(!data.explored) data.explored = Array.from({length: SIZE}, () => Array(SIZE).fill(0)); 
@@ -751,9 +832,6 @@ function markExplored(p) {
 
 
 setInterval(() => {
-    // Só executa o loop do jogo se o DB estiver pronto ou se estiver rodando sem DB
-    if (DB_MODE === 'POSTGRES' && !isDbReady) return; 
-
     Object.values(instances).forEach(inst => {
         Object.values(inst.players).forEach(p => {
             // Marca o mapa como explorado a cada tick
@@ -934,27 +1012,14 @@ setInterval(() => {
     });
 }, TICK);
 
-// NOVA FUNÇÃO PRINCIPAL: INICIAR O SERVIDOR APÓS O DB
-async function startServer() {
-    const dbSuccess = await initializeDatabase();
-
-    // Se a conexão falhar e não for o modo NONE, encerra o processo Node.js.
-    // Isso evita que o servidor comece a aceitar conexões sem a persistência crítica.
-    if (!dbSuccess && DB_MODE === 'POSTGRES') {
-         console.error("Server start aborted due to critical database connection failure.");
-         return; // Não chama server.listen()
+// Inicialização robusta do servidor para capturar erros de porta
+server.listen(3000, () => {
+    console.log("🔥 Echoes of the Deep - Server Started (Mode: " + DB_MODE + ")");
+}).on('error', (err) => {
+    if (err.code === 'EADDRINUSE') {
+        console.error('ERRO FATAL: A porta 3000 já está em uso. Por favor, feche o processo que a está usando ou tente outra porta.');
+    } else {
+        console.error('ERRO FATAL AO INICIAR O SERVIDOR:', err);
     }
-
-    server.listen(3000, () => {
-        console.log("🔥 Echoes of the Deep - Server Started (Mode: " + DB_MODE + ")");
-    }).on('error', (err) => {
-        if (err.code === 'EADDRINUSE') {
-            console.error('ERRO FATAL: A porta 3000 já está em uso. Por favor, feche o processo que a está usando ou tente outra porta.');
-        } else {
-            console.error('ERRO FATAL AO INICIAR O SERVIDOR:', err);
-        }
-        process.exit(1); 
-    });
-}
-
-startServer();
+    process.exit(1); 
+});
