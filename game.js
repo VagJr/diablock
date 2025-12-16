@@ -1,0 +1,363 @@
+const socket = io();
+const canvas = document.getElementById("c");
+const ctx = canvas.getContext("2d");
+const SCALE = 16;
+let myId = null, me = null;
+let state = { pl:{}, mb:{}, it:{}, pr:[], props:[], map:[] };
+let recipes = [];
+let cam = { x:0, y:0 }, mouse = { x:0, y:0 };
+let texts = [], effects = [];
+let uiState = { inv: false, char: false, shop: false, craft: false };
+let inputState = { x:0, y:0, block: false };
+let shopItems = [];
+const tooltip = document.getElementById("tooltip");
+// Drag and Drop State
+let dragItem = null;
+
+const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+let bgmAudio = null;
+
+const Sound = {
+    playTone: (freq, type, duration, vol=0.1) => {
+        if(audioCtx.state === 'suspended') audioCtx.resume();
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.type = type; osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
+        gain.gain.setValueAtTime(vol, audioCtx.currentTime); gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + duration);
+        osc.connect(gain); gain.connect(audioCtx.destination); osc.start(); osc.stop(audioCtx.currentTime + duration);
+    },
+    playNoise: (duration, vol=0.2) => {
+        if(audioCtx.state === 'suspended') audioCtx.resume();
+        const b = audioCtx.createBuffer(1, audioCtx.sampleRate * duration, audioCtx.sampleRate);
+        const d = b.getChannelData(0); for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+        const n = audioCtx.createBufferSource(); n.buffer = b;
+        const g = audioCtx.createGain(); g.gain.setValueAtTime(vol, audioCtx.currentTime);
+        g.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + duration);
+        n.connect(g); g.connect(audioCtx.destination); n.start();
+    }
+};
+
+// --- CORREÇÃO DE ÁUDIO ---
+function startMusic() {
+    if(bgmAudio) return; // Já está tocando
+    bgmAudio = new Audio("/assets/bgm.mp3");
+    bgmAudio.loop = true;
+    bgmAudio.volume = 0.3; // Volume ambiente agradável
+    bgmAudio.play().catch(e => console.log("Aguardando interação para tocar áudio..."));
+}
+
+function playSfx(name) {
+    // Garante que o contexto de áudio esteja ativo ao tentar tocar som
+    if(audioCtx.state === 'suspended') { audioCtx.resume().then(() => startMusic()); }
+    
+    switch(name) {
+        case "atk": Sound.playNoise(0.1, 0.1); break;
+        case "hit": Sound.playTone(150, "square", 0.1, 0.15); break;
+        case "dash": Sound.playTone(400, "triangle", 0.2, 0.05); break;
+        case "gold": Sound.playTone(1200, "sine", 0.1, 0.1); break;
+        case "craft": Sound.playTone(200, "sawtooth", 0.5, 0.1); break;
+        case "socket": Sound.playTone(800, "sine", 0.3, 0.2); break;
+    }
+}
+
+const resize = () => { canvas.width=innerWidth; canvas.height=innerHeight; ctx.imageSmoothingEnabled=false; };
+resize(); window.onresize=resize;
+
+socket.on("connect", () => myId=socket.id);
+socket.on("char_list", list => {
+    document.getElementById("login-form").style.display="none"; document.getElementById("char-select").style.display="block";
+    const l = document.getElementById("char-list"); l.innerHTML="";
+    for(let n in list){
+        let d=document.createElement("div"); d.className="btn"; d.innerHTML=`${n} <small>Lvl ${list[n].level}</small>`;
+        d.onclick=()=>{ 
+            socket.emit("enter_game", n); 
+            document.getElementById("menu").style.display="none"; 
+            if(audioCtx.state === 'suspended') audioCtx.resume();
+            startMusic(); // Tenta iniciar musica ao entrar
+        };
+        l.appendChild(d);
+    }
+});
+socket.on("game_start", d => { recipes = d.recipes; renderCrafting(); });
+socket.on("u", d => { state=d; me=state.pl[myId]; if(me) updateUI(); });
+socket.on("txt", d => {
+    texts.push({...d, life:40, vy:-0.5});
+    if(d.val.includes("CRAFT") || d.val.includes("SOCKET")) playSfx("craft");
+    if(d.val.includes("G")) playSfx("gold");
+});
+socket.on("fx", d => {
+    if(d.type === "slash") { effects.push({ type:"slash", x:d.x, y:d.y, angle:d.angle, life:10 }); playSfx("atk"); }
+    else if (d.type === "spin") { effects.push({ type:"spin", x:d.x, y:d.y, life:15 }); playSfx("atk"); }
+    else if (d.type === "nova") effects.push({ type:"nova", x:d.x, y:d.y, life:20 });
+    else if (d.type === "dash") playSfx("dash");
+    else if (d.type === "alert") effects.push({ type:"alert", x:d.x, y:d.y, life:15 });
+    else if (d.type === "gold_txt") texts.push({ val:d.val, x:d.x, y:d.y, color:"#fb0", life:30, vy:-0.8 });
+});
+socket.on("open_shop", items => { shopItems = items; uiState.shop = true; updateUI(); });
+
+const keys = { w:false, a:false, s:false, d:false, q:false };
+function sendInput() {
+    let dx = keys.a?-1:keys.d?1:0, dy = keys.w?-1:keys.s?1:0;
+    if(dx!==inputState.x || dy!==inputState.y || keys.q !== inputState.block){ inputState={x:dx,y:dy,block:keys.q}; socket.emit("input", inputState); }
+}
+
+function getAngle() {
+    return Math.atan2((mouse.y - canvas.height/2), (mouse.x - canvas.width/2));
+}
+
+window.onkeydown = e => {
+    if(audioCtx.state==='suspended') { audioCtx.resume(); startMusic(); }
+    let k=e.key.toLowerCase(); if(keys.hasOwnProperty(k)){ keys[k]=true; sendInput(); }
+    if(k==="i") uiState.inv = !uiState.inv; 
+    if(k==="c") uiState.char = !uiState.char; 
+    if(k==="k") uiState.craft = !uiState.craft;
+    if(k==="escape") { uiState.inv=false; uiState.char=false; uiState.shop=false; uiState.craft=false; }
+    if(k===" ") { socket.emit("dash", getAngle()); }
+    if(k==="e") socket.emit("potion");
+    updateUI();
+};
+window.onkeyup = e => { let k=e.key.toLowerCase(); if(keys.hasOwnProperty(k)){ keys[k]=false; sendInput(); } };
+window.onmousemove = e => { mouse.x=e.clientX; mouse.y=e.clientY; tooltip.style.left = (mouse.x+10)+"px"; tooltip.style.top = (mouse.y+10)+"px"; };
+window.onmousedown = e => {
+    if(audioCtx.state==='suspended') { audioCtx.resume(); startMusic(); }
+    if(!me) return;
+    const invRect = document.getElementById("inventory").getBoundingClientRect();
+    const charRect = document.getElementById("char-panel").getBoundingClientRect();
+    const shopRect = document.getElementById("shop-panel").getBoundingClientRect();
+    const craftRect = document.getElementById("craft-panel").getBoundingClientRect();
+    if((uiState.inv && mouse.x > invRect.left && mouse.x < invRect.right && mouse.y > invRect.top && mouse.y < invRect.bottom) ||
+       (uiState.char && mouse.x > charRect.left && mouse.x < charRect.right && mouse.y > charRect.top && mouse.y < charRect.bottom) ||
+       (uiState.shop && mouse.x > shopRect.left && mouse.x < shopRect.right && mouse.y > shopRect.top && mouse.y < shopRect.bottom) ||
+       (uiState.craft && mouse.x > craftRect.left && mouse.x < craftRect.right && mouse.y > craftRect.top && mouse.y < craftRect.bottom)) return;
+    
+    const ang = getAngle();
+    if(e.button===0) socket.emit("attack", ang);
+    if(e.button===2) socket.emit("skill", {idx:1, angle:ang});
+};
+
+function renderCrafting() {
+    const list = document.getElementById("craft-list"); list.innerHTML = "";
+    recipes.forEach((r, idx) => {
+        const d = document.createElement("div"); d.className = "craft-item";
+        d.innerHTML = `<span style="color:#fff">${r.res.toUpperCase()}</span> <br> <small style="color:#aaa">Wood:${r.req.wood} Stone:${r.req.stone}</small>`;
+        d.onclick = () => socket.emit("craft", {action:"create", recipeIdx:idx});
+        list.appendChild(d);
+    });
+}
+
+function updateUI() {
+    if(!me) return;
+    document.getElementById("hp-bar").style.width = (me.hp/me.stats.maxHp)*100 + "%";
+    document.getElementById("mp-bar").style.width = (me.mp/me.stats.maxMp)*100 + "%";
+    document.getElementById("xp-bar").style.width = (me.xp/(me.level*100))*100 + "%";
+    document.getElementById("lvl-txt").innerText = `${state.theme==="#102"?"INFERNO":state.theme==="#311"?"NIGHTMARE":"NORMAL"} [${me.level}]`;
+    document.getElementById("cp-pts").innerText = me.pts;
+    document.getElementById("val-str").innerText = me.attrs.str;
+    document.getElementById("val-dex").innerText = me.attrs.dex;
+    document.getElementById("val-int").innerText = me.attrs.int;
+    document.getElementById("stat-dmg").innerText = me.stats.dmg;
+    document.getElementById("stat-spd").innerText = Math.floor(me.stats.spd*100);
+
+    document.getElementById("inventory").style.display = uiState.inv ? "block" : "none";
+    document.getElementById("char-panel").style.display = uiState.char ? "block" : "none";
+    document.getElementById("shop-panel").style.display = uiState.shop ? "block" : "none";
+    document.getElementById("craft-panel").style.display = uiState.craft ? "block" : "none";
+
+    // Equipment Render
+    ["head","body","hand","potion"].forEach(slot => {
+        const el = document.getElementById("eq-"+slot); el.innerHTML = "";
+        if(me.equipment[slot]) {
+            const it = me.equipment[slot];
+            el.style.borderColor = it.color; el.innerHTML = getIcon(it.key);
+            el.onmouseover = () => showTooltip(it); el.onmouseout = hideTooltip;
+            el.onclick = () => socket.emit("unequip", slot);
+        } else { el.style.borderColor = "#0f0"; el.onclick=null; }
+    });
+
+    // Inventory Render
+    const ig = document.getElementById("inv-grid"); ig.innerHTML = "";
+    me.inventory.forEach((it, idx) => {
+        const d = document.createElement("div"); d.className = "slot"; d.style.borderColor = it.color;
+        d.innerHTML = getIcon(it.key);
+        // Socket indicators
+        if(it.sockets && it.sockets.length > 0) {
+            const socks = document.createElement("div"); socks.style.cssText="position:absolute;bottom:0;right:0;display:flex;";
+            it.sockets.forEach((s, i) => {
+                const dot = document.createElement("div"); 
+                dot.style.cssText=`width:4px;height:4px;background:${it.gems[i]?it.gems[i].color:"#222"};border:1px solid #555;margin-right:1px;`;
+                socks.appendChild(dot);
+            });
+            d.appendChild(socks);
+        }
+
+        d.draggable = true;
+        d.ondragstart = (e) => { dragItem = { idx, item: it }; };
+        d.ondragover = (e) => e.preventDefault();
+        d.ondrop = (e) => {
+            e.preventDefault();
+            if(dragItem && dragItem.item.type === "gem" && it.type !== "gem" && it.type !== "material") {
+                 socket.emit("craft", {action:"socket", itemIdx:idx, gemIdx:dragItem.idx});
+            }
+        };
+
+        d.onmouseover = () => showTooltip(it); d.onmouseout = hideTooltip;
+        d.oncontextmenu = (e) => { e.preventDefault(); if(it.slot) socket.emit("equip", idx); else socket.emit("drop", idx); };
+        ig.appendChild(d);
+    });
+
+    // Shop Render
+    if(uiState.shop) {
+        const sg = document.getElementById("shop-grid"); sg.innerHTML = "";
+        shopItems.forEach((it, idx) => {
+            const d = document.createElement("div"); d.className = "slot"; d.style.borderColor = it.color;
+            d.innerHTML = getIcon(it.key);
+            d.onmouseover = () => showTooltip(it); d.onmouseout = hideTooltip;
+            d.onclick = () => window.buy(idx);
+            sg.appendChild(d);
+        });
+    }
+}
+
+function getIcon(key) {
+    if(key.includes("sword")) return "🗡️"; if(key.includes("axe")) return "🪓"; if(key.includes("dagger")) return "🔪";
+    if(key.includes("bow")) return "🏹"; if(key.includes("staff")) return "🪄"; if(key.includes("potion")) return "🧪";
+    if(key.includes("helm")) return "🪖"; if(key.includes("armor")) return "👕"; if(key.includes("wood")) return "🪵";
+    if(key.includes("stone")) return "🪨"; if(key.includes("ruby")) return "💎"; if(key.includes("sapphire")) return "🔹";
+    if(key.includes("emerald")) return "🟩"; if(key.includes("diamond")) return "⚪";
+    return "📦";
+}
+
+function showTooltip(it) {
+    let html = `<b style="color:${it.color}">${it.name}</b><br><span style="color:#aaa">${it.type.toUpperCase()}</span>`;
+    if(it.price) html += `<br>Price: ${it.price}G`;
+    if(it.stats) { for(let k in it.stats) html += `<br>${k.toUpperCase()}: ${it.stats[k]}`; }
+    if(it.sockets && it.sockets.length > 0) {
+        html += `<br><br>SOCKETS [${it.gems.length}/${it.sockets.length}]`;
+        it.gems.forEach(g => html += `<br><span style="color:${g.color}">* ${g.desc}</span>`);
+    }
+    tooltip.innerHTML = html; tooltip.style.display = "block";
+}
+function hideTooltip() { tooltip.style.display = "none"; }
+
+function draw() {
+    requestAnimationFrame(draw);
+    ctx.fillStyle = "#000"; ctx.fillRect(0,0,canvas.width,canvas.height);
+    if(!me) return;
+
+    cam.x += (me.x*SCALE - canvas.width/2 - cam.x)*0.2; cam.y += (me.y*SCALE - canvas.height/2 - cam.y)*0.2;
+    const ox = -cam.x, oy = -cam.y;
+
+    // MAP
+    const map = state.map; const theme = state.theme || "#222";
+    if(map.length){
+        const sy=Math.floor(cam.y/SCALE), ey=sy+Math.ceil(canvas.height/SCALE)+1;
+        const sx=Math.floor(cam.x/SCALE), ex=sx+Math.ceil(canvas.width/SCALE)+1;
+        ctx.lineWidth=1;
+        for(let y=sy; y<ey; y++){
+            if(!map[y]) continue;
+            for(let x=sx; x<ex; x++){
+                if(map[y][x]===0) { ctx.fillStyle="#080808"; ctx.fillRect(ox+x*SCALE,oy+y*SCALE,SCALE,SCALE); if((x+y)%3===0) { ctx.fillStyle=theme; ctx.fillRect(ox+x*SCALE+6, oy+y*SCALE+6, 2, 2); } }
+                else if(map[y][x]===1) { ctx.fillStyle="#000"; ctx.fillRect(ox+x*SCALE,oy+y*SCALE,SCALE,SCALE); ctx.strokeStyle=theme; ctx.strokeRect(ox+x*SCALE,oy+y*SCALE,SCALE,SCALE); }
+            }
+        }
+    }
+
+    // PROPS
+    if(state.props) state.props.forEach(p => {
+        const px=ox+p.x*SCALE, py=oy+p.y*SCALE;
+        if(p.type==="rock") { ctx.fillStyle="#333"; ctx.fillRect(px,py,4,3); } else if(p.type==="bones") { ctx.fillStyle="#ccc"; ctx.fillRect(px,py,3,1); ctx.fillRect(px+2,py+1,3,1); } else { ctx.fillStyle="#232"; ctx.fillRect(px,py,2,4); ctx.fillRect(px+3,py+1,2,3); }
+    });
+    
+    // ITEMS
+    for(let k in state.it){
+        let i=state.it[k]; let yb = Math.sin(Date.now()/200)*2;
+        if(i.item.key === "gold") { ctx.fillStyle="#fb0"; ctx.fillRect(ox+i.x*SCALE+4, oy+i.y*SCALE+6+yb, 3, 3); } 
+        else { ctx.fillStyle=i.item.color; ctx.shadowBlur=5; ctx.shadowColor=i.item.color; ctx.fillRect(ox+i.x*SCALE+4, oy+i.y*SCALE+4+yb, 8, 8); ctx.shadowBlur=0; }
+    }
+
+    // PROJECTILES
+    if(state.pr) state.pr.forEach(p => {
+        ctx.save(); ctx.translate(ox+p.x*SCALE, oy+p.y*SCALE); ctx.rotate(p.angle || 0); ctx.shadowBlur=10;
+        if(p.type === "arrow") { ctx.shadowColor="#ff0"; ctx.fillStyle = "#ff0"; ctx.fillRect(-6, -1, 12, 2); ctx.fillStyle = "#fff"; ctx.fillRect(4, -2, 2, 4); } 
+        else if (p.type === "meteor") { ctx.shadowColor="#f00"; ctx.fillStyle = "#f00"; ctx.beginPath(); ctx.arc(0,0, 6, 0, Math.PI*2); ctx.fill(); } 
+        else if (p.type === "web") { ctx.shadowColor="#fff"; ctx.strokeStyle="#fff"; ctx.beginPath(); ctx.moveTo(-4,-4); ctx.lineTo(4,4); ctx.moveTo(4,-4); ctx.lineTo(-4,4); ctx.stroke(); }
+        else if (p.type === "laser") { ctx.shadowColor="#f0f"; ctx.fillStyle="#f0f"; ctx.fillRect(-10, -2, 20, 4); }
+        else if (p.type === "frostball") { ctx.shadowColor="#0ff"; ctx.fillStyle="#0ff"; ctx.beginPath(); ctx.arc(0,0,5,0,Math.PI*2); ctx.fill(); }
+        else { ctx.shadowColor="#0ff"; ctx.fillStyle = "#0ff"; ctx.beginPath(); ctx.arc(0, 0, 3, 0, Math.PI*2); ctx.fill(); }
+        ctx.shadowBlur=0; ctx.restore();
+    });
+
+    // EFFECTS
+    for(let i=effects.length-1; i>=0; i--) {
+        let e = effects[i]; e.life--; if(e.life<=0) { effects.splice(i,1); continue; }
+        const x = ox + e.x*SCALE, y = oy + e.y*SCALE; ctx.shadowBlur=10; ctx.shadowColor="#fff";
+        if(e.type==="slash") { ctx.strokeStyle=`rgba(255,255,255,${e.life/10})`; ctx.lineWidth=3; ctx.beginPath(); ctx.arc(x,y,20,e.angle-0.8,e.angle+0.8); ctx.stroke(); } 
+        else if(e.type==="alert") { ctx.fillStyle="#f00"; ctx.font="bold 16px Courier New"; ctx.textAlign="center"; ctx.fillText("!", x, y-20); }
+        ctx.shadowBlur=0;
+    }
+
+    // ENTITIES
+    const ents = [...Object.values(state.mb), ...Object.values(state.pl)]; ents.sort((a,b)=>a.y-b.y);
+    ents.forEach(e => {
+        const x = ox+e.x*SCALE+SCALE/2, y = oy+e.y*SCALE+SCALE/2; const s = e.size || 12;
+        ctx.save(); ctx.translate(x, y);
+        let blink = e.hitFlash>0; let dirX = (e.vx > 0) ? 1 : -1; if(e.id === myId) dirX = (mouse.x > canvas.width/2) ? 1 : -1;
+        ctx.scale(dirX, 1);
+
+        // --- ART ---
+        if(e.ai==="resource") { 
+            if(e.drop==="wood") { ctx.fillStyle="#420"; ctx.fillRect(-3,-2,6,8); ctx.fillStyle="#141"; ctx.beginPath(); ctx.moveTo(0,-12); ctx.lineTo(-8,-2); ctx.lineTo(8,-2); ctx.fill(); }
+            else { ctx.fillStyle="#666"; ctx.beginPath(); ctx.arc(0,0,7,0,Math.PI*2); ctx.fill(); }
+        }
+        else if(e.npc) { ctx.fillStyle="#0aa"; ctx.fillRect(-5,-8,10,14); ctx.fillStyle="#fff"; ctx.fillRect(-2,-6,4,4); ctx.font="10px monospace"; ctx.fillStyle="#0f0"; ctx.fillText("$", -3, -15); }
+        else if(e.boss) {
+            // BOSS DRAWING
+            ctx.shadowBlur=15; ctx.shadowColor=e.state==="rage"?"#f00":"#fff";
+            ctx.fillStyle=blink?"#fff": (e.state==="rage"?"#f00":"#800"); 
+            ctx.fillRect(-s/2,-s/2,s,s); 
+            ctx.fillStyle="#f00"; ctx.fillRect(-8,-8,4,4); ctx.fillRect(4,-8,4,4); // Eyes
+            ctx.shadowBlur=0;
+        }
+        else if(e.type === "rat") { ctx.fillStyle = blink?"#fff":"#864"; ctx.fillRect(-5, 0, 10, 6); ctx.fillStyle = "#f88"; ctx.fillRect(-6, 2, 2, 2); ctx.fillRect(5, 4, 4, 1); } 
+        else if(e.type === "bat") { ctx.fillStyle = blink?"#fff":"#444"; ctx.beginPath(); ctx.moveTo(0,0); ctx.lineTo(-8,-5); ctx.lineTo(0,-2); ctx.lineTo(8,-5); ctx.fill(); } 
+        else if(e.type === "slime") { ctx.fillStyle = blink?"#fff":`rgba(0,255,0,0.7)`; ctx.fillRect(-5, -2, 10, 8); ctx.fillStyle = "#0f0"; ctx.fillRect(-3, -4, 6, 2); }
+        else if(e.type === "goblin") { ctx.fillStyle = blink?"#fff":"#484"; ctx.fillRect(-4, -6, 8, 12); ctx.fillStyle = "#000"; ctx.fillRect(-2, -4, 4, 2); }
+        else if(e.type === "skeleton") { ctx.fillStyle = blink?"#fff":"#ccc"; ctx.fillRect(-3, -8, 6, 6); ctx.fillRect(-2, 0, 4, 8); ctx.fillStyle = "#000"; ctx.fillRect(0, -6, 2, 2); }
+        else if(e.type === "orc") { ctx.fillStyle = blink?"#fff":"#252"; ctx.fillRect(-7, -8, 14, 14); ctx.fillStyle = "#131"; ctx.fillRect(-8, -10, 4, 4); ctx.fillStyle = "#eee"; ctx.fillRect(2, -4, 2, 4); }
+        else if(e.type === "demon") { ctx.fillStyle = blink?"#fff":"#900"; ctx.fillRect(-6, -8, 12, 12); ctx.fillStyle = "#000"; ctx.fillRect(-8, -10, 16, 2); ctx.fillRect(2, -12, 2, 4); }
+        else if(e.type === "chest") { ctx.fillStyle = "#a80"; ctx.fillRect(-6, -4, 12, 8); ctx.fillStyle="#ff0"; ctx.fillRect(-1, -2, 2, 2); }
+        else if(e.class) {
+            let c = e.class; ctx.fillStyle = blink?"#fff" : (c==="knight"?"#668":c==="hunter"?"#464":"#448"); ctx.fillRect(-4, -6, 8, 12);
+            if(e.equipment.head) { ctx.fillStyle="#aaa"; ctx.fillRect(-4,-8,8,4); }
+            if(e.equipment.body) { ctx.fillStyle="#555"; ctx.fillRect(-3,-4,6,6); }
+            if(e.equipment.hand) {
+                let k = e.equipment.hand.key;
+                if(k.includes("sword")||k.includes("axe")||k.includes("dagger")) { ctx.fillStyle="#ddd"; ctx.fillRect(4, -4, 2, 10); ctx.fillStyle="#840"; ctx.fillRect(3, 2, 4, 2); }
+                if(k.includes("bow")||k.includes("xbow")) { ctx.strokeStyle="#a84"; ctx.lineWidth=2; ctx.beginPath(); ctx.arc(4, 0, 6, -1, 1); ctx.stroke(); }
+                if(k.includes("staff")||k.includes("wand")) { ctx.fillStyle="#840"; ctx.fillRect(4, -8, 2, 16); ctx.fillStyle="#f0f"; ctx.fillRect(3,-10,4,4); }
+            }
+        }
+        else { ctx.fillStyle = blink?"#fff":"#ccc"; ctx.fillRect(-s/2, -s/2, s, s); }
+
+        if(e.input && e.input.block) { ctx.strokeStyle = "#0ff"; ctx.beginPath(); ctx.arc(0,0,12,0,6.28); ctx.stroke(); }
+        
+        ctx.restore();
+        // HP BAR
+        if(e.hp < e.maxHp && e.ai!=="static" && !e.npc && e.ai!=="resource") { 
+            const pct = Math.max(0, e.hp/e.maxHp); 
+            const bw = e.boss ? 30 : 16;
+            ctx.fillStyle="#000"; ctx.fillRect(x-bw/2, y-s-4, bw, 3); 
+            ctx.fillStyle=e.boss?"#d00":"#f00"; ctx.fillRect(x-bw/2, y-s-4, bw*pct, 3); 
+            if(e.boss) { ctx.fillStyle="#fff"; ctx.font="8px monospace"; ctx.fillText(e.name||"BOSS", x-10, y-s-6); }
+        }
+    });
+
+    for(let i=texts.length-1; i>=0; i--){ let t=texts[i]; t.y+=t.vy; t.life--; ctx.fillStyle=t.color; ctx.font="10px Courier New"; ctx.fillText(t.val, ox+t.x*SCALE, oy+t.y*SCALE); if(t.life<=0) texts.splice(i,1); }
+}
+
+window.login = () => socket.emit("login", document.getElementById("username").value);
+window.create = () => socket.emit("create_char", {name:document.getElementById("cname").value, cls:document.getElementById("cclass").value});
+window.addStat = (s) => socket.emit("add_stat", s);
+window.buy = (idx) => socket.emit("buy", shopItems[idx]);
+
+draw();

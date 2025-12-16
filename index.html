@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8"/>
+<title>DIABLOCK V17.5 - CRAFTING</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Courier+New&display=swap');
+html,body{ margin:0; width:100%; height:100%; background:#000; overflow:hidden; font-family:'Courier New', monospace; user-select:none; color:#0f0; }
+canvas{ width:100%; height:100%; image-rendering:pixelated; cursor: crosshair; display:block;}
+.scanlines { position: fixed; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; background: linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.25) 50%), linear-gradient(90deg, rgba(255, 0, 0, 0.06), rgba(0, 255, 0, 0.02), rgba(0, 0, 255, 0.06)); background-size: 100% 2px, 2px 100%; z-index: 999; }
+#ui-layer{ position:absolute; top:0; left:0; width:100%; height:100%; pointer-events:none; }
+.hud-bottom{ position:absolute; bottom:10px; left:50%; transform:translateX(-50%); display:flex; flex-direction:column; align-items:center; }
+.bar-box{ width:260px; padding:2px; background:#000; border:2px solid #0f0; margin-bottom:5px; }
+.bar{ width:100%; height:12px; background:#111; margin-bottom:2px; border:1px solid #040; }
+.fill{ height:100%; transition:width 0.1s; }
+.fill.hp{ background:#f00; } .fill.mp{ background:#00f; } .fill.xp{ background:#fb0; height:4px; }
+.skills{ display:flex; gap:5px; pointer-events:auto; align-items: flex-end; }
+.skill-btn{ width:36px; height:36px; background:#000; border:2px solid #0f0; color:#0f0; display:flex; align-items:center; justify-content:center; font-size:10px; font-weight:bold; cursor:pointer; position: relative;}
+.skill-btn:hover { background: #0f0; color:#000; }
+.key-hint { position: absolute; top:-12px; font-size: 8px; color: #aaa; }
+.panel{ display:none; position:absolute; background:#000; border:2px solid #0f0; padding:10px; pointer-events:auto; color:#0f0; box-shadow: 5px 5px 0px #003300; }
+#inventory{ top:50%; left:65%; transform:translate(-50%, -50%); width:280px; }
+#craft-panel{ top:50%; left:35%; transform:translate(-50%, -50%); width:220px; border-color:#d0d; color:#f0f; box-shadow: 5px 5px 0px #303; }
+#char-panel{ top:50%; left:20%; transform:translate(-50%, -50%); width:200px; }
+#shop-panel{ top:40%; left:50%; transform:translate(-50%, -50%); width:300px; border-color:#0ff; color:#0ff; }
+.grid{ display:grid; grid-template-columns:repeat(8, 1fr); gap:4px; margin-top:10px; }
+.slot{ width:28px; height:28px; background:#000; border:1px solid #0f0; cursor:pointer; position:relative; }
+.slot:hover{ background:#0f0; }
+.stat-row{ display:flex; justify-content:space-between; margin-bottom:5px; align-items:center; }
+.plus-btn{ background:#000; border:1px solid #0f0; color:#0f0; width:16px; height:16px; line-height:14px; text-align:center; cursor:pointer; font-size:12px; }
+.plus-btn:hover{ background:#0f0; color:#000; }
+#tooltip { position: absolute; background: #000; border: 1px solid #fff; padding: 5px; z-index: 1000; display: none; pointer-events: none; font-size: 10px; color:#fff; white-space:nowrap; }
+.equip-slots { display: flex; gap: 10px; justify-content: center; margin-bottom: 10px; }
+#menu{ position:absolute; top:0; left:0; width:100%; height:100%; background:#000; display:flex; flex-direction:column; align-items:center; justify-content:center; pointer-events:auto; z-index:10; }
+.btn{ padding:10px 20px; background:#000; color:#0f0; border:2px solid #0f0; margin:5px; cursor:pointer; font-family:inherit; font-weight:bold;}
+.btn:hover{ background:#0f0; color:#000; }
+.craft-item { padding: 5px; border-bottom: 1px solid #303; cursor:pointer; }
+.craft-item:hover { background: #303; }
+input, select{ padding:10px; background:#000; border:2px solid #0f0; color:#0f0; margin:5px; font-family:inherit;}
+h1 { text-shadow: 2px 2px #f00; color: #d00; }
+/* NOVO: Display de Ouro no HUD */
+#hud-gold {
+    position: absolute;
+    top: 10px; left: 10px;
+    font-size: 18px;
+    color: #fb0;
+    font-weight: bold;
+    text-shadow: 1px 1px #000;
+}
+</style>
+</head>
+<body oncontextmenu="return false">
+<canvas id="c"></canvas>
+<div class="scanlines"></div>
+<div id="tooltip"></div>
+
+<div id="ui-layer">
+    <div id="hud-gold">GOLD: 0</div>
+    <div class="hud-bottom">
+        <div class="bar-box">
+            <div style="display:flex; justify-content:space-between; font-size:12px; color:#0f0; margin-bottom:2px;"><span>STATUS</span> <span id="lvl-txt">NORMAL [1]</span></div>
+            <div class="bar"><div class="fill hp" id="hp-bar"></div></div>
+            <div class="bar"><div class="fill mp" id="mp-bar"></div></div>
+            <div class="bar" style="height:4px"><div class="fill xp" id="xp-bar"></div></div>
+        </div>
+        <div class="skills">
+            <div class="skill-btn">ATK</div>
+            <div class="skill-btn" id="skill-1"><span class="key-hint">E</span>SKL</div>
+            <div class="skill-btn" id="skill-dash"><span class="key-hint">SPC</span>DSH</div>
+            <div class="skill-btn" id="hud-potion"><span class="key-hint">Q</span>POT</div>
+            <div class="skill-btn"><span class="key-hint">I</span>INV</div>
+            <div class="skill-btn"><span class="key-hint">K</span>CFT</div>
+            <div class="skill-btn"><span class="key-hint">C</span>CHR</div>
+        </div>
+    </div>
+    
+    <div id="inventory" class="panel">
+        <div style="text-align:center; border-bottom:1px dashed #0f0; font-size:14px; padding-bottom:5px;">[ BACKPACK ]</div>
+        <div style="font-size:9px; color:#aaa; text-align:center;">Drag Gem to Item to Socket</div>
+        <div class="grid" id="inv-grid"></div>
+    </div>
+
+    <div id="craft-panel" class="panel">
+        <div style="text-align:center; border-bottom:1px dashed #f0f; font-size:14px; padding-bottom:5px;">[ CRAFTING ]</div>
+        <div id="craft-list" style="max-height: 200px; overflow-y: auto;"></div>
+    </div>
+
+    <div id="shop-panel" class="panel">
+        <div style="text-align:center; border-bottom:1px dashed #0ff; font-size:14px; padding-bottom:5px;">[ MERCHANT ]</div>
+        <div class="grid" id="shop-grid" style="grid-template-columns:repeat(5, 1fr);"></div>
+        <div style="text-align:center; margin-top:5px; font-size:10px;">Click to Buy</div>
+    </div>
+    
+    <div id="char-panel" class="panel">
+        <div style="text-align:center; border-bottom:1px dashed #0f0; font-size:14px; margin-bottom:10px;">[ ATTRIBUTES ]</div>
+        <div class="equip-slots">
+            <div class="slot" id="eq-head" title="Head"></div>
+            <div class="slot" id="eq-body" title="Body"></div>
+            <div class="slot" id="eq-hand" title="Hand"></div>
+            <div class="slot" id="eq-potion" title="Potion (E)"></div>
+        </div>
+        <div style="text-align:center; color:#fb0; margin-bottom:10px;">PTS: <span id="cp-pts">0</span></div>
+        <div class="stat-row"><span>STR</span> <div><span id="val-str">5</span> <div class="plus-btn" id="btn-str" onclick="addStat('str')">+</div></div></div>
+        <div class="stat-row"><span>DEX</span> <div><span id="val-dex">5</span> <div class="plus-btn" id="btn-dex" onclick="addStat('dex')">+</div></div></div>
+        <div class="stat-row"><span>INT</span> <div><span id="val-int">5</span> <div class="plus-btn" id="btn-int" onclick="addStat('int')">+</div></div></div>
+        <hr style="border:0; border-top:1px dashed #0f0"><div style="font-size:11px; color:#0f0;">DMG: <span id="stat-dmg">0</span> | SPD: <span id="stat-spd">0</span></div>
+    </div>
+</div>
+
+<div id="menu">
+    <h1 style="font-size:50px; margin-bottom:0;">DIABLOCK</h1>
+    <p style="color:#d00; margin-bottom:20px;">V17.5 - CRAFTING & BOSSES</p>
+    <div id="login-form"><input type="text" id="username" placeholder="USER"><button class="btn" onclick="login()">LOGIN</button></div>
+    <div id="char-select" style="display:none; text-align:center;">
+        <div id="char-list" style="margin-bottom:20px;"></div>
+        <input type="text" id="cname" placeholder="NAME">
+        <select id="cclass"><option value="knight">WARRIOR</option><option value="hunter">RANGER</option><option value="mage">WIZARD</option></select>
+        <button class="btn" onclick="create()">CREATE</button>
+    </div>
+</div>
+<script src="/socket.io/socket.io.js"></script>
+<script src="/game.js"></script>
+</body>
+</html>
