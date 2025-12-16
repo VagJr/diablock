@@ -7,6 +7,7 @@ const { Pool } = require("pg"); // OBRIGATÓRIO: Cliente PostgreSQL
 // ===================================
 // 1. DATABASE CONFIGURATION (PostgreSQL)
 // ===================================
+// ALTERAÇÃO 1: Permite rodar localmente sem DB_URL, mas mantém a persistência do Render.
 let DB_MODE = process.env.DATABASE_URL ? "POSTGRES" : "NONE";
 let pgPool = null;
 let isDbReady = false;
@@ -40,18 +41,20 @@ async function initializeServer() {
             console.log("PostgreSQL connected and table 'characters' ready. Persistence ENABLED.");
 
         } catch (err) {
-            // Se falhar (ex: DNS errado, credenciais erradas), loga o erro e NÃO inicia o jogo.
+            // ALTERAÇÃO 2: Se falhar, rebaixa para DB_MODE=NONE em vez de sair do processo.
             console.error("FATAL ERROR: PostgreSQL connection failed. Check DATABASE_URL/Whitelist.", err.message);
-            process.exit(1); 
-            return;
+            DB_MODE = 'NONE';
+            console.warn("⚠️ Switching to persistence NONE mode. Server will start but data will not be saved/loaded.");
         }
-    } else {
+    } 
+    
+    if (DB_MODE === 'NONE') {
         console.warn("⚠️ No DATABASE_URL set. Running WITHOUT persistence (DB_MODE: NONE).");
     }
 
     // INICIA O SERVIDOR HTTP/SOCKETS APENAS DEPOIS DA CONFIGURAÇÃO DO DB
     server.listen(3000, () => {
-        console.log("🔥 Echoes of the Deep - Server Started (Mode: " + DB_MODE + ")");
+        console.log("🔥 Diablock V26 - Server Started (Mode: " + DB_MODE + ")");
     }).on('error', (err) => {
         if (err.code === 'EADDRINUSE') {
             console.error('ERRO FATAL: A porta 3000 já está em uso. Por favor, feche o processo que a está usando ou tente outra porta.');
@@ -65,8 +68,14 @@ async function initializeServer() {
 
 // 2. FUNÇÕES DE PERSISTÊNCIA (SOMENTE POSTGRES)
 
+// NOVO: Armazenamento temporário em memória para o modo NONE
+let localCharacters = {};
+
 async function loadUserChars(user) {
-    if (!isDbReady) return {};
+    // CORREÇÃO 1: Em modo NONE, retorna todos os chars criados em memória
+    if (DB_MODE === 'NONE' || !isDbReady) {
+        return localCharacters[user] || {};
+    }
     try {
         const r = await pgPool.query(
             "SELECT char_name, data->>'level' AS level FROM characters WHERE user_name=$1",
@@ -82,9 +91,7 @@ async function loadUserChars(user) {
 }
 
 async function createChar(user, name, cls) {
-    if (!isDbReady) return true;
-
-    const id = `${user}:${name}`;
+    // CORREÇÃO 2: Em modo NONE, salva o char em memória e usa a classe real
     const newCharData = { 
         class: cls, level: 1, xp: 0, pts: 0, gold: 0, 
         attrs: { str: 5, dex: 5, int: 5 }, hp: 100, mp: 50, 
@@ -92,6 +99,15 @@ async function createChar(user, name, cls) {
         explored: Array.from({length: SIZE}, () => Array(SIZE).fill(0)) 
     };
 
+    if (DB_MODE === 'NONE' || !isDbReady) {
+        if (!localCharacters[user]) localCharacters[user] = {};
+        if (localCharacters[user][name]) return false; // Nome já existe localmente
+        localCharacters[user][name] = newCharData;
+        return true; 
+    }
+
+    // Lógica PostgreSQL (mantida)
+    const id = `${user}:${name}`;
     try {
         await pgPool.query(`
             INSERT INTO characters (id, user_name, char_name, data)
@@ -108,7 +124,10 @@ async function createChar(user, name, cls) {
 }
 
 async function loadCharData(user, name) {
-    if (!isDbReady) return null;
+    // CORREÇÃO 3: Em modo NONE, carrega o char da memória (se existir)
+    if (DB_MODE === 'NONE' || !isDbReady) {
+        return localCharacters[user]?.[name] || null;
+    }
 
     const id = `${user}:${name}`;
 
@@ -125,11 +144,7 @@ async function loadCharData(user, name) {
 }
 
 async function saveCharData(user, name, data) {
-    if (!isDbReady) return;
-
-    const id = `${user}:${name}`;
-    
-    // Remove dados de runtime que não devem ser salvos
+    // ALTERAÇÃO 6: Em modo NONE, apenas ignora a tentativa de salvar.
     const savableData = { ...data };
     delete savableData.x; 
     delete savableData.y; 
@@ -140,8 +155,20 @@ async function saveCharData(user, name, data) {
     delete savableData.cd; 
     delete savableData.id;
     delete savableData.user; 
-    delete savableData.charName; 
+    delete savableData.charName;
+        
+    if (DB_MODE === 'NONE' || !isDbReady) {
+        // Se estamos em modo NONE, atualizamos o cache de memória 
+        if(localCharacters[user] && localCharacters[user][name]) {
+            // Garantir que a classe original seja mantida no cache
+            savableData.class = localCharacters[user][name].class;
+            localCharacters[user][name] = savableData;
+        }
+        return;
+    }
 
+    const id = `${user}:${name}`;
+    
     try {
         await pgPool.query(`
             INSERT INTO characters (id, user_name, char_name, data)
@@ -155,7 +182,7 @@ async function saveCharData(user, name, data) {
 }
 
 
-// 3. INFRAESTRUTURA E CONFIGURAÇÕES DO JOGO
+// 3. INFRAESTRUTURA E CONFIGURAÇÕES DO JOGO (RESTANTE MANTIDO)
 
 const server = http.createServer((req, res) => {
   const safeUrl = decodeURI(req.url === "/" ? "/index.html" : req.url);
@@ -479,10 +506,17 @@ io.on("connection", socket => {
         socket.emit("char_list", chars); 
     });
     socket.on("create_char", async ({name, cls}) => { 
-        if(!user || (await loadCharData(user, name))) return; 
-        await createChar(user, name, cls);
-        const chars = await loadUserChars(user);
-        socket.emit("char_list", chars);
+        if(!user) return; 
+        // Em modo NONE, createChar agora usa o nome/classe real, salvando em memória.
+        const success = await createChar(user, name, cls);
+        if (success) {
+            const chars = await loadUserChars(user);
+            socket.emit("char_list", chars);
+        } else {
+            // Em caso de falha (ex: nome duplicado em modo POSTGRES ou NONE), reenvia a lista.
+            const chars = await loadUserChars(user);
+            socket.emit("char_list", chars);
+        }
     });
     socket.on("enter_game", async name => { 
         if(!user || !name) return;
@@ -490,17 +524,22 @@ io.on("connection", socket => {
         let inst = Object.values(instances)[0] || createInstance();
         socket.join(inst.id); socket.instId = inst.id;
         
-        const data = await loadCharData(user, name); 
+        let data = await loadCharData(user, name); 
+        
         if (!data) { 
-            // Se o char não existe, mas foi criado (ex: createChar falhou silenciosamente antes), 
-            // ou se for modo NONE (onde loadCharData retorna null), criamos um default:
-            if (DB_MODE === 'NONE') {
-                await createChar(user, name, 'knight'); // Cria um default
-                const createdData = await loadCharData(user, name);
-                data = createdData || { class: 'knight', level: 1, xp: 0, pts: 0, gold: 0, attrs: { str: 5, dex: 5, int: 5 }, hp: 100, mp: 50, inventory: [], equipment: {}, explored: Array.from({length: SIZE}, () => Array(SIZE).fill(0)) };
-            } else {
-                 return; // Se DB está ativo e não carregou, algo está errado, aborta.
-            }
+             if (DB_MODE === 'POSTGRES') {
+                console.error(`Postgres was active, but could not load character data for ${user}:${name}. Aborting.`);
+                return; 
+             }
+             
+             // Este ponto só é atingido se houver um erro de lógica na criação/carga do modo NONE.
+             // Para garantir que o jogo inicie, criamos um fallback genérico (redundante após correções anteriores).
+             data = { 
+                 class: 'knight', level: 1, xp: 0, pts: 0, gold: 0, 
+                 attrs: { str: 5, dex: 5, int: 5 }, hp: 100, mp: 50, 
+                 inventory: [], equipment: {}, 
+                 explored: Array.from({length: SIZE}, () => Array(SIZE).fill(0)) 
+             };
         }
         
         if(!data.attrs) data.attrs = { str:5, dex:5, int:5 };
@@ -579,12 +618,15 @@ io.on("connection", socket => {
         
         if(p.class === "knight") {
             if(p.mp < 15) return; p.mp -= 15; base_cd = 60;
-            io.to(inst.id).emit("fx", { type: "spin", x: p.x, y: p.y }); hitArea(inst, p, p.x, p.y, 3.5, null, 0, damage * 2, 40, isCrit);
+            // CORREÇÃO: Efeito spin life/duration para ser visível (20 ticks)
+            io.to(inst.id).emit("fx", { type: "spin", x: p.x, y: p.y, life: 20 }); hitArea(inst, p, p.x, p.y, 3.5, null, 0, damage * 2, 40, isCrit);
         } else if(p.class === "hunter") {
             if(p.mp < 15) return; p.mp -= 15; base_cd = 50;
+            // Hunter dispara 3 projéteis "arrow"
             [-0.3, 0, 0.3].forEach(off => { inst.projectiles.push({ x:p.x, y:p.y, vx:Math.cos(ang+off)*0.5, vy:Math.sin(ang+off)*0.5, life: 25, dmg: damage, owner: p.id, type: "arrow", angle: ang+off, isCrit: isCrit }); });
         } else if(p.class === "mage") {
             if(p.mp < 25) return; p.mp -= 25; base_cd = 80;
+            // Mage lança um projétil "meteor"
             inst.projectiles.push({ x:p.x, y:p.y, vx:Math.cos(ang)*0.2, vy:Math.sin(ang)*0.2, life: 50, dmg: damage * 3, owner: p.id, type: "meteor", angle: ang, isCrit: isCrit });
         }
         
@@ -655,12 +697,16 @@ io.on("connection", socket => {
         const inst = instances[socket.instId];
         const p = inst?.players[socket.id];
         
-        if(p && user && charName) {
+        if(p && user && charName && DB_MODE === 'POSTGRES') {
             // Salva o estado do personagem no DB/arquivo
             await saveCharData(p.user, p.charName, p);
             console.log(`Saved character: ${p.user}:${p.charName}`);
             
             delete inst.players[socket.id];
+        } else if (p) {
+             // CORREÇÃO: Salva o estado atual do char localmente em memória
+             await saveCharData(p.user, p.charName, p);
+             delete inst.players[socket.id];
         }
     });
 });
@@ -909,7 +955,7 @@ setInterval(() => {
                 for(let k in inst.mobs) {
                     let m = inst.mobs[k];
                     if(m.npc || m.ai === "resource") continue; // Projetil não atinge NPC/Recurso
-                    if(Math.hypot(m.x-pr.x, m.y-pr.y) < (m.size/SCALE/2 + 0.3)) { 
+                    if(Math.hypot(m.x-pr.x, pr.y-pr.y) < (m.size/SCALE/2 + 0.3)) { 
                         damageMob(inst, m, pr.dmg, inst.players[pr.owner], pr.vx, pr.vy, 5, pr.isCrit); 
                         hit=true; break; 
                     }
@@ -957,19 +1003,6 @@ setInterval(() => {
 
     });
 }, TICK);
-
-// Inicialização robusta do servidor para capturar erros de porta
-// REMOVIDO: A chamada listen foi movida para initializeServer()
-// server.listen(3000, () => {
-//     console.log("🔥 Echoes of the Deep - Server Started (Mode: " + DB_MODE + ")");
-// }).on('error', (err) => {
-//     if (err.code === 'EADDRINUSE') {
-//         console.error('ERRO FATAL: A porta 3000 já está em uso. Por favor, feche o processo que a está usando ou tente outra porta.');
-//     } else {
-//         console.error('ERRO FATAL AO INICIAR O SERVIDOR:', err);
-//     }
-//     process.exit(1); 
-// });
 
 // CHAMA A FUNÇÃO DE INICIALIZAÇÃO NO FINAL DO ARQUIVO
 initializeServer();

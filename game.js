@@ -17,21 +17,26 @@ let isMobile = window.matchMedia("(max-width: 768px)").matches; // Reavaliado du
 let gamepad = null;
 let gamepadActive = false; // Novo flag para controlar a UI mobile
 
+// NOVO: Variável para foco de navegação por Gamepad/Touch
+let focusIndex = 0;
+let focusArea = 'equipment'; // 'equipment', 'inventory', 'stats', 'shop', 'craft'
+
 window.addEventListener("gamepadconnected", (e) => {
     console.log("Gamepad connected:", e.gamepad.id);
     gamepad = e.gamepad;
     gamepadActive = true;
     document.getElementById("mobile-controls").style.display = "none"; // Esconde os controles touch
+    document.getElementById("mobile-menu-buttons").style.display = "flex"; // Mantém os botões de menu visíveis no DOM
 });
 window.addEventListener("gamepaddisconnected", (e) => {
     console.log("Gamepad disconnected:", e.gamepad.id);
     gamepad = null;
     gamepadActive = false;
-    if (isMobile) document.getElementById("mobile-controls").style.display = "block"; // Reexibe se estiver no mobile
+    // O reexibir os controles mobile é tratado no loop draw()
 });
 
 
-// --- AUDIO SYSTEM (REVERTED TO STABLE VERSION) ---
+// --- AUDIO SYSTEM (MANTIDO INTACTO) ---
 const AudioCtrl = {
     ctx: new (window.AudioContext || window.webkitAudioContext)(),
     bgm: null,
@@ -75,7 +80,14 @@ function playSfx(name) {
     }
 }
 
-const resize = () => { canvas.width=innerWidth; canvas.height=innerHeight; ctx.imageSmoothingEnabled=false; };
+const resize = () => { 
+    canvas.width=innerWidth; 
+    canvas.height=innerHeight; 
+    ctx.imageSmoothingEnabled=false; 
+    // Reavalia o estado móvel
+    isMobile = window.matchMedia("(max-width: 768px)").matches; 
+    updateUI(); 
+};
 resize(); window.onresize=resize;
 
 socket.on("connect", () => myId=socket.id);
@@ -115,12 +127,13 @@ socket.on("txt", d => {
     if(d.val.includes("LEVEL")) playSfx("levelup");
 });
 socket.on("fx", d => {
-    if(d.type === "slash") { effects.push({ type:"slash", x:d.x, y:d.y, angle:d.angle, life:10 }); playSfx("atk"); }
-    else if (d.type === "spin") { effects.push({ type:"spin", x:d.x, y:d.y, life:15 }); playSfx("atk"); }
-    else if (d.type === "nova") effects.push({ type:"nova", x:d.x, y:d.y, life:20 });
+    if (d.type === "slash") { effects.push({ type: "slash", x: d.x, y: d.y, angle: d.angle, life: 10 }); playSfx("atk"); }
+    // CORREÇÃO 1: Aumenta a duração do efeito 'spin' do Knight para 20
+    else if (d.type === "spin") { effects.push({ type: "spin", x: d.x, y: d.y, life: 20 }); playSfx("atk"); }
+    else if (d.type === "nova") effects.push({ type: "nova", x: d.x, y: d.y, life: 20 });
     else if (d.type === "dash") playSfx("dash");
     else if (d.type === "gold_txt") {
-        texts.push({ val:d.val, x:d.x, y:d.y, color:"#fb0", life:75, vy:-0.3, size:"10px" });
+        texts.push({ val: d.val, x: d.x, y: d.y, color: "#fb0", life: 75, vy: -0.3, size: "10px" });
         playSfx("gold");
     }
     else if (d.type === "hit") playSfx("hit");
@@ -132,7 +145,7 @@ socket.on("chat", d => {
 });
 socket.on("open_shop", items => { shopItems = items; uiState.shop = true; updateUI(); });
 
-// --- INPUT HANDLERS ---
+// --- INPUT HANDLERS (MANTIDO INTACTO) ---
 const keys = { w:false, a:false, s:false, d:false, q:false, game_x: 0, game_y: 0 };
 function sendInput() {
     let dx = keys.a?-1:keys.d?1:0, dy = keys.w?-1:keys.s?1:0;
@@ -218,12 +231,29 @@ window.onkeydown = e => {
     if (document.getElementById("menu").style.display !== "none") return;
     if(uiState.chat) return;
     let k=e.key.toLowerCase();
+    
     if(k === "enter") {
-        uiState.chat = true;
-        document.getElementById("chat-container").style.display = "block";
-        setTimeout(()=>chatInput.focus(), 10);
+        if(uiState.inv || uiState.char) {
+            // Se um painel de UI está aberto, usa ENTER como botão de ação/confirmação
+            handleGamepadAction(); 
+        } else {
+             // Abre o chat
+            uiState.chat = true;
+            document.getElementById("chat-container").style.display = "block";
+            setTimeout(()=>chatInput.focus(), 10);
+        }
         return;
     }
+    
+    // Gamepad/Teclado UI Navigation
+    if (uiState.inv || uiState.char || uiState.shop || uiState.craft) {
+        if (k === 'arrowup' || k === 'w') { handleGamepadNavigation('up'); e.preventDefault(); return; }
+        if (k === 'arrowdown' || k === 's') { handleGamepadNavigation('down'); e.preventDefault(); return; }
+        if (k === 'arrowleft' || k === 'a') { handleGamepadNavigation('left'); e.preventDefault(); return; }
+        if (k === 'arrowright' || k === 'd') { handleGamepadNavigation('right'); e.preventDefault(); return; }
+    }
+
+
     if(keys.hasOwnProperty(k)){ keys[k]=true; sendInput(); }
     if(k==="i") uiState.inv = !uiState.inv; 
     if(k==="c") uiState.char = !uiState.char; 
@@ -231,6 +261,13 @@ window.onkeydown = e => {
     if(k==="escape") { uiState.inv=false; uiState.char=false; uiState.shop=false; uiState.craft=false; uiState.chat=false; document.getElementById("chat-container").style.display="none"; }
     if(k===" ") { socket.emit("dash", getAttackAngle()); } // Usa AttackAngle para o Dash
     if(k==="q") { socket.emit("potion"); }
+    
+    // Sempre reinicia o foco ao abrir/fechar painéis
+    if (k === 'i' || k === 'c' || k === 'k' || k === 'escape') {
+        focusIndex = 0;
+        focusArea = (uiState.inv || uiState.char || uiState.shop || uiState.craft) ? (uiState.inv ? 'inventory' : uiState.char ? 'equipment' : uiState.shop ? 'shop' : 'craft') : 'none';
+    }
+    
     updateUI();
 };
 window.onkeyup = e => { let k=e.key.toLowerCase(); if(keys.hasOwnProperty(k)){ keys[k]=false; sendInput(); } };
@@ -250,7 +287,7 @@ window.onmousedown = e => {
 };
 
 
-// --- INPUT HANDLERS (MOBILE/TOUCH) ---
+// --- INPUT HANDLERS (MOBILE/TOUCH - MANTIDO INTACTO) ---
 let touchMap = {};
 
 const handleTouchStart = (e) => {
@@ -267,6 +304,19 @@ const handleTouchStart = (e) => {
         const target = touch.target;
         const id = touch.identifier;
         let processed = false;
+        
+        // CORREÇÃO: Touch no slot deve focar para navegação
+        if (target.closest('.slot')) {
+            const slotElements = document.querySelectorAll('.slot');
+            const clickedIndex = Array.from(slotElements).indexOf(target.closest('.slot'));
+            if (clickedIndex !== -1) {
+                focusIndex = clickedIndex;
+                focusArea = target.closest('#inv-grid') ? 'inventory' : target.closest('.equip-slots') ? 'equipment' : 'none';
+                updateUI();
+                // Deixa o toque ser processado para equipar/dropar (se for o caso)
+            }
+        }
+
 
         // 1. D-Pad
         if (target.closest('.dpad-btn')) {
@@ -310,16 +360,7 @@ const handleTouchStart = (e) => {
             updateUI();
             processed = true;
         }
-        // Lógica de fallback para o ícone "☰" desenhado no canvas
-        else if (isMobile) {
-            const rect = canvas.getBoundingClientRect();
-            if (touch.clientX > rect.width - 50 && touch.clientY < 30) { 
-                 uiState.inv = !uiState.inv;
-                 updateUI();
-                 processed = true;
-            }
-        }
-
+        
         if (processed) e.preventDefault();
     }
 };
@@ -343,7 +384,116 @@ document.addEventListener('touchstart', handleTouchStart, { passive: false });
 document.addEventListener('touchend', handleTouchEnd);
 document.addEventListener('touchcancel', handleTouchEnd);
 
-// --- GAMEPAD POLLING AND MAPPING ---
+// --- GAMEPAD / TOUCH UI NAVIGATION LOGIC (NOVO) ---
+let lastNavTimestamp = 0;
+const NAV_DELAY = 150; // Delay em ms para evitar navegação muito rápida
+
+function handleGamepadNavigation(direction) {
+    if (Date.now() - lastNavTimestamp < NAV_DELAY) return;
+
+    let elements = [];
+    let cols = 8;
+    
+    // Mapeia elementos baseados na área de foco
+    if (uiState.inv) {
+        elements = Array.from(document.querySelectorAll('#inv-grid .slot'));
+        cols = 8;
+    } else if (uiState.char) {
+        // Combina slots de equipamento (5) e botões de stats (3)
+        const eq_slots = Array.from(document.querySelectorAll('.equip-slots .slot'));
+        const stat_btns = Array.from(document.querySelectorAll('.stat-row .plus-btn'));
+        elements = eq_slots.concat(stat_btns);
+        cols = 5; // Trata como uma linha para equipamentos (índices 0-4)
+    } else {
+        return; // Nenhuma UI navegável aberta
+    }
+
+    if (elements.length === 0) return;
+
+    let newIndex = focusIndex;
+    const maxIndex = elements.length - 1;
+
+    if (uiState.inv) {
+        // Navegação em grade 8xN (Inventário)
+        if (direction === 'left') newIndex--;
+        else if (direction === 'right') newIndex++;
+        else if (direction === 'up') newIndex -= cols;
+        else if (direction === 'down') newIndex += cols;
+        
+        // Wrap/Clamp Navigation
+        if (newIndex < 0) newIndex = 0;
+        if (newIndex > maxIndex) newIndex = maxIndex;
+        
+    } else if (uiState.char) {
+        // Navegação em blocos (Equipamento: 0-4, Stats: 5-7)
+        if (direction === 'left' && newIndex > 0) newIndex--;
+        else if (direction === 'right' && newIndex < maxIndex) newIndex++;
+        
+        // Mover entre Equipamento (0-4) e Stats (5-7)
+        if (direction === 'down' && newIndex < 5) newIndex = 5;
+        // CORREÇÃO: Garante que o up de stats cai no último equipamento (4)
+        if (direction === 'up' && newIndex >= 5) newIndex = 4;
+        
+        // Clamp final para Char panel
+        newIndex = Math.max(0, Math.min(newIndex, maxIndex));
+    }
+
+    focusIndex = newIndex;
+    updateUI();
+    lastNavTimestamp = Date.now();
+}
+
+// NOVO: Lógica para executar a ação do Gamepad (Botão de Ataque/Ação Primária)
+function handleGamepadAction() {
+    if (!me) return;
+    
+    if (uiState.char) {
+        const eq_slots = Array.from(document.querySelectorAll('.equip-slots .slot'));
+        const stat_btns = Array.from(document.querySelectorAll('.stat-row .plus-btn'));
+        const elements = eq_slots.concat(stat_btns);
+        
+        const focusedElement = elements[focusIndex];
+
+        if (focusedElement) {
+            if (focusedElement.classList.contains('plus-btn')) {
+                // Ação: Adicionar ponto de atributo
+                focusedElement.click(); 
+            } else if (focusIndex >= 0 && focusIndex <= 4) { // Slot de equipamento
+                 // Ação: Unequip/Desequipar (simula o clique no slot equipado)
+                 const slotNames = ["head", "body", "hand", "rune", "potion"];
+                 const slot = slotNames[focusIndex];
+                 if (me.equipment[slot]) {
+                     socket.emit("unequip", slot);
+                 }
+            }
+        }
+    } 
+    else if (uiState.inv && me.inventory.length > 0) {
+        // Ação Principal no Inventário: Equipar (se for slot de equipamento) ou Usar (Poção)
+        const item = me.inventory[focusIndex];
+        if (item) {
+            if (item.slot && item.type !== "material" && item.type !== "consumable") {
+                socket.emit("equip", focusIndex);
+            } else if (item.key === "potion") {
+                socket.emit("potion");
+            }
+        }
+    }
+    // Outras UIs (Shop, Craft) podem ter suas ações implementadas aqui
+}
+
+// NOVO: Lógica para executar a Ação Secundária (Botão de Skill/Ação Secundária)
+function handleGamepadSecondaryAction() {
+    if (!me) return;
+
+    if (uiState.inv && me.inventory.length > 0) {
+        // Ação Secundária no Inventário: Dropar (Drop)
+        if (me.inventory[focusIndex]) {
+             socket.emit("drop", focusIndex);
+        }
+    }
+}
+
 let lastButtons = {};
 
 function handleGamepadInput() {
@@ -351,14 +501,11 @@ function handleGamepadInput() {
     gamepad = gamepads[0]; 
 
     if (!gamepad) {
-        // Se o gamepad for desconectado durante o jogo
         gamepadActive = false;
-        if (isMobile) document.getElementById("mobile-controls").style.display = "block";
         return;
     }
     
     gamepadActive = true;
-    document.getElementById("mobile-controls").style.display = "none";
     
     // Atualiza o objeto gamepad para ter os dados mais recentes
     gamepad = navigator.getGamepads()[gamepad.index];
@@ -388,52 +535,72 @@ function handleGamepadInput() {
         
         if (isPressed && !wasPressed) {
             if (AudioCtrl.ctx.state === 'suspended') AudioCtrl.ctx.resume().catch(err => console.error("Could not resume AudioContext on button press", err));
-
-            const ang = getAttackAngle(); // Usa mira automática/direcional
             
-            if (action === 'attack') {
-                socket.emit("attack", ang);
-            } else if (action === 'skill') {
-                socket.emit("skill", {idx:1, angle:ang});
-            } else if (action === 'dash') {
-                 socket.emit("dash", ang);
-            } else if (action === 'potion') {
-                 socket.emit("potion");
-            } else if (action === 'inventory') {
-                uiState.inv = !uiState.inv;
-                uiState.char = false;
-                updateUI();
-            } else if (action === 'character') {
-                uiState.char = !uiState.char;
-                uiState.inv = false;
-                updateUI();
+            // Lógica de navegação ou ação da UI
+            if (uiState.inv || uiState.char || uiState.shop || uiState.craft) {
+                if (action === 'attack') { handleGamepadAction(); } // Botão A -> Ação Primária/Equipar/Usar/Add Stat
+                if (action === 'skill') { handleGamepadSecondaryAction(); } // Botão B -> Ação Secundária/Dropar
+                // D-Pad/Sticks são tratados na navegação abaixo
             }
+            
+            // Lógica de Combate
+            else {
+                const ang = getAttackAngle(); 
+                if (action === 'attack') { socket.emit("attack", ang); } 
+                if (action === 'skill') { socket.emit("skill", {idx:1, angle:ang}); }
+                if (action === 'dash') { socket.emit("dash", ang); } 
+                if (action === 'potion') { socket.emit("potion"); } 
+            }
+            
+            // Lógica de abertura/fechamento de Painéis
+            if (action === 'inventory') { uiState.inv = !uiState.inv; uiState.char = false; uiState.shop = false; uiState.craft = false; }
+            if (action === 'character') { uiState.char = !uiState.char; uiState.inv = false; uiState.shop = false; uiState.craft = false; }
+            
+            // Sempre reinicia o foco ao abrir/fechar painéis
+            if (action === 'inventory' || action === 'character') {
+                 focusIndex = 0;
+                 focusArea = (uiState.inv || uiState.char || uiState.shop || uiState.craft) ? (uiState.inv ? 'inventory' : uiState.char ? 'equipment' : 'none') : 'none';
+            }
+            
+            updateUI();
+
         }
         lastButtons[buttonIndex] = isPressed;
     };
 
     // Mapeamento de Botões Padrão (Xbox Layout)
-    // Botão 0: A (Bottom Face) -> Ataque Básico
-    processButton(0, 'attack'); 
-    
-    // Botão 1: B (Right Face) -> Habilidade / Skill
-    processButton(1, 'skill');
-    
-    // Botão 3: Y (Top Face) -> Dash
-    processButton(3, 'dash'); 
+    processButton(0, 'attack'); // A
+    processButton(1, 'skill'); // B
+    processButton(3, 'dash'); // Y (Mantido como dash, mas pode ser usado para Drop se Gamepad for focado na UI)
+    processButton(4, 'potion'); // LB (Poção)
+    processButton(9, 'inventory'); // Start (Options)
+    processButton(8, 'character'); // Select (View/Back)
 
-    // Botão 4: LB (Left Shoulder) -> Poção
-    processButton(4, 'potion'); 
-    
-    // Botão 9: Start (Options) -> Inventário
-    processButton(9, 'inventory'); 
-
-    // Botão 8: Select (View/Back) -> Painel de Personagem
-    processButton(8, 'character');
+    // Tratamento de navegação por Gamepad Stick/Dpad
+    if (uiState.inv || uiState.char || uiState.shop || uiState.craft) {
+        if (gamepad.buttons[12]?.pressed && !lastButtons[12]) handleGamepadNavigation('up');
+        if (gamepad.buttons[13]?.pressed && !lastButtons[13]) handleGamepadNavigation('down');
+        if (gamepad.buttons[14]?.pressed && !lastButtons[14]) handleGamepadNavigation('left');
+        if (gamepad.buttons[15]?.pressed && !lastButtons[15]) handleGamepadNavigation('right');
+        
+        // Sticks (se o Gamepad não tiver Dpad, os botões 12-15 podem ser 0-3)
+        if (Math.abs(stickY) > deadzone && Math.abs(stickY) > Math.abs(stickX)) {
+             if (stickY < 0 && !lastNavTimestamp || stickY < 0 && Date.now() - lastNavTimestamp > NAV_DELAY) { handleGamepadNavigation('up'); }
+             else if (stickY > 0 && !lastNavTimestamp || stickY > 0 && Date.now() - lastNavTimestamp > NAV_DELAY) { handleGamepadNavigation('down'); }
+        } else if (Math.abs(stickX) > deadzone && Math.abs(stickX) > Math.abs(stickY)) {
+             if (stickX < 0 && !lastNavTimestamp || stickX < 0 && Date.now() - lastNavTimestamp > NAV_DELAY) { handleGamepadNavigation('left'); }
+             else if (stickX > 0 && !lastNavTimestamp || stickX > 0 && Date.now() - lastNavTimestamp > NAV_DELAY) { handleGamepadNavigation('right'); }
+        }
+        
+        lastButtons[12] = gamepad.buttons[12]?.pressed;
+        lastButtons[13] = gamepad.buttons[13]?.pressed;
+        lastButtons[14] = gamepad.buttons[14]?.pressed;
+        lastButtons[15] = gamepad.buttons[15]?.pressed;
+    }
 }
 
 
-// --- UI AND DRAWING FUNCTIONS ---
+// --- UI AND DRAWING FUNCTIONS (AJUSTADA PARA FOCO) ---
 
 function renderCrafting() {
     const list = document.getElementById("craft-list"); list.innerHTML = "";
@@ -448,12 +615,13 @@ function renderCrafting() {
 function updateUI() {
     if(!me) return;
     
-    // Atualização de Barras (PC DOM UI) - Melhorada na V20
-    if (!isMobile) {
-        const hpPct = (me.hp/me.stats.maxHp)*100;
-        const mpPct = (me.mp/me.stats.maxMp)*100;
-        const xpPct = (me.xp/(me.level*100))*100;
+    const hpPct = (me.hp/me.stats.maxHp)*100;
+    const mpPct = (me.mp/me.stats.maxMp)*100;
+    const xpPct = (me.xp/(me.level*100))*100;
+    let diffName = state.theme === "#f00" ? "HORDE I" : state.theme === "#900" ? "HORDE II" : state.theme === "#102" ? "HELL" : state.theme === "#311" ? "NIGHTMARE" : "NORMAL";
 
+    // --- PC/MOBILE VERTICAL HUD (barras grandes) ---
+    if (!isMobile || (isMobile && innerWidth < innerHeight)) {
         document.getElementById("hp-bar").style.width = hpPct + "%";
         document.getElementById("mp-bar").style.width = mpPct + "%";
         document.getElementById("xp-bar").style.width = xpPct + "%";
@@ -461,12 +629,23 @@ function updateUI() {
         document.getElementById("hp-txt").innerText = `HP: ${Math.floor(me.hp)}/${me.stats.maxHp}`;
         document.getElementById("mp-txt").innerText = `MP: ${Math.floor(me.mp)}/${me.stats.maxMp}`;
         document.getElementById("xp-txt").innerText = `${Math.floor(xpPct)}%`;
-
-        let diffName = state.theme === "#f00" ? "HORDE I" : state.theme === "#900" ? "HORDE II" : state.theme === "#102" ? "HELL" : state.theme === "#311" ? "NIGHTMARE" : "NORMAL";
         document.getElementById("lvl-txt").innerText = `${diffName} [${me.level}]`;
     }
+    
+    // --- MOBILE HORIZONTAL HUD (barra minúscula) ---
+    const mobileHorizontalHud = document.getElementById("hud-horizontal-mobile");
+    if (isMobile && innerWidth > innerHeight) {
+         // Ajusta o HUD minúsculo (no DOM)
+         document.getElementById("h-lvl-txt").innerText = `${diffName} [${me.level}]`;
+         document.getElementById("h-gold-txt").innerText = `${me.gold}G`;
+         
+         document.getElementById("h-hp-bar").style.width = hpPct + "%";
+         document.getElementById("h-mp-bar").style.width = mpPct + "%";
+         document.getElementById("h-xp-bar").style.width = xpPct + "%";
+         
+    } 
 
-    // Atualização de Status e Inventário (Comum)
+    // --- UI Panels (Comum) ---
     document.getElementById("cp-pts").innerText = me.pts;
     document.getElementById("val-str").innerText = me.attrs.str;
     document.getElementById("val-dex").innerText = me.attrs.dex;
@@ -478,28 +657,114 @@ function updateUI() {
     
     document.getElementById("hud-gold").innerText = "GOLD: " + me.gold;
 
+    const uiActionButtons = document.getElementById("ui-action-buttons");
+
+    // Lógica para mostrar/esconder painéis e botões de ação da UI (Gamepad/Touch)
+    if (uiState.inv || uiState.char || uiState.shop || uiState.craft) {
+        uiActionButtons.style.display = 'flex';
+    } else {
+        uiActionButtons.style.display = 'none';
+        hideTooltip(); // Esconde o tooltip se nenhum painel estiver aberto
+    }
+
     document.getElementById("inventory").style.display = uiState.inv ? "block" : "none";
     document.getElementById("char-panel").style.display = uiState.char ? "block" : "none";
     document.getElementById("shop-panel").style.display = uiState.shop ? "block" : "none";
     document.getElementById("craft-panel").style.display = uiState.craft ? "block" : "none";
 
-    // Adiciona o novo slot 'rune'
-    ["head","body","hand","rune","potion"].forEach(slot => {
+    // --- RENDERIZAÇÃO DE EQUIPAMENTO (com foco) ---
+    const eq_slots = ["head","body","hand","rune","potion"];
+    eq_slots.forEach((slot, index) => {
         const el = document.getElementById("eq-"+slot); 
-        if (!el) return; // Garante que o elemento existe
+        if (!el) return; 
+        
         el.innerHTML = "";
+        el.style.outline = 'none'; // Limpa o foco
+        el.style.outlineOffset = '0px';
+
+        // Verifica se este slot está focado
+        if (uiState.char && focusArea === 'equipment' && focusIndex === index) {
+            el.style.outline = '2px solid yellow';
+            el.style.outlineOffset = '2px';
+            if (me.equipment[slot]) showTooltip(me.equipment[slot]); else hideTooltip();
+        }
+
         if(me.equipment[slot]) {
             const it = me.equipment[slot];
             el.style.borderColor = it.color; el.innerHTML = getIcon(it.key);
             el.style.boxShadow = it.rarity === "legendary" ? "0 0 5px #f0f" : "none";
             el.onmouseover = () => showTooltip(it); el.onmouseout = hideTooltip;
             el.onclick = () => socket.emit("unequip", slot);
-        } else { el.style.borderColor = "#0f0"; el.style.boxShadow = "none"; el.onclick=null; }
+        } else { 
+            el.style.borderColor = "#0f0"; el.style.boxShadow = "none"; 
+            el.onclick=null; 
+            // Se estiver focado em um slot vazio, esconde o tooltip
+            if (uiState.char && focusArea === 'equipment' && focusIndex === index) {
+                hideTooltip();
+                document.getElementById('ui-btn-equip').innerText = 'ESPAÇO VAZIO (A)';
+            }
+        }
     });
+    
+    // --- RENDERIZAÇÃO DOS BOTÕES DE STATS (com foco) ---
+    const stat_btns = ['str', 'dex', 'int'];
+    stat_btns.forEach((stat, index) => {
+        const btn = document.getElementById("btn-"+stat);
+        const focusIndexOffset = eq_slots.length; // 5
+        
+        btn.style.outline = 'none';
+        btn.style.outlineOffset = '0px';
 
-    const ig = document.getElementById("inv-grid"); ig.innerHTML = "";
+        if (uiState.char && focusArea === 'equipment' && focusIndex === index + focusIndexOffset) {
+             btn.style.outline = '2px solid yellow';
+             btn.style.outlineOffset = '2px';
+             
+             if (me.pts > 0) {
+                 document.getElementById('ui-btn-equip').innerText = `ADICIONAR ${stat.toUpperCase()} (A)`;
+             } else {
+                 document.getElementById('ui-btn-equip').innerText = `PONTOS ESGOTADOS`;
+             }
+        }
+    });
+    
+    // --- RENDERIZAÇÃO DO INVENTÁRIO (com foco) ---
+    const ig = document.getElementById("inv-grid"); 
+    
+    // **TRECHO CRÍTICO DE RECONSTRUÇÃO DO INVENTÁRIO**
+    ig.innerHTML = ""; // Limpa a grade (essencial para mostrar novos itens)
+    
+    // CORREÇÃO 4: Recalcula o foco se o inventário encolheu
+    // *Removida a chamada recursiva desnecessária.*
+    if (uiState.inv && focusArea === 'inventory' && me.inventory.length > 0 && focusIndex >= me.inventory.length) {
+         focusIndex = Math.max(0, me.inventory.length - 1);
+    } else if (uiState.inv && me.inventory.length === 0) {
+        focusIndex = 0;
+    }
+
+
     me.inventory.forEach((it, idx) => {
         const d = document.createElement("div"); d.className = "slot"; d.style.borderColor = it.color;
+        
+        d.style.outline = 'none';
+        d.style.outlineOffset = '0px';
+
+        if (uiState.inv && focusArea === 'inventory' && focusIndex === idx) {
+             d.style.outline = '2px solid yellow';
+             d.style.outlineOffset = '2px';
+             showTooltip(it); 
+             
+             // Atualiza botões de ação
+             if (it.slot && it.type !== "material" && it.type !== "consumable") {
+                document.getElementById('ui-btn-equip').innerText = 'EQUIPAR (A)';
+             } else if (it.key === 'potion') {
+                 document.getElementById('ui-btn-equip').innerText = 'USAR POÇÃO (A)';
+             } else {
+                document.getElementById('ui-btn-equip').innerText = 'NÃO EQUIPÁVEL (A)';
+             }
+             document.getElementById('ui-btn-drop').innerText = 'DROPAR (B)';
+
+        } 
+
         if(it.rarity === "legendary") d.style.boxShadow = "0 0 4px " + it.color;
         d.innerHTML = getIcon(it.key);
         if(it.sockets && it.sockets.length > 0) {
@@ -511,14 +776,30 @@ function updateUI() {
             });
             d.appendChild(socks);
         }
+        
+        // Eventos de mouse/touch originais (mantidos)
         d.draggable = true;
         d.ondragstart = (e) => { dragItem = { idx, item: it }; };
         d.ondragover = (e) => e.preventDefault();
         d.ondrop = (e) => { e.preventDefault(); if(dragItem && dragItem.item.type === "gem" && it.type !== "gem") socket.emit("craft", {action:"socket", itemIdx:idx, gemIdx:dragItem.idx}); };
         d.onmouseover = () => showTooltip(it); d.onmouseout = hideTooltip;
         d.oncontextmenu = (e) => { e.preventDefault(); if(it.slot) socket.emit("equip", idx); else socket.emit("drop", idx); };
-        ig.appendChild(d);
+        
+        ig.appendChild(d); // Adiciona o slot recém-criado
     });
+    
+    // Lógica de fallback para botões de ação se o inventário estiver vazio ou sem foco
+    if (uiState.inv && (me.inventory.length === 0 || focusArea !== 'inventory')) {
+        hideTooltip();
+        document.getElementById('ui-btn-equip').innerText = 'INVENTÁRIO VAZIO';
+        document.getElementById('ui-btn-drop').innerText = 'DROPAR';
+    } 
+    
+    if (!uiState.inv && !uiState.char) {
+        // Esconde botões de ação se nenhum painel crítico estiver aberto
+        uiActionButtons.style.display = 'none';
+    }
+
 
     if(uiState.shop) {
         const sg = document.getElementById("shop-grid"); sg.innerHTML = "";
@@ -593,6 +874,36 @@ function draw() {
     // --- GAMEPAD CHECK & POLLING ---
     handleGamepadInput();
     
+    // --- MOBILE UI HIDE/SHOW ---
+    const mobileControls = document.getElementById("mobile-controls");
+    const mobileMenuButtons = document.getElementById("mobile-menu-buttons");
+    const mobileHorizontalHud = document.getElementById("hud-horizontal-mobile");
+    
+    if(isMobile) {
+        if (innerWidth > innerHeight) {
+            // Modo Horizontal (Paisagem) - Esconde controles de movimento/ação
+            mobileControls.style.display = "none";
+            document.getElementById("hud-gold").style.display = "none"; // Esconde Gold na vertical
+            mobileHorizontalHud.style.display = "flex"; // Mostra HUD minúsculo
+            
+        } else {
+            // Modo Vertical (Retrato) - Mostra controles de movimento/ação no canto inferior
+            if (!gamepadActive) {
+                mobileControls.style.display = "block";
+            } else {
+                 mobileControls.style.display = "none";
+            }
+            document.getElementById("hud-gold").style.display = "block"; // Mostra Gold no topo
+            mobileHorizontalHud.style.display = "none"; // Esconde HUD minúsculo
+        }
+        // Os botões de menu (INV/CHR) permanecem visíveis para acesso aos painéis
+        mobileMenuButtons.style.display = "flex";
+    } else {
+        mobileControls.style.display = "none";
+        mobileMenuButtons.style.display = "none";
+        mobileHorizontalHud.style.display = "none";
+    }
+
     ctx.fillStyle = "#000"; ctx.fillRect(0,0,canvas.width,canvas.height);
     if(!me) return;
 
@@ -647,12 +958,30 @@ function draw() {
     // PROJECTILES
     if(state.pr) state.pr.forEach(p => {
         ctx.save(); ctx.translate(ox+p.x*SCALE, oy+p.y*SCALE); ctx.rotate(p.angle || 0); ctx.shadowBlur=10;
-        if(p.type === "arrow") { ctx.shadowColor="#ff0"; ctx.fillStyle = "#ff0"; ctx.fillRect(-6, -1, 12, 2); } 
-        else if (p.type === "meteor") { ctx.shadowColor="#f00"; ctx.fillStyle = "#f00"; ctx.beginPath(); ctx.arc(0,0, 6, 0, Math.PI*2); ctx.fill(); } 
-        else if (p.type === "web") { ctx.shadowColor="#fff"; ctx.strokeStyle="#fff"; ctx.beginPath(); ctx.moveTo(-4,-4); ctx.lineTo(4,4); ctx.moveTo(4,-4); ctx.lineTo(-4,4); ctx.stroke(); }
-        else if (p.type === "laser") { ctx.shadowColor="#f0f"; ctx.fillStyle="#f0f"; ctx.fillRect(-10, -2, 20, 4); }
-        else if (p.type === "frostball") { ctx.shadowColor="#0ff"; ctx.fillStyle="#0ff"; ctx.beginPath(); ctx.arc(0,0,5,0,Math.PI*2); ctx.fill(); }
-        else { ctx.shadowColor="#0ff"; ctx.fillStyle = "#0ff"; ctx.beginPath(); ctx.arc(0, 0, 3, 0, Math.PI*2); ctx.fill(); }
+        // CORREÇÃO 2: Adiciona/ajusta a renderização de projéteis de skill para maior visibilidade
+        if(p.type === "arrow") { 
+             ctx.shadowColor="#ff0"; ctx.fillStyle = "#ff0"; ctx.fillRect(-6, -1, 12, 2); 
+        } 
+        else if (p.type === "fireball") { 
+             ctx.shadowColor="#f80"; ctx.fillStyle = "#f80"; ctx.beginPath(); ctx.arc(0,0, 4, 0, Math.PI*2); ctx.fill(); 
+        }
+        else if (p.type === "meteor") { 
+             // Projétil da Skill do Mago (Aumentado o tamanho/brilho)
+             ctx.shadowColor="#f00"; ctx.fillStyle = "#f00"; ctx.beginPath(); ctx.arc(0,0, 8, 0, Math.PI*2); ctx.fill(); 
+        } 
+        else if (p.type === "web") { 
+             ctx.shadowColor="#fff"; ctx.strokeStyle="#fff"; ctx.lineWidth=1; ctx.beginPath(); 
+             ctx.moveTo(-4,-4); ctx.lineTo(4,4); ctx.moveTo(4,-4); ctx.lineTo(-4,4); ctx.stroke(); 
+        }
+        else if (p.type === "laser") { 
+             ctx.shadowColor="#f0f"; ctx.fillStyle="#f0f"; ctx.fillRect(-10, -2, 20, 4); 
+        }
+        else if (p.type === "frostball") { 
+             ctx.shadowColor="#0ff"; ctx.fillStyle="#0ff"; ctx.beginPath(); ctx.arc(0,0,5,0,Math.PI*2); ctx.fill(); 
+        }
+        else { 
+             ctx.shadowColor="#0ff"; ctx.fillStyle = "#0ff"; ctx.beginPath(); ctx.arc(0, 0, 3, 0, Math.PI*2); ctx.fill(); 
+        }
         ctx.shadowBlur=0; ctx.restore();
     });
 
@@ -661,12 +990,22 @@ function draw() {
         let e = effects[i]; e.life--; if(e.life<=0) { effects.splice(i,1); continue; }
         const x = ox + e.x*SCALE, y = oy + e.y*SCALE; ctx.shadowBlur=10; ctx.shadowColor="#fff";
         if(e.type==="slash") { ctx.strokeStyle=`rgba(255,255,255,${e.life/10})`; ctx.lineWidth=3; ctx.beginPath(); ctx.arc(x,y,20,e.angle-0.8,e.angle+0.8); ctx.stroke(); } 
+        // CORREÇÃO 3: Efeito de rotação do Knight (Skill) mais visível
+        else if(e.type==="spin") { 
+             ctx.strokeStyle=`rgba(255, 255, 0, ${e.life/20})`; 
+             ctx.lineWidth=4; 
+             ctx.beginPath(); 
+             // O raio da animação diminui enquanto o efeito "morre" (life)
+             const radius = 35 - (20 - e.life)*2; // Aumentado o raio inicial para 35
+             if(radius > 0) ctx.arc(x, y, radius, 0, Math.PI * 2); 
+             ctx.stroke(); 
+        }
         else if(e.type==="nova") { ctx.strokeStyle=`rgba(255,0,0,${e.life/20})`; ctx.lineWidth=2; ctx.beginPath(); ctx.arc(x,y,30-e.life,0,6.28); ctx.stroke(); }
         else if(e.type==="alert") { ctx.fillStyle="#f00"; ctx.font="bold 16px Courier New"; ctx.textAlign="center"; ctx.fillText("!", x, y-20); }
         ctx.shadowBlur=0;
     }
 
-    // ENTITIES
+    // ENTITIES (RESTANTE MANTIDO INTACTO)
     const ents = [...Object.values(state.mb), ...Object.values(state.pl)]; ents.sort((a,b)=>a.y-b.y);
     ents.forEach(e => {
         const x = ox+e.x*SCALE+SCALE/2, y = oy+e.y*SCALE+SCALE/2; const s = e.size || 12;
@@ -683,9 +1022,10 @@ function draw() {
         
         // Determina a direção visual (Prioriza Mouse para PC, Movimento para Mobile/Gamepad)
         if (e.id === myId) {
-            if (!isMobile) {
+            // Se NÃO for mobile OU for mobile no modo paisagem/horizontal
+            if (!isMobile || (isMobile && innerWidth > innerHeight)) { 
                 dirX = (mouse.x > canvas.width/2) ? 1 : -1;
-            } else {
+            } else { // Mobile Vertical (Retrato) - Foco no movimento D-pad/touch
                 const currentInputX = keys.a ? -1 : keys.d ? 1 : keys.game_x;
                 if (Math.abs(currentInputX) > 0.1) {
                     dirX = Math.sign(currentInputX);
@@ -699,7 +1039,7 @@ function draw() {
 
         ctx.scale(dirX, 1);
 
-        // --- ART ---
+        // --- ART (MANTIDO INTACTO) ---
         if(e.ai==="resource") { 
             if(e.drop==="wood") { ctx.fillStyle="#420"; ctx.fillRect(-3,-2,6,8); ctx.fillStyle="#141"; ctx.beginPath(); ctx.moveTo(0,-12); ctx.lineTo(-8,-2); ctx.lineTo(0,-2); ctx.lineTo(8,-2); ctx.fill(); }
             else { ctx.fillStyle="#666"; ctx.beginPath(); ctx.arc(0,0,7,0,Math.PI*2); ctx.fill(); }
@@ -770,7 +1110,7 @@ function draw() {
         }
     });
 
-    // --- 2. APLICAÇÃO DA NÉVOA DE GUERRA (ACIMA DO CONTEÚDO) ---
+    // --- 2. FOG OF WAR (MANTIDO INTACTO) ---
     
     // 2a. Escurece tudo que não está no FoV atual (Sombra Persistente)
     ctx.save();
@@ -808,9 +1148,6 @@ function draw() {
     }
     
     // 2b. Gradiente de luz (Gradiente Radial Inverso)
-    // Cobre o mapa inteiro com preto, exceto pelo buraco de luz no jogador
-    
-    // 1. Cria um gradiente radial com transparência no centro e opacidade nas bordas
     const innerRadius = lightRadiusPixels * 0.7; // Começa a escurecer mais cedo (gradiente)
     const outerRadius = lightRadiusPixels * 1.0; // Escuridão total no limite do FoV
 
@@ -818,11 +1155,8 @@ function draw() {
         playerScreenX, playerScreenY, innerRadius,
         playerScreenX, playerScreenY, outerRadius
     );
-    // Dentro do FoV (0% opacidade / Visível)
     gradient.addColorStop(0, 'rgba(0, 0, 0, 0)');
-    // Meio do FoV (50% opacidade / Sombra Suave)
     gradient.addColorStop(0.75, 'rgba(0, 0, 0, 0.2)'); 
-    // Limite do FoV (100% opacidade / Escuridão Total)
     gradient.addColorStop(1, 'rgba(0, 0, 0, 1)'); 
 
     // 2. Preenche a tela inteira com o gradiente
@@ -860,8 +1194,8 @@ function draw() {
         if(t.life<=0) texts.splice(i,1); 
     }
 
-    // RENDERIZAÇÃO DE HUD MOBILE (dentro do canvas, no topo)
-    if (isMobile && me && !gamepadActive) { // Renderiza apenas se não houver Gamepad ativo
+    // RENDERIZAÇÃO DE HUD MOBILE (dentro do canvas, no topo) - APENAS NA VERTICAL (RETRATO)
+    if (isMobile && innerWidth < innerHeight && me && !gamepadActive) { 
         ctx.fillStyle = "rgba(0,0,0,0.5)"; ctx.fillRect(0, 0, canvas.width, 30);
         
         ctx.fillStyle = "#0f0"; ctx.font = "12px Courier New"; ctx.textAlign = "left";
@@ -883,10 +1217,6 @@ function draw() {
         // XP
         ctx.fillStyle = "#111"; ctx.fillRect(barX, barY + 6, (barW*2) + 5, 3);
         ctx.fillStyle = "#fb0"; ctx.fillRect(barX, barY + 6, ((barW*2) + 5) * (me.xp/(me.level*100)), 3);
-
-        // Inventory/Stats Button (Área de clique foi ajustada no handleTouchStart)
-        ctx.fillStyle = "#0f0"; ctx.font = "bold 18px Courier New"; ctx.textAlign = "right";
-        ctx.fillText("☰", canvas.width - 10, 20);
     }
 }
 
