@@ -59,27 +59,48 @@ h1 { text-shadow: 2px 2px #f00; color: #d00; }
     pointer-events: none; 
     z-index: 5; 
 }
-.control-area { position: absolute; bottom: 10px; pointer-events: auto; }
 
-/* D-PAD (Left Side) */
-#dpad-container { left: 15px; width: 100px; height: 100px; }
-.dpad-btn { 
-    position: absolute; 
-    width: 35px; 
-    height: 35px; 
-    background: rgba(0, 0, 0, 0.5); 
-    border: 1px solid #0f0; 
-    color: #0f0; 
-    display: flex; 
-    align-items: center; 
-    justify-content: center; 
-    font-size: 12px; 
-    border-radius: 5px; 
+/* NOVO: Joystick Area (apenas para detecção de toque) */
+#joystick-area {
+    position: absolute;
+    bottom: 10px;
+    left: 15px;
+    width: 120px; 
+    height: 120px;
+    pointer-events: auto;
+    /* Para visualização do joystick */
+    /* border: 1px solid rgba(0, 255, 0, 0.5); */
+    border-radius: 50%;
+    z-index: 1;
 }
-#dpad-up { top: 0; left: 33%; }
-#dpad-down { bottom: 0; left: 33%; }
-#dpad-left { left: 0; top: 33%; }
-#dpad-right { right: 0; top: 33%; }
+
+/* Novo: Visual do Joystick (círculo estático no fundo) */
+#joystick-base {
+    position: absolute;
+    left: 15px;
+    bottom: 10px;
+    width: 100px;
+    height: 100px;
+    border: 2px solid rgba(0, 255, 0, 0.5);
+    background: rgba(0, 0, 0, 0.4);
+    border-radius: 50%;
+    pointer-events: none;
+    z-index: 0;
+    transform: translate(10px, 10px); /* Centraliza na área de 120x120 */
+}
+
+/* Novo: Botão (Knob) do Joystick */
+#joystick-knob {
+    position: absolute;
+    width: 40px;
+    height: 40px;
+    background: rgba(0, 255, 0, 0.7);
+    border: 1px solid #0f0;
+    border-radius: 50%;
+    pointer-events: none;
+    z-index: 1;
+    transition: transform 0.05s ease-out;
+}
 
 /* ACTION BUTTONS (Right Side) */
 #action-container { 
@@ -88,6 +109,7 @@ h1 { text-shadow: 2px 2px #f00; color: #d00; }
     height: 100px; 
     bottom: 5px; 
     position: absolute;
+    pointer-events: auto;
 }
 .action-btn { 
     position: absolute; 
@@ -102,6 +124,7 @@ h1 { text-shadow: 2px 2px #f00; color: #d00; }
     font-size: 14px; 
     font-weight: bold; 
     box-shadow: 0 0 5px rgba(255, 0, 0, 0.5);
+    z-index: 2; /* Sobrepõe o joystick base */
 }
 
 /* Posicionamento dos botões de combate */
@@ -110,7 +133,6 @@ h1 { text-shadow: 2px 2px #f00; color: #d00; }
     font-size: 16px; 
     bottom: 5px; 
     right: 5px;
-    z-index: 2; 
 } 
 #btn-skill { 
     width: 40px; height: 40px; 
@@ -152,7 +174,7 @@ h1 { text-shadow: 2px 2px #f00; color: #d00; }
     border-radius: 5px;
 }
 
-/* NOVO: HUD MINUSCULO PARA MOBILE HORIZONTAL */
+/* NOVO: HUD MINUSCULO PARA MOBILE */
 #hud-horizontal-mobile {
     position: absolute; 
     top: 0px; 
@@ -162,7 +184,7 @@ h1 { text-shadow: 2px 2px #f00; color: #d00; }
     background: rgba(0, 0, 0, 0.8); 
     border-bottom: 1px solid #0f0;
     pointer-events: none;
-    display: none; /* Controlado por game.js/CSS */
+    display: none; 
     justify-content: space-between;
     align-items: center;
     padding: 0 5px;
@@ -183,55 +205,21 @@ h1 { text-shadow: 2px 2px #f00; color: #d00; }
 
 /* MEDIA QUERIES PARA RESPONSIVIDADE */
 
-/* Mobile Padrão (Portrait) */
-@media (max-width: 768px) and (orientation: portrait) {
-    .hud-bottom { display: none; } 
-    #mobile-controls { display: block; }
-    #hud-horizontal-mobile { display: none !important; }
+/* Mobile (Qualquer Orientação) - CORRIGIDO: Esconde HUD de PC */
+@media (max-width: 768px) {
+    .hud-bottom { display: none !important; } /* Esconde HUD de PC */
+    #hud-gold { display: none !important; } /* Esconde HUD de Gold grande */
 }
 
-/* Mobile Horizontal (Landscape) - Prioriza a tela de jogo limpa */
+/* Mobile Horizontal (Landscape) */
 @media (max-width: 768px) and (orientation: landscape) {
-    .hud-bottom { display: none !important; } 
-    #mobile-controls { display: none !important; } 
-    #hud-gold { display: none !important; } /* A info de gold está no HUD minúsculo */
-    #mobile-menu-buttons { /* Movido para o canto superior direito */
+    #mobile-controls { display: none !important; } /* Esconde o wrapper de controles */
+    #mobile-menu-buttons { /* Ajusta a posição no canto superior direito para liberar espaço */
         top: 0;
         bottom: auto;
         right: 5px;
-        z-index: 10;
-        pointer-events: auto;
-    }
-    #hud-horizontal-mobile { 
-         display: flex; /* Exibido via JS, mas garantido pelo CSS */
     }
 }
-
-/* NOVO: Botões de Ação UI (Aparecem apenas com INV/CHR abertos) */
-.ui-action-buttons {
-    position: absolute;
-    bottom: 50px;
-    left: 50%;
-    transform: translateX(-50%);
-    display: none; /* Controlado pelo JS */
-    gap: 15px;
-    pointer-events: auto;
-    z-index: 100;
-}
-.ui-action-buttons .btn {
-    padding: 8px 12px;
-    font-size: 14px;
-    border-radius: 5px;
-    border: 2px solid #fff;
-    background: rgba(0,0,0,0.8);
-    color: #fff;
-    cursor: pointer;
-}
-.ui-action-buttons .btn:hover {
-    background: #fff;
-    color: #000;
-}
-
 </style>
 </head>
 <body oncontextmenu="return false">
@@ -334,14 +322,12 @@ h1 { text-shadow: 2px 2px #f00; color: #d00; }
 </div>
 
 <div id="mobile-controls">
-    <div id="dpad-container" class="control-area">
-        <div id="dpad-up" class="dpad-btn" data-key="w">⬆️</div>
-        <div id="dpad-down" class="dpad-btn" data-key="s">⬇️</div>
-        <div id="dpad-left" class="dpad-btn" data-key="a">⬅️</div>
-        <div id="dpad-right" class="dpad-btn" data-key="d">➡️</div>
-    </div>
+    <div id="joystick-base"></div>
+    <div id="joystick-knob" style="display:none;"></div>
 
-    <div id="action-container" class="control-area">
+    <div id="joystick-area" class="control-area"></div>
+
+    <div id="action-container">
         <div id="btn-potion" class="action-btn" data-action="potion">POT</div>
         <div id="btn-skill" class="action-btn" data-action="skill">SKL</div>
         <div id="btn-dash" class="action-btn" data-action="dash">DSH</div>
@@ -357,7 +343,7 @@ h1 { text-shadow: 2px 2px #f00; color: #d00; }
 <div id="menu">
     <h1 style="font-size:50px; margin-bottom:0;">DIABLOCK</h1>
     <p style="color:#d00; margin-bottom:20px;">V26 - 🔥 Legado das Runas Sombrias</p>
-    <div id="login-form"><input type="text" id="username" placeholder="USER"><button class="btn" onclick="login()">LOGIN</button></div>
+    <div id="login-form"><input type="text" id="username" placeholder="USER"><button class="btn" onclick="login() ">LOGIN</button></div>
     <div id="char-select" style="display:none; text-align:center;">
         <div id="char-list" style="margin-bottom:20px;"></div>
         <input type="text" id="cname" placeholder="NAME">

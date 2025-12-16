@@ -99,14 +99,20 @@ socket.on("fx", d => {
 });
 // Somente toca som, o balão vem pelo update "u"
 socket.on("chat", d => { playSfx("chat"); });
-socket.on("open_shop", items => { shopItems = items; uiState.shop = true; updateUI(); });
+socket.on("open_shop", items => { uiState.shop = true; shopItems = items; updateUI(); });
 
 const keys = { w:false, a:false, s:false, d:false, q:false, game_x: 0, game_y: 0 };
 function sendInput() {
     let dx = keys.a?-1:keys.d?1:0, dy = keys.w?-1:keys.s?1:0;
     if (gamepadActive && (Math.abs(keys.game_x) > 0.1 || Math.abs(keys.game_y) > 0.1)) { dx = keys.game_x; dy = keys.game_y; }
+    
+    // Joystick Input override
+    if (joystick.active) { dx = joystick.normX; dy = joystick.normY; }
+
     // Bloqueia movimento se chat aberto
     if(uiState.chat) { dx = 0; dy = 0; }
+    
+    // keys.q is kept for the 'block' action
     if(dx!==inputState.x || dy!==inputState.y || keys.q !== inputState.block){ inputState={x:dx,y:dy,block:keys.q}; socket.emit("input", inputState); }
 }
 
@@ -117,9 +123,9 @@ function getDashAngle() {
     // Se não é mobile/gamepad ativo (PC Mouse/Teclado), SEMPRE retorna o ângulo do mouse
     if (!isMobile && !gamepadActive) return getMouseAngle();
     
-    // Calcula a direção do movimento (Mobile/Gamepad)
-    const dx = (keys.d - keys.a) || keys.game_x; 
-    const dy = (keys.s - keys.w) || keys.game_y;
+    // Calcula a direção do movimento (Mobile/Gamepad/Joystick)
+    const dx = keys.game_x || (keys.d - keys.a); 
+    const dy = keys.game_y || (keys.s - keys.w);
     const isMoving = (Math.abs(dx) > 0.1) || (Math.abs(dy) > 0.1);
     
     if (isMoving) { 
@@ -160,8 +166,8 @@ function getAttackAngle() {
     }
     
     // Se não houver inimigo próximo, mira na direção do movimento
-    const dx = (keys.d - keys.a) || keys.game_x; 
-    const dy = (keys.s - keys.w) || keys.game_y;
+    const dx = keys.game_x || (keys.d - keys.a); 
+    const dy = keys.game_y || (keys.s - keys.w);
     const isMoving = (Math.abs(dx) > 0.1) || (Math.abs(dy) > 0.1);
     
     if (isMoving) { 
@@ -252,46 +258,137 @@ window.onmousedown = e => {
     if(e.button===2) socket.emit("skill", {idx:1, angle:ang});
 };
 
-// ... TOUCH HANDLERS (Ações de ataque/skill/dash agora usam as novas funções de ângulo) ...
-let touchMap = {};
+
+// ----------------------------------------------------
+// NOVO: IMPLEMENTAÇÃO DO JOYSTICK VIRTUAL E TOUCH HANDLERS
+// ----------------------------------------------------
+
+// Objeto de estado do Joystick
+let joystick = { 
+    active: false, id: null, 
+    startX: 0, startY: 0, 
+    currentX: 0, currentY: 0, 
+    normX: 0, normY: 0,
+    radius: 50, 
+    knob: document.getElementById('joystick-knob')
+};
+const JOYSTICK_AREA_EL = document.getElementById('joystick-area');
+
+
 const handleTouchStart = (e) => {
     if (gamepadActive) return;
     if (AudioCtrl.ctx.state === 'suspended') AudioCtrl.ctx.resume(); AudioCtrl.init();
     if (uiState.chat || document.getElementById("menu").style.display !== "none") return;
+    
+    const joystickRect = JOYSTICK_AREA_EL.getBoundingClientRect();
+
     for (let i = 0; i < e.changedTouches.length; i++) {
-        const touch = e.changedTouches[i]; const target = touch.target; const id = touch.identifier; let processed = false;
-        if (target.closest('.slot')) {
+        const touch = e.changedTouches[i]; 
+        const target = touch.target; 
+        const id = touch.identifier; 
+        let processed = false;
+
+        // 1. Joystick Detection (Left Side / Joystick Area)
+        if (target === JOYSTICK_AREA_EL && !joystick.active) {
+            joystick.active = true;
+            joystick.id = id;
+            joystick.startX = touch.clientX;
+            joystick.startY = touch.clientY;
+            
+            // Move o knob para a posição inicial do toque
+            joystick.knob.style.display = 'block';
+            joystick.knob.style.left = (joystick.startX - joystickRect.left - 20) + 'px';
+            joystick.knob.style.top = (joystick.startY - joystickRect.top - 20) + 'px';
+
+            processed = true;
+        } 
+        
+        // 2. UI Actions (Buttons)
+        else if (target.closest('.slot')) {
             const slotElements = document.querySelectorAll('.slot');
             const clickedIndex = Array.from(slotElements).indexOf(target.closest('.slot'));
             if (clickedIndex !== -1) { focusIndex = clickedIndex; focusArea = target.closest('#inv-grid') ? 'inventory' : target.closest('.equip-slots') ? 'equipment' : 'none'; updateUI(); }
         }
-        if (target.closest('.dpad-btn')) {
-            const key = target.closest('.dpad-btn').dataset.key;
-            if (keys.hasOwnProperty(key)) { keys[key] = true; sendInput(); touchMap[id] = { type: 'dpad', key: key }; processed = true; }
-        } 
         else if (target.closest('.action-btn')) {
             const action = target.closest('.action-btn').dataset.action;
-            // MUDANÇA: Usa getAttackAngle() e getDashAngle() para mobile
             const ang = getAttackAngle(); 
             if (action === "attack") socket.emit("attack", ang); 
             else if (action === "skill") socket.emit("skill", {idx:1, angle:ang}); 
             else if (action === "dash") socket.emit("dash", getDashAngle()); 
             else if (action === "potion") socket.emit("potion");
-            touchMap[id] = { type: 'action', action: action }; processed = true;
+            processed = true;
         }
         else if (target.closest('#btn-inv-mobile')) { uiState.inv = !uiState.inv; uiState.char = false; updateUI(); processed = true; }
         else if (target.closest('#btn-char-mobile')) { uiState.char = !uiState.char; uiState.inv = false; updateUI(); processed = true; }
+        
         if (processed) e.preventDefault();
     }
 };
-const handleTouchEnd = (e) => {
+
+const handleTouchMove = (e) => {
+    if (!joystick.active) return;
+
     for (let i = 0; i < e.changedTouches.length; i++) {
-        const touch = e.changedTouches[i]; const id = touch.identifier;
-        if (touchMap[id]) { if (touchMap[id].type === 'dpad') { keys[touchMap[id].key] = false; sendInput(); } delete touchMap[id]; }
+        const touch = e.changedTouches[i];
+        if (touch.identifier === joystick.id) {
+            joystick.currentX = touch.clientX;
+            joystick.currentY = touch.clientY;
+            
+            let dx = joystick.currentX - joystick.startX;
+            let dy = joystick.currentY - joystick.startY;
+            let dist = Math.hypot(dx, dy);
+
+            if (dist > joystick.radius) {
+                dx = (dx / dist) * joystick.radius;
+                dy = (dy / dist) * joystick.radius;
+                dist = joystick.radius;
+            }
+
+            // Normalizar e aplicar deadzone
+            const deadzone = joystick.radius * 0.1;
+            if (dist < deadzone) {
+                joystick.normX = 0;
+                joystick.normY = 0;
+            } else {
+                joystick.normX = dx / joystick.radius;
+                joystick.normY = dy / joystick.radius;
+            }
+            
+            // Move o knob (visual)
+            joystick.knob.style.transform = `translate(${dx}px, ${dy}px)`;
+
+            sendInput();
+            e.preventDefault();
+            return;
+        }
     }
 };
+
+const handleTouchEnd = (e) => {
+    for (let i = 0; i < e.changedTouches.length; i++) {
+        const touch = e.changedTouches[i];
+        if (touch.identifier === joystick.id) {
+            // Reset Joystick
+            joystick.active = false;
+            joystick.id = null;
+            joystick.normX = 0;
+            joystick.normY = 0;
+
+            // Reset visual do knob
+            joystick.knob.style.display = 'none';
+            joystick.knob.style.transform = 'translate(0, 0)';
+
+            sendInput();
+            return;
+        }
+    }
+};
+
 document.addEventListener('touchstart', handleTouchStart, { passive: false });
-document.addEventListener('touchend', handleTouchEnd); document.addEventListener('touchcancel', handleTouchEnd);
+document.addEventListener('touchmove', handleTouchMove, { passive: false });
+document.addEventListener('touchend', handleTouchEnd); 
+document.addEventListener('touchcancel', handleTouchEnd);
+
 
 // ... GAMEPAD NAVIGATION (Mantido intacto) ...
 let lastNavTimestamp = 0; const NAV_DELAY = 150;
@@ -339,10 +436,19 @@ function handleGamepadInput() {
     if (!gamepad) { gamepadActive = false; return; }
     gamepadActive = true; gamepad = navigator.getGamepads()[gamepad.index];
     const stickX = gamepad.axes[0] || 0; const stickY = gamepad.axes[1] || 0; const deadzone = 0.3;
-    keys.game_x = (Math.abs(stickX) > deadzone) ? stickX : 0; keys.game_y = (Math.abs(stickY) > deadzone) ? stickY : 0;
-    if (gamepad.buttons[14]?.pressed) keys.game_x = -1; if (gamepad.buttons[15]?.pressed) keys.game_x = 1;  
-    if (gamepad.buttons[12]?.pressed) keys.game_y = -1; if (gamepad.buttons[13]?.pressed) keys.game_y = 1;  
+    
+    // Mapeamento do stick do gamepad para as chaves de input
+    keys.game_x = (Math.abs(stickX) > deadzone) ? stickX : 0; 
+    keys.game_y = (Math.abs(stickY) > deadzone) ? stickY : 0;
+    
+    // Mapeamento D-pad digital
+    if (gamepad.buttons[14]?.pressed) keys.game_x = -1; 
+    if (gamepad.buttons[15]?.pressed) keys.game_x = 1;  
+    if (gamepad.buttons[12]?.pressed) keys.game_y = -1; 
+    if (gamepad.buttons[13]?.pressed) keys.game_y = 1;  
+    
     sendInput(); 
+    
     const processButton = (buttonIndex, action) => {
         const button = gamepad.buttons[buttonIndex]; const isPressed = button?.pressed; const wasPressed = lastButtons[buttonIndex] || false;
         if (isPressed && !wasPressed) {
@@ -350,11 +456,12 @@ function handleGamepadInput() {
             if (uiState.inv || uiState.char || uiState.shop || uiState.craft) {
                 if (action === 'attack') handleGamepadAction(); if (action === 'skill') handleGamepadSecondaryAction();
             } else {
-                // MUDANÇA: Usa getAttackAngle() e getDashAngle() para gamepad
+                // Combate
                 const ang = getAttackAngle(); 
-                if (action === 'attack') socket.emit("attack", ang); if (action === 'skill') socket.emit("skill", {idx:1, angle:ang});
-                if (action === 'dash') socket.emit("dash", getDashAngle()); if (action === 'potion') socket.emit("potion");
-                if (action === 'potion') socket.emit("potion"); // O botão Mapped do Gamepad ainda chama 'potion'				
+                if (action === 'attack') socket.emit("attack", ang); 
+                if (action === 'skill') socket.emit("skill", {idx:1, angle:ang});
+                if (action === 'dash') socket.emit("dash", getDashAngle()); 
+                if (action === 'potion') socket.emit("potion"); // Botão Mapped do Gamepad para Poção
             }
             if (action === 'inventory') { uiState.inv = !uiState.inv; uiState.char = false; uiState.shop = false; uiState.craft = false; }
             if (action === 'character') { uiState.char = !uiState.char; uiState.inv = false; uiState.shop = false; uiState.craft = false; }
@@ -363,12 +470,23 @@ function handleGamepadInput() {
         }
         lastButtons[buttonIndex] = isPressed;
     };
-    processButton(0, 'attack'); processButton(1, 'skill'); processButton(3, 'dash'); processButton(4, 'potion'); processButton(9, 'inventory'); processButton(8, 'character');
+    
+    // Mapeamento Botões Gamepad (Ex: Xbox: 0=A, 1=B, 3=Y, 4=LB)
+    processButton(0, 'attack'); 
+    processButton(1, 'skill'); 
+    processButton(3, 'dash'); 
+    processButton(4, 'potion'); 
+    processButton(9, 'inventory'); // Start/Menu button for Inventory
+    processButton(8, 'character'); // Back/View button for Character
+    
+    // Navegação em menus (setas digitais e analógicas)
     if (uiState.inv || uiState.char || uiState.shop || uiState.craft) {
         if (gamepad.buttons[12]?.pressed && !lastButtons[12]) handleGamepadNavigation('up');
         if (gamepad.buttons[13]?.pressed && !lastButtons[13]) handleGamepadNavigation('down');
         if (gamepad.buttons[14]?.pressed && !lastButtons[14]) handleGamepadNavigation('left');
         if (gamepad.buttons[15]?.pressed && !lastButtons[15]) handleGamepadNavigation('right');
+        
+        // Navegação Analógica com Delay
         if (Math.abs(stickY) > deadzone && Math.abs(stickY) > Math.abs(stickX)) {
              if (stickY < 0 && !lastNavTimestamp || stickY < 0 && Date.now() - lastNavTimestamp > NAV_DELAY) { handleGamepadNavigation('up'); }
              else if (stickY > 0 && !lastNavTimestamp || stickY > 0 && Date.now() - lastNavTimestamp > NAV_DELAY) { handleGamepadNavigation('down'); }
@@ -531,11 +649,13 @@ function draw() {
         // Lógica de controles de toque e barra de ouro (PC-like gold display)
         if (!gamepadActive) {
             // Controles de Movimento/Ação
-            if (innerWidth > innerHeight) { mobileControls.style.display = "none"; document.getElementById("hud-gold").style.display = "none"; } 
-            else { mobileControls.style.display = "block"; document.getElementById("hud-gold").style.display = "block"; } 
+            // Hides the whole #mobile-controls wrapper in landscape, letting CSS reposition #mobile-menu-buttons
+            if (innerWidth > innerHeight) { mobileControls.style.display = "none"; } 
+            else { mobileControls.style.display = "block"; } 
+            document.getElementById("hud-gold").style.display = "none"; // Always hide large gold display on mobile
         } else { 
             mobileControls.style.display = "none"; 
-            document.getElementById("hud-gold").style.display = "block"; // Visível para gamepad/PC
+            document.getElementById("hud-gold").style.display = "block"; // Only show large gold for gamepad (like PC)
         }
         mobileMenuButtons.style.display = "flex";
     } else { 
@@ -596,10 +716,10 @@ function draw() {
         ctx.save(); ctx.translate(x, y);
         let blink = e.hitFlash>0; let dirX = (e.vx > 0.01) ? 1 : (e.vx < -0.01) ? -1 : 1; 
         if (e.id === myId) {
-            // Lógica de direção do corpo baseada em Mouse (PC) ou Movimento (Mobile/Gamepad)
+            // Lógica de direção do corpo baseada em Mouse (PC) ou Movimento (Mobile/Gamepad/Joystick)
             if (!isMobile && !gamepadActive) { dirX = (mouse.x > canvas.width/2) ? 1 : -1; } 
             else { 
-                const currentInputX = keys.a ? -1 : keys.d ? 1 : keys.game_x; 
+                const currentInputX = keys.game_x || (keys.a ? -1 : keys.d ? 1 : 0);
                 if (Math.abs(currentInputX) > 0.1) dirX = Math.sign(currentInputX); 
                 else dirX = (e.vx > 0.01) ? 1 : (e.vx < -0.01) ? -1 : 1; 
             }
@@ -698,8 +818,6 @@ function draw() {
         ctx.globalAlpha = t.life / 100; ctx.fillStyle=t.color; ctx.font=t.size || "10px Courier New"; ctx.textAlign="center"; ctx.fillText(t.val, ox+t.x*SCALE, oy+t.y*SCALE); ctx.globalAlpha = 1.0; 
         if(t.life<=0) texts.splice(i,1); 
     }
-    
-    // REMOVIDO: A lógica antiga que desenhava o HUD minimalista no CANVAS para mobile portrait
 }
 
 window.login = () => { if (AudioCtrl.ctx.state === 'suspended') AudioCtrl.ctx.resume(); AudioCtrl.init(); socket.emit("login", document.getElementById("username").value); };
