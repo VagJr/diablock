@@ -20,7 +20,8 @@ const server = http.createServer((req, res) => {
       else if(safeUrl.endsWith(".mp3")) contentType = "audio/mpeg"; 
 
       res.writeHead(200, {"Content-Type": contentType});
-      res.end(fs.readFileSync(p));
+      // LINHA CORRIGIDA AQUI: Usando fs.createReadStream e não res.createReadStream
+      fs.createReadStream(p).pipe(res);
   } else { 
       res.writeHead(404);
       res.end("404 Not Found"); 
@@ -83,7 +84,7 @@ const MOB_DATA = {
     rat:      { hp: 8,  dmg: 3, spd: 0.08, ai: "chase", xp: 5,  gold: 2,  size: 8,  poise: 0 },
     bat:      { hp: 6,  dmg: 4, spd: 0.10, ai: "chase", xp: 6,  gold: 3,  size: 6,  poise: 0 },
     slime:    { hp: 15, dmg: 4, spd: 0.04, ai: "chase", xp: 8,  gold: 5,  size: 10, poise: 1 },
-    goblin:   { hp: 25, dmg: 6, spd: 0.10, ai: "lunge", xp: 12, gold: 8, size: 10, poise: 2 },
+    goblin:   { hp: 25, dmg: 6, spd: 0.12, ai: "lunge", xp: 12, gold: 8, size: 10, poise: 2 },
     skeleton: { hp: 40, dmg: 8, spd: 0.05, ai: "lunge", xp: 18, gold: 12, size: 12, poise: 5 },
     archer:   { hp: 30, dmg: 7, spd: 0.06, ai: "range", xp: 20, gold: 15, size: 12, range: 7, proj:"arrow", poise: 3 },
     orc:      { hp: 90, dmg: 15,spd: 0.06, ai: "lunge", xp: 45, gold: 30, size: 16, poise: 20 },
@@ -118,7 +119,6 @@ function generateItem(level, diffMult=1, forceType=null) {
     const base = ITEM_BASES[key];
     const r = Math.random();
     const rarity = r>0.97?"legendary":r>0.85?"rare":r>0.6?"magic":"common";
-    // Cores vibrantes para o visual
     const meta = {
         common:   {c:"#aaa", m:1, s:0}, 
         magic:    {c:"#4ff", m:1.3, s:1}, 
@@ -133,9 +133,7 @@ function generateItem(level, diffMult=1, forceType=null) {
         price: Math.floor(base.price * meta[rarity].m),
         stats: {}, sockets: [], gems: []
     };
-    if(Math.random() < 0.5) {
-        for(let i=0; i<meta[rarity].s; i++) item.sockets.push(null);
-    }
+    if(Math.random() < 0.5) { for(let i=0; i<meta[rarity].s; i++) item.sockets.push(null); }
     if(base.dmg) item.stats.dmg = Math.floor(base.dmg + power);
     if(base.hp) item.stats.hp = Math.floor(base.hp + power * 3);
     if(base.def) item.stats.def = Math.floor(base.def + power);
@@ -245,7 +243,7 @@ function spawnMob(inst, x, y, type, mult) {
         hp: Math.floor(data.hp * mult), maxHp: Math.floor(data.hp * mult),
         dmg: Math.floor(data.dmg * mult), xp: Math.floor(data.xp * mult), gold: Math.floor(data.gold*mult),
         spd: data.spd, ai: data.ai, size: data.size, range: data.range, poise: data.poise, npc:data.npc, boss:data.boss,
-        drop: data.drop, proj: data.proj, state: "idle", timer: 0, hitFlash: 0
+        drop: data.drop, proj: data.proj, state: "idle", timer: 0, hitFlash: 0, name: data.name || type.toUpperCase()
     };
     if(data.npc) inst.mobs[mid].shop = [generateItem(inst.level), generateItem(inst.level), ITEM_BASES.potion, ITEM_BASES.ruby];
 }
@@ -273,6 +271,7 @@ io.on("connection", socket => {
         recalcStats(inst.players[socket.id]); 
         socket.emit("game_start", {recipes: RECIPES});
     });
+    socket.on("chat", msg => { if(socket.instId) io.to(socket.instId).emit("chat", {id:socket.id, msg}); });
     socket.on("input", d => { const p = instances[socket.instId]?.players[socket.id]; if(p) { p.input.x=d.x; p.input.y=d.y; p.input.block=d.block; } });
     socket.on("add_stat", s => { const p = instances[socket.instId]?.players[socket.id]; if(p && p.pts>0){ p.attrs[s]++; p.pts--; recalcStats(p); } });
     socket.on("dash", angle => {
@@ -415,7 +414,7 @@ function hitArea(inst, owner, x, y, range, angle, width, dmg, kbForce) {
 }
 function damageMob(inst, m, dmg, owner, kx, ky, kbForce=10) {
     m.hp -= dmg; m.hitFlash = 5;
-    io.to(inst.id).emit("fx", {type:"hit"}); // SOM DE HIT
+    io.to(inst.id).emit("fx", {type:"hit"});
     if(m.ai === "resource") {
         if(m.hp <= 0) {
             delete inst.mobs[m.id];
@@ -459,7 +458,7 @@ function damageMob(inst, m, dmg, owner, kx, ky, kbForce=10) {
         if(owner.xp >= owner.level*100) {
             owner.level++; owner.pts += 2; owner.xp=0; recalcStats(owner); owner.hp=owner.stats.maxHp;
             io.to(inst.id).emit("txt", {x:owner.x, y:owner.y-2, val:"LEVEL UP!", color:"#fb0"});
-            io.to(inst.id).emit("fx", {type:"levelup"}); // SOM LEVEL UP
+            io.to(inst.id).emit("fx", {type:"levelup"});
         }
     }
 }
@@ -473,6 +472,7 @@ function damagePlayer(p, dmg) {
 setInterval(() => {
     Object.values(instances).forEach(inst => {
         Object.values(inst.players).forEach(p => {
+            if(p.chatTimer > 0) p.chatTimer--;
             if(p.cd.atk>0)p.cd.atk--; if(p.cd.skill>0)p.cd.skill--; if(p.cd.dash>0)p.cd.dash--;
             if(p.hp<p.stats.maxHp) p.hp+=0.05; if(p.mp<p.stats.maxMp) p.mp+=0.1;
             if(p.dashTime > 0) { 
@@ -492,7 +492,7 @@ setInterval(() => {
                     if(it.item.key === "gold") {
                         p.gold += it.item.val; delete inst.items[k];
                         io.to(inst.id).emit("fx", {type:"gold_txt", x:p.x, y:p.y-1, val:`+${it.item.val}`});
-                        io.to(inst.id).emit("fx", {type:"gold"}); // SOM MOEDA
+                        io.to(inst.id).emit("fx", {type:"gold"});
                     } else if(p.inventory.length<20) { 
                         p.inventory.push(it.item); delete inst.items[k]; io.to(inst.id).emit("txt", {x:p.x, y:p.y, val:"ITEM", color:"#ff0"}); 
                     }
@@ -529,50 +529,34 @@ setInterval(() => {
                             m.timer = m.state==="rage" ? 20 : 40;
                         }
                     } 
-                    // IA REFORMULADA: LUNGE
                     else if(m.ai === "lunge") {
                         if(m.state === "idle" || m.state === "chase") {
                             let dx = Math.sign(t.x-m.x), dy = Math.sign(t.y-m.y);
-                            // Chase normal
                             if(!isWall(inst, m.x+dx*m.spd, m.y)) m.x += dx*m.spd;
                             if(!isWall(inst, m.x, m.y+dy*m.spd)) m.y += dy*m.spd;
                             m.state = "chase";
-                            
-                            // Gatilho para preparar ataque
-                            if(dist < 5 && m.timer <= 0 && Math.random() < 0.05) { 
-                                m.timer = 20; // 20 ticks (1s) parado preparando
-                                m.state="prep"; 
+                            if(dist < 6 && m.timer <= 0 && Math.random() < 0.08) { 
+                                m.timer = 15; m.state="prep";
+                                io.to(inst.id).emit("fx", {type:"alert", x:m.x, y:m.y});
                             }
                         } 
                         else if (m.state === "prep") {
                             m.timer--; 
-                            // O mob para e treme (tratado no client visualmente)
                             if(m.timer <= 0) { 
-                                // LANÇAR SE
                                 const ang = Math.atan2(t.y-m.y, t.x-m.x); 
-                                m.vx = Math.cos(ang) * 0.9; // Velocidade alta
-                                m.vy = Math.sin(ang) * 0.9; 
-                                m.state = "attack"; 
-                                m.timer = 15; // Duração do dash
+                                m.vx = Math.cos(ang) * 0.9; m.vy = Math.sin(ang) * 0.9; 
+                                m.state = "attack"; m.timer = 15; 
                             }
                         } 
                         else if (m.state === "attack") {
-                            // Movimento inercial rápido (sem pathfinding, vai reto)
                             if(!isWall(inst, m.x+m.vx, m.y)) m.x += m.vx;
                             if(!isWall(inst, m.x, m.y+m.vy)) m.y += m.vy;
                             m.timer--; 
-                            
-                            // Colisão com player
-                            if(dist < 1) { 
-                                damagePlayer(t, m.dmg); 
-                                m.state = "cooldown"; 
-                                m.timer = 30; 
-                            }
-                            if(m.timer <= 0) { m.state = "cooldown"; m.timer = 20; }
+                            if(dist < 1) { damagePlayer(t, m.dmg); m.state = "cooldown"; m.timer = 40; }
+                            if(m.timer <= 0) { m.state = "cooldown"; m.timer = 25; }
                         } 
                         else if (m.state === "cooldown") { 
-                            m.timer--; 
-                            if(m.timer <= 0) m.state = "idle"; 
+                            m.timer--; if(m.timer <= 0) m.state = "idle"; 
                         }
                     } else if(m.ai === "range") {
                         let dx=0, dy=0;
@@ -625,4 +609,4 @@ setInterval(() => {
         io.to(inst.id).emit("u", { pl:inst.players, mb:inst.mobs, it:inst.items, pr:inst.projectiles, props:inst.props, lvl:inst.level, map:inst.dungeon, theme:inst.theme });
     });
 }, TICK);
-server.listen(3000, () => console.log("🔥 Diablock V17.5 - Craft & Bosses"));
+server.listen(3000, () => console.log("🔥 Diablock V18 - Auras & Chat"));
