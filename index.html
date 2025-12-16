@@ -211,15 +211,41 @@ h1 { text-shadow: 2px 2px #f00; color: #d00; }
     #hud-gold { display: none !important; } /* Esconde HUD de Gold grande */
 }
 
-/* Mobile Horizontal (Landscape) */
+/* Mobile Horizontal (Landscape) - Lógica de CSS mantida */
 @media (max-width: 768px) and (orientation: landscape) {
-    #mobile-controls { display: none !important; } /* Esconde o wrapper de controles */
+    /* #mobile-controls é gerenciado por JS no draw() */
     #mobile-menu-buttons { /* Ajusta a posição no canto superior direito para liberar espaço */
         top: 0;
         bottom: auto;
         right: 5px;
     }
 }
+
+/* NOVO: Botões de Ação UI (Aparecem apenas com INV/CHR abertos) */
+.ui-action-buttons {
+    position: absolute;
+    bottom: 50px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: none; /* Controlado pelo JS */
+    gap: 15px;
+    pointer-events: auto;
+    z-index: 100;
+}
+.ui-action-buttons .btn {
+    padding: 8px 12px;
+    font-size: 14px;
+    border-radius: 5px;
+    border: 2px solid #fff;
+    background: rgba(0,0,0,0.8);
+    color: #fff;
+    cursor: pointer;
+}
+.ui-action-buttons .btn:hover {
+    background: #fff;
+    color: #000;
+}
+
 </style>
 </head>
 <body oncontextmenu="return false">
@@ -343,7 +369,7 @@ h1 { text-shadow: 2px 2px #f00; color: #d00; }
 <div id="menu">
     <h1 style="font-size:50px; margin-bottom:0;">DIABLOCK</h1>
     <p style="color:#d00; margin-bottom:20px;">V26 - 🔥 Legado das Runas Sombrias</p>
-    <div id="login-form"><input type="text" id="username" placeholder="USER"><button class="btn" onclick="login() ">LOGIN</button></div>
+    <div id="login-form"><input type="text" id="username" placeholder="USER"><button class="btn" onclick="login()">LOGIN</button></div>
     <div id="char-select" style="display:none; text-align:center;">
         <div id="char-list" style="margin-bottom:20px;"></div>
         <input type="text" id="cname" placeholder="NAME">

@@ -12,7 +12,8 @@ let inputState = { x:0, y:0, block: false };
 let shopItems = [];
 const tooltip = document.getElementById("tooltip");
 let dragItem = null;
-let isMobile = window.matchMedia("(max-width: 768px)").matches; 
+// Aumentando a detecção de mobile para garantir que a interface minimalista seja usada
+let isMobile = window.matchMedia("(max-width: 1024px)").matches || /Mobi|Android/i.test(navigator.userAgent);
 let gamepad = null;
 let gamepadActive = false; 
 let focusIndex = 0;
@@ -60,7 +61,7 @@ function playSfx(name) {
     }
 }
 
-const resize = () => { canvas.width=innerWidth; canvas.height=innerHeight; ctx.imageSmoothingEnabled=false; isMobile = window.matchMedia("(max-width: 768px)").matches; updateUI(); };
+const resize = () => { canvas.width=innerWidth; canvas.height=innerHeight; ctx.imageSmoothingEnabled=false; isMobile = window.matchMedia("(max-width: 1024px)").matches || /Mobi|Android/i.test(navigator.userAgent); updateUI(); };
 resize(); window.onresize=resize;
 
 socket.on("connect", () => myId=socket.id);
@@ -104,28 +105,53 @@ socket.on("open_shop", items => { uiState.shop = true; shopItems = items; update
 const keys = { w:false, a:false, s:false, d:false, q:false, game_x: 0, game_y: 0 };
 function sendInput() {
     let dx = keys.a?-1:keys.d?1:0, dy = keys.w?-1:keys.s?1:0;
+    
+    // 1. Gamepad override (stick/dpad)
     if (gamepadActive && (Math.abs(keys.game_x) > 0.1 || Math.abs(keys.game_y) > 0.1)) { dx = keys.game_x; dy = keys.game_y; }
     
-    // Joystick Input override
+    // 2. Joystick override (Touch)
     if (joystick.active) { dx = joystick.normX; dy = joystick.normY; }
 
     // Bloqueia movimento se chat aberto
     if(uiState.chat) { dx = 0; dy = 0; }
     
-    // keys.q is kept for the 'block' action
+    // keys.q is block
     if(dx!==inputState.x || dy!==inputState.y || keys.q !== inputState.block){ inputState={x:dx,y:dy,block:keys.q}; socket.emit("input", inputState); }
 }
 
 function getMouseAngle() { return Math.atan2((mouse.y - canvas.height/2), (mouse.x - canvas.width/2)); }
 
-// AJUSTE: Dash usa o ângulo do mouse no PC/Teclado
+// Função unificada para pegar input direcional (Joystick/Gamepad/Teclado)
+function getDirectionalInput() {
+    // 1. Joystick (Prioridade máxima em Mobile)
+    if (joystick.active) {
+        return { dx: joystick.normX, dy: joystick.normY };
+    }
+    
+    // 2. Gamepad Stick/Dpad
+    const game_dx = keys.game_x;
+    const game_dy = keys.game_y;
+    if (Math.abs(game_dx) > 0.1 || Math.abs(game_dy) > 0.1) {
+        return { dx: game_dx, dy: game_dy };
+    }
+    
+    // 3. Teclado (WASD)
+    const key_dx = keys.d - keys.a;
+    const key_dy = keys.s - keys.w;
+    if (Math.abs(key_dx) > 0.1 || Math.abs(key_dy) > 0.1) {
+        return { dx: key_dx, dy: key_dy };
+    }
+
+    return { dx: 0, dy: 0 };
+}
+
+// AJUSTE: Dash usa o ângulo do mouse no PC/Teclado, ou a direção do Joystick/Gamepad no mobile
 function getDashAngle() {
     // Se não é mobile/gamepad ativo (PC Mouse/Teclado), SEMPRE retorna o ângulo do mouse
     if (!isMobile && !gamepadActive) return getMouseAngle();
     
     // Calcula a direção do movimento (Mobile/Gamepad/Joystick)
-    const dx = keys.game_x || (keys.d - keys.a); 
-    const dy = keys.game_y || (keys.s - keys.w);
+    const { dx, dy } = getDirectionalInput();
     const isMoving = (Math.abs(dx) > 0.1) || (Math.abs(dy) > 0.1);
     
     if (isMoving) { 
@@ -147,7 +173,6 @@ function getClosestEnemyAngle(maxRange = 8) {
             minDistSq = distSq; closestEnemy = m; 
         }
     });
-    // O valor 64 é a distância quadrada de 8 tiles.
     return closestEnemy ? Math.atan2(closestEnemy.y - me.y, closestEnemy.x - me.x) : null;
 }
 
@@ -158,16 +183,14 @@ function getAttackAngle() {
         return getMouseAngle();
     }
     
-    // 2. Mobile/Gamepad: Prioriza inimigo próximo ou direção do movimento.
-    // Raio de engajamento ajustado para 8 tiles, o que é 64 na distância quadrada.
+    // 2. Mobile/Gamepad: Prioriza inimigo próximo (Auto-Aim)
     const closestAngle = getClosestEnemyAngle(8); 
     if (closestAngle !== null) {
         return closestAngle; // Mira no inimigo mais próximo
     }
     
-    // Se não houver inimigo próximo, mira na direção do movimento
-    const dx = keys.game_x || (keys.d - keys.a); 
-    const dy = keys.game_y || (keys.s - keys.w);
+    // 3. Fallback: Mira na direção do movimento (Joystick/Gamepad)
+    const { dx, dy } = getDirectionalInput();
     const isMoving = (Math.abs(dx) > 0.1) || (Math.abs(dy) > 0.1);
     
     if (isMoving) { 
@@ -292,14 +315,22 @@ const handleTouchStart = (e) => {
         if (target === JOYSTICK_AREA_EL && !joystick.active) {
             joystick.active = true;
             joystick.id = id;
-            joystick.startX = touch.clientX;
-            joystick.startY = touch.clientY;
             
-            // Move o knob para a posição inicial do toque
+            // Centraliza o ponto de partida do joystick na área de toque inicial
+            const areaCenterX = joystickRect.left + joystickRect.width / 2;
+            const areaCenterY = joystickRect.top + joystickRect.height / 2;
+            
+            joystick.startX = areaCenterX;
+            joystick.startY = areaCenterY;
             joystick.knob.style.display = 'block';
-            joystick.knob.style.left = (joystick.startX - joystickRect.left - 20) + 'px';
-            joystick.knob.style.top = (joystick.startY - joystickRect.top - 20) + 'px';
+            
+            // Reposiciona o knob para o centro da área de toque (sem offset inicial)
+            joystick.knob.style.left = (joystickRect.width / 2 - 20) + 'px';
+            joystick.knob.style.top = (joystickRect.height / 2 - 20) + 'px';
 
+            // Registra o primeiro movimento como o centro
+            handleTouchMove(e);
+            
             processed = true;
         } 
         
@@ -354,7 +385,7 @@ const handleTouchMove = (e) => {
                 joystick.normY = dy / joystick.radius;
             }
             
-            // Move o knob (visual)
+            // Move o knob (visual) - A translação é relativa ao centro inicial
             joystick.knob.style.transform = `translate(${dx}px, ${dy}px)`;
 
             sendInput();
@@ -390,7 +421,7 @@ document.addEventListener('touchend', handleTouchEnd);
 document.addEventListener('touchcancel', handleTouchEnd);
 
 
-// ... GAMEPAD NAVIGATION (Mantido intacto) ...
+// ... GAMEPAD NAVIGATION 
 let lastNavTimestamp = 0; const NAV_DELAY = 150;
 function handleGamepadNavigation(direction) {
     if (Date.now() - lastNavTimestamp < NAV_DELAY) return;
@@ -513,7 +544,7 @@ function updateUI() {
     const hpPct = (me.hp/me.stats.maxHp)*100; const mpPct = (me.mp/me.stats.maxMp)*100; const xpPct = (me.xp/(me.level*100))*100;
     let diffName = state.theme === "#f00" ? "HORDE I" : state.theme === "#900" ? "HORDE II" : state.theme === "#102" ? "HELL" : state.theme === "#311" ? "NIGHTMARE" : "NORMAL";
 
-    // 1. ATUALIZAÇÃO DO HUD PC (Sempre atualiza, a visibilidade é controlada por CSS)
+    // 1. ATUALIZAÇÃO DO HUD PC (Sempre atualiza)
     document.getElementById("hp-bar").style.width = hpPct + "%"; 
     document.getElementById("mp-bar").style.width = mpPct + "%"; 
     document.getElementById("xp-bar").style.width = xpPct + "%";
@@ -522,7 +553,7 @@ function updateUI() {
     document.getElementById("xp-txt").innerText = `${Math.floor(xpPct)}%`; 
     document.getElementById("lvl-txt").innerText = `${diffName} [${me.level}]`;
     
-    // 2. ATUALIZAÇÃO DO HUD MOBILE HORIZONTAL/MINIMALISTA (Sempre atualiza, visibilidade controlada por JS/CSS)
+    // 2. ATUALIZAÇÃO DO HUD MOBILE HORIZONTAL/MINIMALISTA (Sempre atualiza)
     document.getElementById("h-lvl-txt").innerText = `${diffName} [${me.level}]`; 
     document.getElementById("h-gold-txt").innerText = `${me.gold}G`;
     document.getElementById("h-hp-bar").style.width = hpPct + "%"; 
@@ -641,21 +672,21 @@ function draw() {
     const mobileControls = document.getElementById("mobile-controls"); 
     const mobileMenuButtons = document.getElementById("mobile-menu-buttons"); 
     const mobileHorizontalHud = document.getElementById("hud-horizontal-mobile");
+    const hudGold = document.getElementById("hud-gold");
+    const hudBottom = document.querySelector('.hud-bottom');
     
     if(isMobile) {
-        // NOVO: Sempre mostra o HUD minimalista HTML no mobile (horizontal e vertical)
+        // 1. HUD Display: Minimalista for all mobile
         mobileHorizontalHud.style.display = "flex"; 
+        hudBottom.style.display = "none"; 
 
-        // Lógica de controles de toque e barra de ouro (PC-like gold display)
+        // 2. Control Display: Show Joystick only when Gamepad is NOT active
         if (!gamepadActive) {
-            // Controles de Movimento/Ação
-            // Hides the whole #mobile-controls wrapper in landscape, letting CSS reposition #mobile-menu-buttons
-            if (innerWidth > innerHeight) { mobileControls.style.display = "none"; } 
-            else { mobileControls.style.display = "block"; } 
-            document.getElementById("hud-gold").style.display = "none"; // Always hide large gold display on mobile
+            mobileControls.style.display = "block";
+            hudGold.style.display = "none"; 
         } else { 
             mobileControls.style.display = "none"; 
-            document.getElementById("hud-gold").style.display = "block"; // Only show large gold for gamepad (like PC)
+            hudGold.style.display = "block"; // Show PC Gold for gamepad (like PC)
         }
         mobileMenuButtons.style.display = "flex";
     } else { 
@@ -663,7 +694,8 @@ function draw() {
         mobileControls.style.display = "none"; 
         mobileMenuButtons.style.display = "none"; 
         mobileHorizontalHud.style.display = "none"; 
-        document.getElementById("hud-gold").style.display = "block"; 
+        hudBottom.style.display = "flex";
+        hudGold.style.display = "block"; 
     }
 
     ctx.fillStyle = "#000"; ctx.fillRect(0,0,canvas.width,canvas.height);
@@ -719,7 +751,7 @@ function draw() {
             // Lógica de direção do corpo baseada em Mouse (PC) ou Movimento (Mobile/Gamepad/Joystick)
             if (!isMobile && !gamepadActive) { dirX = (mouse.x > canvas.width/2) ? 1 : -1; } 
             else { 
-                const currentInputX = keys.game_x || (keys.a ? -1 : keys.d ? 1 : 0);
+                const currentInputX = joystick.normX || keys.game_x || (keys.a ? -1 : keys.d ? 1 : 0);
                 if (Math.abs(currentInputX) > 0.1) dirX = Math.sign(currentInputX); 
                 else dirX = (e.vx > 0.01) ? 1 : (e.vx < -0.01) ? -1 : 1; 
             }
