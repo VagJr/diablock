@@ -858,6 +858,67 @@ function createFogPattern() {
     fogPattern = ctx.createPattern(tempCanvas, 'repeat');
 }
 
+// NOVO: Função para desenhar indicadores de jogadores fora da tela
+function drawOffscreenPlayerIndicators() {
+    if (!me || !state.pl) return;
+
+    const screenCenterX = canvas.width / 2;
+    const screenCenterY = canvas.height / 2;
+    // Define um raio ligeiramente menor que o menor eixo da tela
+    const indicatorRadius = Math.min(screenCenterX, screenCenterY) - 20; 
+    const indicatorSize = 8;
+    const ox = -cam.x, oy = -cam.y;
+    
+    // Filtra outros jogadores
+    const otherPlayers = Object.values(state.pl).filter(p => p.id !== myId);
+
+    otherPlayers.forEach(p => {
+        const playerScreenX = ox + p.x * SCALE + SCALE/2;
+        const playerScreenY = oy + p.y * SCALE + SCALE/2;
+
+        const dx = playerScreenX - screenCenterX;
+        const dy = playerScreenY - screenCenterY;
+        const distSq = dx * dx + dy * dy;
+        const screenRadiusSq = indicatorRadius * indicatorRadius;
+
+        // Se o jogador estiver dentro do raio do indicador (ou na tela), ignora
+        if (distSq < screenRadiusSq) {
+             // O jogador está na tela ou muito perto, não precisa de indicador
+            return;
+        }
+
+        const angle = Math.atan2(dy, dx);
+        
+        // Ponto de interseção na borda imaginária
+        let ix = screenCenterX + Math.cos(angle) * indicatorRadius;
+        let iy = screenCenterY + Math.sin(angle) * indicatorRadius;
+
+        // Desenha o triângulo (indicador)
+        ctx.save();
+        ctx.translate(ix, iy);
+        ctx.rotate(angle); 
+        ctx.fillStyle = "#0ff"; // Cor ciano para outros jogadores
+        ctx.shadowBlur = 5;
+        ctx.shadowColor = "#0ff";
+
+        // Desenha um triângulo apontando para o centro (direção oposta ao ângulo de rotação)
+        ctx.beginPath();
+        // Move o triângulo ligeiramente para dentro do raio para não tocar a borda imediata
+        ctx.moveTo(indicatorSize, 0);
+        ctx.lineTo(-indicatorSize, -indicatorSize);
+        ctx.lineTo(-indicatorSize, indicatorSize);
+        ctx.closePath();
+        ctx.fill();
+        
+        ctx.font = "8px Courier New";
+        ctx.textAlign = "center";
+        ctx.fillText(p.name, 0, -indicatorSize - 2); // Nome acima do triângulo (girado)
+
+        ctx.restore();
+        ctx.shadowBlur = 0;
+    });
+}
+
 function draw() {
     requestAnimationFrame(draw);
     handleGamepadInput();
@@ -1038,6 +1099,9 @@ function draw() {
     
     if (!fogPattern) createFogPattern();
     ctx.fillStyle = fogPattern; ctx.globalAlpha = 0.5; ctx.fillRect(0, 0, canvas.width, canvas.height); ctx.globalAlpha = 1.0;
+    
+    // DESENHA OS INDICADORES DE JOGADORES FORA DA TELA
+    drawOffscreenPlayerIndicators(); 
     
     for(let i=texts.length-1; i>=0; i--){ 
         let t=texts[i]; t.y+=t.vy; t.vy += 0.003; t.life--; 

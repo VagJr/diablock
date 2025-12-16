@@ -30,7 +30,7 @@ async function initializeServer() {
                 );
             `);
             isDbReady = true;
-            console.log("PostgreSQL connected. Persistence ENABLED.");
+            console.log("PostgreSQL connected. Persistence ENABLEED.");
 
         } catch (err) {
             console.error("FATAL ERROR: PostgreSQL connection failed.", err.message);
@@ -397,11 +397,14 @@ function spawnMob(inst, x, y, type, mult) {
     }
 }
 
+// CORREÇÃO: Envia o estado de TODOS os jogadores na instância.
 function sendPlayerUpdate(p) {
     if (!p || !p.id || !p.instId || !instances[p.instId]) return;
     const inst = instances[p.instId];
+    // Agora envia o objeto inst.players completo para o cliente.
     const playerState = { 
-        pl: { [p.id]: p }, mb: inst.mobs, it: inst.items, pr: inst.projectiles, props: inst.props, 
+        pl: inst.players, 
+        mb: inst.mobs, it: inst.items, pr: inst.projectiles, props: inst.props, 
         lvl: inst.level, map: inst.dungeon, theme: inst.theme, explored: p.explored, lightRadius: p.stats.lightRadius 
     };
     io.to(p.id).emit("u", playerState);
@@ -443,7 +446,7 @@ io.on("connection", socket => {
             p.chatMsg = msg;
             p.chatTimer = 200; // 10 segundos
             io.to(socket.instId).emit("chat", {id:socket.id, msg}); // Som
-            sendPlayerUpdate(p);
+            // Não precisa de sendPlayerUpdate aqui, o tick resolve
         }
     });
 
@@ -776,7 +779,9 @@ function markExplored(p) {
 
 setInterval(() => {
     Object.values(instances).forEach(inst => {
-        Object.values(inst.players).forEach(p => {
+        const playersToUpdate = Object.values(inst.players);
+        
+        playersToUpdate.forEach(p => {
             markExplored(p);
             // CORREÇÃO: Servidor gerencia o tempo do chat para persistência
             if(p.chatTimer > 0) p.chatTimer--; else if(p.chatMsg) p.chatMsg = "";
@@ -816,7 +821,7 @@ setInterval(() => {
                     }
                 }
             }
-            if (playerCollectedItem) sendPlayerUpdate(p);
+            // A atualização do jogador agora é feita no final do loop da instância.
         });
         Object.values(inst.mobs).forEach(m => {
             if(m.ai === "static" || m.ai === "npc" || m.ai === "resource") return;
@@ -935,6 +940,7 @@ setInterval(() => {
                 p.explored = Array.from({length: SIZE}, () => Array(SIZE).fill(0));
             });
         }
+        // ENVIA A ATUALIZAÇÃO PARA TODOS OS JOGADORES NA INSTÂNCIA
         Object.values(inst.players).forEach(p => sendPlayerUpdate(p));
     });
 }, TICK);
