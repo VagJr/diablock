@@ -12,25 +12,21 @@ let inputState = { x:0, y:0, block: false };
 let shopItems = [];
 const tooltip = document.getElementById("tooltip");
 let dragItem = null;
-let isMobile = window.matchMedia("(max-width: 768px)").matches;
+let isMobile = window.matchMedia("(max-width: 768px)").matches; // Reavaliado durante o draw
 let gamepad = null;
-let gamepadActive = false;
-
-// Variáveis de estado global para controle (leitura pelo draw)
-let isGamepadAiming = false;
-let isMouseAiming = false; 
+let gamepadActive = false; // Novo flag para controlar a UI mobile
 
 window.addEventListener("gamepadconnected", (e) => {
     console.log("Gamepad connected:", e.gamepad.id);
     gamepad = e.gamepad;
     gamepadActive = true;
-    document.getElementById("mobile-controls").style.display = "none";
+    document.getElementById("mobile-controls").style.display = "none"; // Esconde os controles touch
 });
 window.addEventListener("gamepaddisconnected", (e) => {
     console.log("Gamepad disconnected:", e.gamepad.id);
     gamepad = null;
     gamepadActive = false;
-    if (isMobile) document.getElementById("mobile-controls").style.display = "block";
+    if (isMobile) document.getElementById("mobile-controls").style.display = "block"; // Reexibe se estiver no mobile
 });
 
 
@@ -118,7 +114,7 @@ socket.on("chat", d => {
 socket.on("open_shop", items => { shopItems = items; uiState.shop = true; updateUI(); });
 
 // --- INPUT HANDLERS ---
-const keys = { w:false, a:false, s:false, d:false, q:false, game_x: 0, game_y: 0, aim_x: 0, aim_y: 0 };
+const keys = { w:false, a:false, s:false, d:false, q:false, game_x: 0, game_y: 0 };
 function sendInput() {
     let dx = keys.a?-1:keys.d?1:0, dy = keys.w?-1:keys.s?1:0;
     
@@ -131,7 +127,6 @@ function sendInput() {
     // Envia o estado
     if(dx!==inputState.x || dy!==inputState.y || keys.q !== inputState.block){ inputState={x:dx,y:dy,block:keys.q}; socket.emit("input", inputState); }
 }
-
 function getMouseAngle() { return Math.atan2((mouse.y - canvas.height/2), (mouse.x - canvas.width/2)); }
 
 // Encontra o inimigo mais próximo para Auto-Aim
@@ -160,31 +155,9 @@ function getClosestEnemyAngle() {
     return null;
 }
 
-// Retorna o ângulo de ataque baseado na prioridade (Mira Manual > Auto-Aim > Movimento)
+// Retorna o ângulo de ataque baseado na prioridade (Movimento > Auto-Aim > Mouse)
 function getAttackAngle() {
-    // 1. Prioridade (Mira Manual Forçada: Mouse ou Gamepad Right Stick)
-    const isMouseAimingLocal = !isMobile && (mouse.x !== canvas.width / 2 || mouse.y !== canvas.height / 2);
-    const isGamepadAimingLocal = gamepadActive && (Math.abs(keys.aim_x) > 0.3 || Math.abs(keys.aim_y) > 0.3);
-    
-    // ATUALIZA VARIÁVEIS GLOBAIS DE MIRA para uso no draw()
-    isMouseAiming = isMouseAimingLocal;
-    isGamepadAiming = isGamepadAimingLocal;
-
-
-    if (isMouseAimingLocal && !gamepadActive) { // Mouse só funciona para PC
-        return getMouseAngle();
-    }
-    if (isGamepadAimingLocal) {
-        return Math.atan2(keys.aim_y, keys.aim_x);
-    }
-
-    // 2. Auto-Aim (Trava no inimigo mais próximo, independente do movimento do Left Stick)
-    const closestAngle = getClosestEnemyAngle();
-    if (closestAngle !== null) {
-        return closestAngle;
-    }
-
-    // 3. Mira de Movimento (Fallback se não houver alvo e estiver se movendo)
+    // 1. Checa Movimento (Teclado/D-Pad/Analógico)
     const isMoving = (keys.d - keys.a !== 0) || (keys.s - keys.w !== 0) || (Math.abs(keys.game_x) > 0.1) || (Math.abs(keys.game_y) > 0.1);
     
     if (isMoving) {
@@ -193,7 +166,18 @@ function getAttackAngle() {
         return Math.atan2(dy, dx);
     }
 
-    // 4. Fallback (Última direção ou padrão 0)
+    // 2. Checa Auto-Aim (Inimigo mais próximo)
+    const closestAngle = getClosestEnemyAngle();
+    if (closestAngle !== null) {
+        return closestAngle;
+    }
+
+    // 3. Fallback (Mouse / Last Direction)
+    if (!isMobile) {
+        return getMouseAngle();
+    }
+    
+    // Mobile/Gamepad sem movimento, usa a última direção ou 0
     return me ? Math.atan2(me.vy || 0, me.vx || 1) : 0;
 }
 
@@ -210,17 +194,6 @@ chatInput.onkeydown = (e) => {
     }
 };
 
-// Define as funções globais para o HTML (login e create)
-window.login = () => { 
-    if (AudioCtrl.ctx.state === 'suspended') AudioCtrl.ctx.resume().catch(err => console.error("Could not resume AudioContext after login click", err));
-    AudioCtrl.init(); 
-    socket.emit("login", document.getElementById("username").value); 
-};
-window.create = () => socket.emit("create_char", {name:document.getElementById("cname").value, cls:document.getElementById("cclass").value});
-window.addStat = (s) => socket.emit("add_stat", s);
-window.buy = (idx) => socket.emit("buy", shopItems[idx]);
-
-
 window.onkeydown = e => {
     if (document.getElementById("menu").style.display !== "none") return;
     if(uiState.chat) return;
@@ -236,7 +209,7 @@ window.onkeydown = e => {
     if(k==="c") uiState.char = !uiState.char; 
     if(k==="k") uiState.craft = !uiState.craft;
     if(k==="escape") { uiState.inv=false; uiState.char=false; uiState.shop=false; uiState.craft=false; uiState.chat=false; document.getElementById("chat-container").style.display="none"; }
-    if(k===" ") { socket.emit("dash", getAttackAngle()); }
+    if(k===" ") { socket.emit("dash", getAttackAngle()); } // Usa AttackAngle para o Dash
     if(k==="q") { socket.emit("potion"); }
     updateUI();
 };
@@ -250,7 +223,7 @@ window.onmousedown = e => {
     const isPanel = (id) => { const r = document.getElementById(id).getBoundingClientRect(); return mouse.x > r.left && mouse.x < r.right && mouse.y > r.top && mouse.y < r.bottom && document.getElementById(id).style.display==="block"; };
     if(isPanel("inventory") || isPanel("char-panel") || isPanel("shop-panel") || isPanel("craft-panel")) return;
     
-    const ang = getAttackAngle(); 
+    const ang = getAttackAngle(); // Usa mira automática/manual para mouse click
     
     if(e.button===0) socket.emit("attack", ang);
     if(e.button===2) socket.emit("skill", {idx:1, angle:ang});
@@ -261,6 +234,7 @@ window.onmousedown = e => {
 let touchMap = {};
 
 const handleTouchStart = (e) => {
+    // Se o Gamepad estiver ativo, ignora todos os inputs de toque na tela principal
     if (gamepadActive) return;
 
     if (AudioCtrl.ctx.state === 'suspended') AudioCtrl.ctx.resume().catch(err => console.error("Could not resume AudioContext on touch", err));
@@ -357,6 +331,7 @@ function handleGamepadInput() {
     gamepad = gamepads[0]; 
 
     if (!gamepad) {
+        // Se o gamepad for desconectado durante o jogo
         gamepadActive = false;
         if (isMobile) document.getElementById("mobile-controls").style.display = "block";
         return;
@@ -365,32 +340,26 @@ function handleGamepadInput() {
     gamepadActive = true;
     document.getElementById("mobile-controls").style.display = "none";
     
+    // Atualiza o objeto gamepad para ter os dados mais recentes
     gamepad = navigator.getGamepads()[gamepad.index];
 
-    // --- 1. MOVEMENT (AXES 0, 1: Left Stick) ---
+    // --- 1. MOVEMENT (AXES: Left Stick/D-Pad) ---
+    const stickX = gamepad.axes[0] || 0; // Left Stick Horizontal
+    const stickY = gamepad.axes[1] || 0; // Left Stick Vertical
     const deadzone = 0.3;
-    const stickX = gamepad.axes[0] || 0;
-    const stickY = gamepad.axes[1] || 0;
     
     keys.game_x = (Math.abs(stickX) > deadzone) ? stickX : 0;
     keys.game_y = (Math.abs(stickY) > deadzone) ? stickY : 0;
     
-    // Mapeamento do D-Pad (Botões 12, 13, 14, 15)
+    // Mapeamento do D-Pad (Botões 12, 13, 14, 15 no layout padrão)
     if (gamepad.buttons[14]?.pressed) keys.game_x = -1; 
     if (gamepad.buttons[15]?.pressed) keys.game_x = 1;  
     if (gamepad.buttons[12]?.pressed) keys.game_y = -1; 
     if (gamepad.buttons[13]?.pressed) keys.game_y = 1;  
 
-    // --- 2. AIMING (AXES 2, 3: Right Stick) ---
-    const aimX = gamepad.axes[2] || 0; 
-    const aimY = gamepad.axes[3] || 0;
-    
-    keys.aim_x = (Math.abs(aimX) > deadzone) ? aimX : 0;
-    keys.aim_y = (Math.abs(aimY) > deadzone) ? aimY : 0;
-
     sendInput(); // Envia o novo estado de movimento
 
-    // --- 3. ACTIONS (BUTTONS) ---
+    // --- 2. ACTIONS (BUTTONS) ---
     
     const processButton = (buttonIndex, action) => {
         const button = gamepad.buttons[buttonIndex];
@@ -400,7 +369,7 @@ function handleGamepadInput() {
         if (isPressed && !wasPressed) {
             if (AudioCtrl.ctx.state === 'suspended') AudioCtrl.ctx.resume().catch(err => console.error("Could not resume AudioContext on button press", err));
 
-            const ang = getAttackAngle(); // Usa mira baseada na prioridade
+            const ang = getAttackAngle(); // Usa mira automática/direcional
             
             if (action === 'attack') {
                 socket.emit("attack", ang);
@@ -424,12 +393,23 @@ function handleGamepadInput() {
     };
 
     // Mapeamento de Botões Padrão (Xbox Layout)
-    processButton(0, 'attack');       // A (Bottom Face)
-    processButton(1, 'skill');        // B (Right Face)
-    processButton(3, 'dash');         // Y (Top Face)
-    processButton(4, 'potion');       // LB (Left Shoulder)
-    processButton(9, 'inventory');    // Start (Options)
-    processButton(8, 'character');    // Select (View/Back)
+    // Botão 0: A (Bottom Face) -> Ataque Básico
+    processButton(0, 'attack'); 
+    
+    // Botão 1: B (Right Face) -> Habilidade / Skill
+    processButton(1, 'skill');
+    
+    // Botão 3: Y (Top Face) -> Dash
+    processButton(3, 'dash'); 
+
+    // Botão 4: LB (Left Shoulder) -> Poção
+    processButton(4, 'potion'); 
+    
+    // Botão 9: Start (Options) -> Inventário
+    processButton(9, 'inventory'); 
+
+    // Botão 8: Select (View/Back) -> Painel de Personagem
+    processButton(8, 'character');
 }
 
 
@@ -638,26 +618,13 @@ function draw() {
         ctx.save(); ctx.translate(x, y);
         let blink = e.hitFlash>0; let dirX = (e.vx > 0.01) ? 1 : (e.vx < -0.01) ? -1 : 1; 
         
-        // --- DETERMINAÇÃO DA DIREÇÃO VISUAL (dirX) ---
-        if (e.id === myId) {
-            if (isMouseAiming && !gamepadActive) {
-                // PC Mouse Aiming
-                dirX = Math.cos(getMouseAngle()) > 0 ? 1 : -1;
-            } else if (isGamepadAiming) {
-                // Gamepad Right Stick Aiming
-                dirX = Math.cos(Math.atan2(keys.aim_y, keys.aim_x)) > 0 ? 1 : -1;
-            } else {
-                // Keyboard/Left Stick Movement
-                const currentInputX = (keys.a ? -1 : keys.d ? 1 : keys.game_x);
-                if (Math.abs(currentInputX) > 0.1) {
-                    dirX = Math.sign(currentInputX);
-                } else if (Math.abs(e.vx) > 0.01) {
-                    dirX = Math.sign(e.vx); // Fallback para a velocidade
-                }
-            }
+        // Determina a direção visual (prioriza input de movimento se existir)
+        const currentInputX = keys.a ? -1 : keys.d ? 1 : keys.game_x;
+        if (e.id === myId && Math.abs(currentInputX) > 0.1) {
+            dirX = Math.sign(currentInputX);
+        } else if (e.id === myId && !isMobile) {
+            dirX = (mouse.x > canvas.width/2) ? 1 : -1;
         }
-        // ---------------------------------------------
-
 
         ctx.scale(dirX, 1);
 
@@ -703,7 +670,7 @@ function draw() {
 
         // NAME & HP BAR
         if(e.hp < e.maxHp && e.ai!=="static" && !e.npc && e.ai!=="resource") { 
-            const pct = Math.max(0, e.hp/e.stats.maxHp); 
+            const pct = Math.max(0, e.hp/e.maxHp); 
             const bw = e.boss ? 30 : 16;
             ctx.fillStyle="#000"; ctx.fillRect(x-bw/2, y-s-4, bw, 3); 
             ctx.fillStyle=e.boss?"#d00":"#f00"; ctx.fillRect(x-bw/2, y-s-4, bw*pct, 3); 
@@ -758,5 +725,13 @@ function draw() {
     }
 }
 
-// Inicia o loop de desenho/jogo
+window.login = () => { 
+    if (AudioCtrl.ctx.state === 'suspended') AudioCtrl.ctx.resume().catch(err => console.error("Could not resume AudioContext after login click", err));
+    AudioCtrl.init(); 
+    socket.emit("login", document.getElementById("username").value); 
+};
+window.create = () => socket.emit("create_char", {name:document.getElementById("cname").value, cls:document.getElementById("cclass").value});
+window.addStat = (s) => socket.emit("add_stat", s);
+window.buy = (idx) => socket.emit("buy", shopItems[idx]);
+
 draw();
