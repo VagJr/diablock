@@ -2,56 +2,58 @@ const http = require("http");
 const fs = require("fs");
 const path = require("path");
 const { Server } = require("socket.io");
-// Importa o cliente Node.js para PostgreSQL
 const { Pool } = require("pg");
 
-// 1. CONFIGURAÇÃO DO BANCO DE DADOS (PostgreSQL OBRIGATÓRIO)
-// Usamos DATABASE_URL por padrão no Render para PostgreSQL
+// 1. CONFIGURAÇÃO DO BANCO DE DADOS
 const DB_MODE = process.env.DATABASE_URL ? 'POSTGRES' : 'NONE';
 let pool = null;
+let isDbReady = false; // Novo flag para saber se a conexão e setup foram bem-sucedidos
 
-if (DB_MODE === 'POSTGRES') {
-    // Configuração do pool de conexões PostgreSQL
-    pool = new Pool({
-        connectionString: process.env.DATABASE_URL,
-        // Configuração SSL para ambientes de produção (Render)
-        ssl: process.env.NODE_ENV === "production" 
-            ? { rejectUnauthorized: false } 
-            : false
-    });
-    console.log("PostgreSQL Pool initialized successfully. Running in POSTGRES mode.");
-
-    // Função para garantir que a tabela 'characters' exista.
-    // O Render executa isso no boot, então a tabela deve ser criada.
-    async function setupDatabase() {
-        try {
-            await pool.query(`
-                CREATE TABLE IF NOT EXISTS characters (
-                    id TEXT PRIMARY KEY,       -- Formato: username:charname
-                    user_name TEXT NOT NULL,
-                    char_name TEXT NOT NULL,
-                    data JSONB NOT NULL,
-                    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-                );
-            `);
-            console.log("PostgreSQL table 'characters' checked/created.");
-        } catch (err) {
-            console.error("FATAL ERROR: Failed to setup PostgreSQL database.", err);
-            // Em caso de falha crítica, interrompe o processo.
-            process.exit(1); 
-        }
+// FUNÇÃO ASYNC PARA CONECTAR E CONFIGURAR O DB
+async function initializeDatabase() {
+    if (DB_MODE !== 'POSTGRES') {
+        console.warn("WARNING: DATABASE_URL not set. Running without persistence (DB_MODE: NONE).");
+        return true; // Sucesso (sem DB)
     }
-    setupDatabase(); // Chama a função de configuração
-} else {
-    // Se o DATABASE_URL estiver faltando, o servidor ainda roda, mas sem persistência.
-    console.warn("WARNING: DATABASE_URL not set. Running without persistence (DB_MODE: NONE).");
+
+    try {
+        // 1. Inicializa o pool de conexões PostgreSQL
+        pool = new Pool({
+            connectionString: process.env.DATABASE_URL,
+            ssl: process.env.NODE_ENV === "production" 
+                ? { rejectUnauthorized: false } 
+                : false
+        });
+        console.log("PostgreSQL Pool initialized successfully.");
+
+        // 2. Tenta uma query para validar a conexão e configurar a tabela
+        // O pool.connect().query() garante que a conexão está ativa
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS characters (
+                id TEXT PRIMARY KEY,       
+                user_name TEXT NOT NULL,
+                char_name TEXT NOT NULL,
+                data JSONB NOT NULL,
+                updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+            );
+        `);
+        console.log("PostgreSQL table 'characters' checked/created and connection established.");
+        isDbReady = true;
+        return true;
+
+    } catch (err) {
+        console.error("FATAL ERROR: Failed to setup PostgreSQL database. Please check DATABASE_URL.", err);
+        // Não encerra o processo aqui, mas retorna falso para evitar o início do loop do jogo.
+        return false;
+    }
 }
 
-// 2. FUNÇÕES DE PERSISTÊNCIA ABSTRATAS (Refatoradas para PostgreSQL)
+// 2. FUNÇÕES DE PERSISTÊNCIA ABSTRATAS (Sem Alterações)
+// ... (Mantenha as funções loadUserChars, createChar, loadCharData, saveCharData como estão)
 
 async function loadUserChars(username) {
-    if (DB_MODE !== 'POSTGRES') return {};
-
+    if (DB_MODE !== 'POSTGRES' || !isDbReady) return {};
+    // ... (restante da função)
     try {
         const res = await pool.query(
             "SELECT char_name, data->>'level' as level FROM characters WHERE user_name = $1",
@@ -69,7 +71,7 @@ async function loadUserChars(username) {
 }
 
 async function createChar(user, name, cls) {
-    if (DB_MODE !== 'POSTGRES') return false;
+    if (DB_MODE !== 'POSTGRES' || !isDbReady) return false;
 
     const charId = `${user}:${name}`;
     const newCharData = { 
@@ -96,7 +98,7 @@ async function createChar(user, name, cls) {
 }
 
 async function loadCharData(user, name) {
-    if (DB_MODE !== 'POSTGRES') return null;
+    if (DB_MODE !== 'POSTGRES' || !isDbReady) return null;
 
     const charId = `${user}:${name}`;
     try {
@@ -112,13 +114,12 @@ async function loadCharData(user, name) {
 }
 
 async function saveCharData(user, name, data) {
-    if (DB_MODE !== 'POSTGRES') return;
+    if (DB_MODE !== 'POSTGRES' || !isDbReady) return;
     
-    // Remove dados de runtime que não devem ser salvos
     const savableData = { ...data };
     delete savableData.x; delete savableData.y; delete savableData.vx; delete savableData.vy; 
     delete savableData.input; delete savableData.stats; delete savableData.cd; delete savableData.id;
-    delete savableData.user; delete savableData.charName; // Remove referências duplicadas (user/charName)
+    delete savableData.user; delete savableData.charName; 
 
     const charId = `${user}:${name}`;
     try {
@@ -138,13 +139,8 @@ async function saveCharData(user, name, data) {
 
 
 // 3. INFRAESTRUTURA E CONFIGURAÇÕES DO JOGO
-
-// REMOVE fs e path do início do arquivo, pois não são mais usados
-// Se o resto do código precisar de fs/path (para servir arquivos estáticos), re-adicione os requires necessários.
-
+// ... (Resto do Código Sem Alterações, Incluindo a Lógica do Jogo e setInterval)
 const server = http.createServer((req, res) => {
-  // ATENÇÃO: Se os requires de 'fs' e 'path' foram removidos no topo,
-  // eles devem ser adicionados aqui novamente para que o servidor consiga servir index.html e outros arquivos.
   const safeUrl = decodeURI(req.url === "/" ? "/index.html" : req.url);
   const p = path.join(__dirname, safeUrl);
 
@@ -755,6 +751,9 @@ function markExplored(p) {
 
 
 setInterval(() => {
+    // Só executa o loop do jogo se o DB estiver pronto ou se estiver rodando sem DB
+    if (DB_MODE === 'POSTGRES' && !isDbReady) return; 
+
     Object.values(instances).forEach(inst => {
         Object.values(inst.players).forEach(p => {
             // Marca o mapa como explorado a cada tick
@@ -935,14 +934,27 @@ setInterval(() => {
     });
 }, TICK);
 
-// Inicialização robusta do servidor para capturar erros de porta
-server.listen(3000, () => {
-    console.log("🔥 Echoes of the Deep - Server Started (Mode: " + DB_MODE + ")");
-}).on('error', (err) => {
-    if (err.code === 'EADDRINUSE') {
-        console.error('ERRO FATAL: A porta 3000 já está em uso. Por favor, feche o processo que a está usando ou tente outra porta.');
-    } else {
-        console.error('ERRO FATAL AO INICIAR O SERVIDOR:', err);
+// NOVA FUNÇÃO PRINCIPAL: INICIAR O SERVIDOR APÓS O DB
+async function startServer() {
+    const dbSuccess = await initializeDatabase();
+
+    // Se a conexão falhar e não for o modo NONE, encerra o processo Node.js.
+    // Isso evita que o servidor comece a aceitar conexões sem a persistência crítica.
+    if (!dbSuccess && DB_MODE === 'POSTGRES') {
+         console.error("Server start aborted due to critical database connection failure.");
+         return; // Não chama server.listen()
     }
-    process.exit(1); 
-});
+
+    server.listen(3000, () => {
+        console.log("🔥 Echoes of the Deep - Server Started (Mode: " + DB_MODE + ")");
+    }).on('error', (err) => {
+        if (err.code === 'EADDRINUSE') {
+            console.error('ERRO FATAL: A porta 3000 já está em uso. Por favor, feche o processo que a está usando ou tente outra porta.');
+        } else {
+            console.error('ERRO FATAL AO INICIAR O SERVIDOR:', err);
+        }
+        process.exit(1); 
+    });
+}
+
+startServer();
