@@ -23,14 +23,13 @@ async function initializeServer() {
 
             console.log("PostgreSQL detected. Initializing connection...");
 
-            // 🔥 WIPE CORRETO (ANTES de criar tabela)
+            // ✅ WIPE CORRETO
             if (process.env.WIPE_DB === "true") {
                 console.log("⚠️ WIPE_DB ativado — apagando banco...");
                 await pgPool.query("DROP TABLE IF EXISTS characters;");
                 console.log("✅ Banco zerado com sucesso.");
             }
 
-            // Criação normal da tabela
             await pgPool.query(`
                 CREATE TABLE IF NOT EXISTS characters (
                     id TEXT PRIMARY KEY,
@@ -53,14 +52,6 @@ async function initializeServer() {
     server.listen(3000, () => {
         console.log("🔥 Diablock V27 - Mode: " + DB_MODE);
     });
-}
-if (process.env.WIPE_DB === "true" && isDbReady) {
-    console.log("⚠️ WIPE_DB ativado — apagando banco...");
-    await pgPool.query("DROP TABLE IF EXISTS characters;");
-    console.log("✅ Banco zerado com sucesso.");
-
-    // Evita wipe infinito
-    delete process.env.WIPE_DB;
 }
 // 2. FUNÇÕES DE PERSISTÊNCIA
 let localCharacters = {};
