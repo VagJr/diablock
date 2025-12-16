@@ -3,7 +3,8 @@ const canvas = document.getElementById("c");
 const ctx = canvas.getContext("2d");
 const SCALE = 16;
 let myId = null, me = null;
-let state = { pl:{}, mb:{}, it:{}, pr:[], props:[], map:[] };
+// Adicionando explored e lightRadius ao estado local para o cliente
+let state = { pl:{}, mb:{}, it:{}, pr:[], props:[], map:[], explored: [], lightRadius: 15 }; 
 let recipes = [];
 let cam = { x:0, y:0 }, mouse = { x:0, y:0 };
 let texts = [], effects = [];
@@ -92,9 +93,24 @@ socket.on("char_list", list => {
     }
 });
 socket.on("game_start", d => { recipes = d.recipes; renderCrafting(); });
-socket.on("u", d => { state=d; me=state.pl[myId]; if(me) updateUI(); });
+// A função on("u", ...) agora recebe mais dados (explored, lightRadius)
+socket.on("u", d => { 
+    Object.assign(state, d); // Mescla o novo estado (incluindo explored e lightRadius)
+    me=state.pl[myId]; 
+    if(me) updateUI(); 
+});
 socket.on("txt", d => {
-    texts.push({...d, life:40, vy:-0.5});
+    // AJUSTE FINO DO TEXTO
+    let vy = -0.25; 
+    let life = 100; 
+    
+    if(d.val.includes("LEVEL UP!")) { vy = -0.5; life = 150; }
+    else if(d.val.includes("CRIT!")) { vy = -0.4; life = 100; d.color="#f0f"; d.size="14px"; d.isCrit=true; }
+    else if(d.val.includes("CRAFT") || d.val.includes("SOCKETED")) { vy = -0.35; life = 80; }
+    else if(d.val.includes("+")) { vy = -0.3; life = 80; } 
+
+    texts.push({...d, life:life, vy:vy});
+    
     if(d.val.includes("CRAFT")) playSfx("craft");
     if(d.val.includes("LEVEL")) playSfx("levelup");
 });
@@ -103,7 +119,10 @@ socket.on("fx", d => {
     else if (d.type === "spin") { effects.push({ type:"spin", x:d.x, y:d.y, life:15 }); playSfx("atk"); }
     else if (d.type === "nova") effects.push({ type:"nova", x:d.x, y:d.y, life:20 });
     else if (d.type === "dash") playSfx("dash");
-    else if (d.type === "gold_txt") texts.push({ val:d.val, x:d.x, y:d.y, color:"#fb0", life:30, vy:-0.8 });
+    else if (d.type === "gold_txt") {
+        texts.push({ val:d.val, x:d.x, y:d.y, color:"#fb0", life:75, vy:-0.3, size:"10px" });
+        playSfx("gold");
+    }
     else if (d.type === "hit") playSfx("hit");
     else if (d.type === "gold") playSfx("gold");
 });
@@ -155,9 +174,20 @@ function getClosestEnemyAngle() {
     return null;
 }
 
-// Retorna o ângulo de ataque baseado na prioridade (Movimento > Auto-Aim > Mouse)
+// Retorna o ângulo de ataque baseado na nova prioridade (Auto-Aim > Mouse (PC) / Movimento (Mobile/Gamepad) > Last Direction)
 function getAttackAngle() {
-    // 1. Checa Movimento (Teclado/D-Pad/Analógico)
+    // 1. Checa Auto-Aim (Inimigo mais próximo) - PRIORIDADE MÁXIMA para combate, permite fugir
+    const closestAngle = getClosestEnemyAngle();
+    if (closestAngle !== null) {
+        return closestAngle;
+    }
+
+    // 2. Checa Mouse (PC/Teclado) - PRÓXIMA PRIORIDADE para PC
+    if (!isMobile) {
+        return getMouseAngle();
+    }
+    
+    // 3. Checa Movimento (Mobile/Gamepad) - PARA MOBILE/GAMEPAD sem Auto-Aim, usa a direção de movimento
     const isMoving = (keys.d - keys.a !== 0) || (keys.s - keys.w !== 0) || (Math.abs(keys.game_x) > 0.1) || (Math.abs(keys.game_y) > 0.1);
     
     if (isMoving) {
@@ -166,17 +196,7 @@ function getAttackAngle() {
         return Math.atan2(dy, dx);
     }
 
-    // 2. Checa Auto-Aim (Inimigo mais próximo)
-    const closestAngle = getClosestEnemyAngle();
-    if (closestAngle !== null) {
-        return closestAngle;
-    }
-
-    // 3. Fallback (Mouse / Last Direction)
-    if (!isMobile) {
-        return getMouseAngle();
-    }
-    
+    // 4. Fallback (Last Direction)
     // Mobile/Gamepad sem movimento, usa a última direção ou 0
     return me ? Math.atan2(me.vy || 0, me.vx || 1) : 0;
 }
@@ -453,6 +473,9 @@ function updateUI() {
     document.getElementById("val-int").innerText = me.attrs.int;
     document.getElementById("stat-dmg").innerText = me.stats.dmg;
     document.getElementById("stat-spd").innerText = Math.floor(me.stats.spd*100);
+    // NOVO STAT CRIT
+    document.getElementById("stat-dmg").innerText += ` (CRIT: ${Math.floor(me.stats.crit*100)}%)`;
+    
     document.getElementById("hud-gold").innerText = "GOLD: " + me.gold;
 
     document.getElementById("inventory").style.display = uiState.inv ? "block" : "none";
@@ -460,8 +483,11 @@ function updateUI() {
     document.getElementById("shop-panel").style.display = uiState.shop ? "block" : "none";
     document.getElementById("craft-panel").style.display = uiState.craft ? "block" : "none";
 
-    ["head","body","hand","potion"].forEach(slot => {
-        const el = document.getElementById("eq-"+slot); el.innerHTML = "";
+    // Adiciona o novo slot 'rune'
+    ["head","body","hand","rune","potion"].forEach(slot => {
+        const el = document.getElementById("eq-"+slot); 
+        if (!el) return; // Garante que o elemento existe
+        el.innerHTML = "";
         if(me.equipment[slot]) {
             const it = me.equipment[slot];
             el.style.borderColor = it.color; el.innerHTML = getIcon(it.key);
@@ -513,13 +539,19 @@ function getIcon(key) {
     if(key.includes("stone")) return "🪨"; if(key.includes("ruby")) return "💎"; if(key.includes("sapphire")) return "🔹";
     if(key.includes("emerald")) return "🟩"; if(key.includes("diamond")) return "⚪";
     if(key.includes("topaz")) return "🔶"; if(key.includes("amethyst")) return "🟣";
+    if(key.includes("runa")) return "⚛️"; // Novo ícone para Runas
     return "📦";
 }
 
 function showTooltip(it) {
     let html = `<b style="color:${it.color}">${it.name}</b><br><span style="color:#aaa">${it.type.toUpperCase()}</span>`;
     if(it.price) html += `<br>Price: ${it.price}G`;
-    if(it.stats) { for(let k in it.stats) html += `<br>${k.toUpperCase()}: ${it.stats[k]}`; }
+    if(it.stats) { 
+        for(let k in it.stats) {
+             if(k==="crit") html += `<br>Crit Chance: ${Math.floor(it.stats[k]*100)}%`;
+             else html += `<br>${k.toUpperCase()}: ${it.stats[k]}`;
+        }
+    }
     if(it.sockets && it.sockets.length > 0) {
         html += `<br><br>SOCKETS [${it.gems.length}/${it.sockets.length}]`;
         it.gems.forEach(g => html += `<br><span style="color:${g.color}">* ${g.desc}</span>`);
@@ -535,6 +567,26 @@ function drawAura(x, y, color, intensity) {
     ctx.globalAlpha = 1.0; ctx.shadowBlur = 0;
 }
 
+let fogPattern = null;
+function createFogPattern() {
+    const size = 32;
+    const tempCanvas = document.createElement('canvas');
+    tempCanvas.width = size;
+    tempCanvas.height = size;
+    const tempCtx = tempCanvas.getContext('2d');
+    tempCtx.fillStyle = 'rgba(0, 0, 0, 0.4)'; 
+    tempCtx.fillRect(0, 0, size, size);
+
+    // Adiciona pontos de ruído (estilo MSDOS/CRT)
+    for (let i = 0; i < size * size * 0.1; i++) {
+        const x = Math.random() * size;
+        const y = Math.random() * size;
+        tempCtx.fillStyle = `rgba(0, 15, 0, ${Math.random() * 0.1 + 0.05})`; 
+        tempCtx.fillRect(x, y, 1, 1);
+    }
+    fogPattern = ctx.createPattern(tempCanvas, 'repeat');
+}
+
 function draw() {
     requestAnimationFrame(draw);
     
@@ -547,12 +599,23 @@ function draw() {
     cam.x += (me.x*SCALE - canvas.width/2 - cam.x)*0.2; cam.y += (me.y*SCALE - canvas.height/2 - cam.y)*0.2;
     const ox = -cam.x, oy = -cam.y;
     const now = Date.now();
+    
+    const lightRadiusTiles = state.lightRadius; // Raio em tiles
+    const lightRadiusPixels = lightRadiusTiles * SCALE;
+    const playerScreenX = ox + me.x * SCALE + SCALE/2;
+    const playerScreenY = oy + me.y * SCALE + SCALE/2;
 
-    // MAP
-    const map = state.map; const theme = state.theme || "#222";
+    // --- 1. RENDERIZAÇÃO DO MAPA E CONTEÚDO (Sem Sombra) ---
+    
+    const map = state.map; 
+    const explored = state.explored || []; 
+    const theme = state.theme || "#222";
+    
     if(map.length){
         const sy=Math.floor(cam.y/SCALE), ey=sy+Math.ceil(canvas.height/SCALE)+1;
         const sx=Math.floor(cam.x/SCALE), ex=sx+Math.ceil(canvas.width/SCALE)+1;
+        
+        // Desenha o mapa base
         for(let y=sy; y<ey; y++){
             if(!map[y]) continue;
             for(let x=sx; x<ex; x++){
@@ -561,7 +624,7 @@ function draw() {
             }
         }
     }
-
+    
     // PROPS
     if(state.props) state.props.forEach(p => {
         const px=ox+p.x*SCALE, py=oy+p.y*SCALE;
@@ -618,12 +681,20 @@ function draw() {
         ctx.save(); ctx.translate(x, y);
         let blink = e.hitFlash>0; let dirX = (e.vx > 0.01) ? 1 : (e.vx < -0.01) ? -1 : 1; 
         
-        // Determina a direção visual (prioriza input de movimento se existir)
-        const currentInputX = keys.a ? -1 : keys.d ? 1 : keys.game_x;
-        if (e.id === myId && Math.abs(currentInputX) > 0.1) {
-            dirX = Math.sign(currentInputX);
-        } else if (e.id === myId && !isMobile) {
-            dirX = (mouse.x > canvas.width/2) ? 1 : -1;
+        // Determina a direção visual (Prioriza Mouse para PC, Movimento para Mobile/Gamepad)
+        if (e.id === myId) {
+            if (!isMobile) {
+                dirX = (mouse.x > canvas.width/2) ? 1 : -1;
+            } else {
+                const currentInputX = keys.a ? -1 : keys.d ? 1 : keys.game_x;
+                if (Math.abs(currentInputX) > 0.1) {
+                    dirX = Math.sign(currentInputX);
+                } else {
+                    dirX = (e.vx > 0.01) ? 1 : (e.vx < -0.01) ? -1 : 1;
+                }
+            }
+        } else {
+            dirX = (e.vx > 0.01) ? 1 : (e.vx < -0.01) ? -1 : 1;
         }
 
         ctx.scale(dirX, 1);
@@ -663,6 +734,12 @@ function draw() {
                 if(k.includes("bow")||k.includes("xbow")) { ctx.strokeStyle="#a84"; ctx.lineWidth=2; ctx.beginPath(); ctx.arc(4, 0, 6, -1, 1); ctx.stroke(); }
                 if(k.includes("staff")||k.includes("wand")) { ctx.fillStyle="#840"; ctx.fillRect(4, -8, 2, 16); ctx.fillStyle=e.equipment.hand.color; ctx.fillRect(3,-10,4,4); }
             }
+            if(e.equipment.rune) { // Renderiza a runa (pequeno brilho)
+                 ctx.fillStyle = e.equipment.rune.color; 
+                 ctx.globalAlpha = 0.8;
+                 ctx.fillRect(-2, 0, 4, 4);
+                 ctx.globalAlpha = 1.0;
+            }
         }
         else { ctx.fillStyle = blink?"#fff":"#ccc"; ctx.fillRect(-s/2, -s/2, s, s); }
         if(e.input && e.input.block) { ctx.strokeStyle = "#0ff"; ctx.beginPath(); ctx.arc(0,0,12,0,6.28); ctx.stroke(); }
@@ -693,7 +770,95 @@ function draw() {
         }
     });
 
-    for(let i=texts.length-1; i>=0; i--){ let t=texts[i]; t.y+=t.vy; t.life--; ctx.fillStyle=t.color; ctx.font="10px Courier New"; ctx.fillText(t.val, ox+t.x*SCALE, oy+t.y*SCALE); if(t.life<=0) texts.splice(i,1); }
+    // --- 2. APLICAÇÃO DA NÉVOA DE GUERRA (ACIMA DO CONTEÚDO) ---
+    
+    // 2a. Escurece tudo que não está no FoV atual (Sombra Persistente)
+    ctx.save();
+    
+    const sy=Math.floor(cam.y/SCALE), ey=sy+Math.ceil(canvas.height/SCALE)+1;
+    const sx=Math.floor(cam.x/SCALE), ex=sx+Math.ceil(canvas.width/SCALE)+1;
+
+    // A cor de fundo é preta, então preenchemos apenas com a sombra persistente
+    for(let y=sy; y<ey; y++){
+        if(!explored[y]) continue;
+        for(let x=sx; x<ex; x++){
+            const tileExplored = explored[y][x];
+            
+            // Checa a distância em tiles do centro do jogador
+            const dx_tile = x - me.x;
+            const dy_tile = y - me.y;
+            const dist = Math.hypot(dx_tile, dy_tile);
+
+            if (dist > lightRadiusTiles) {
+                // ÁREA FORA DO FOV (Aplica Sombra Persistente)
+                if (tileExplored === 1) {
+                    // FOV Antigo (Escuro, mas Visível)
+                    ctx.fillStyle = 'rgba(0, 0, 0, 0.75)'; 
+                    ctx.fillRect(ox+x*SCALE, oy+y*SCALE, SCALE, SCALE);
+                } else if (tileExplored === 0) {
+                     // NÃO EXPLORADO (Preto Total)
+                    ctx.fillStyle = 'rgba(0, 0, 0, 1.0)'; 
+                    ctx.fillRect(ox+x*SCALE, oy+y*SCALE, SCALE, SCALE);
+                }
+            } else {
+                 // ÁREA DENTRO DO FOV (Totalmente visível, sem sombra)
+                 // Não faz nada aqui. A iluminação será aplicada na próxima etapa.
+            }
+        }
+    }
+    
+    // 2b. Gradiente de luz (Gradiente Radial Inverso)
+    // Cobre o mapa inteiro com preto, exceto pelo buraco de luz no jogador
+    
+    // 1. Cria um gradiente radial com transparência no centro e opacidade nas bordas
+    const innerRadius = lightRadiusPixels * 0.7; // Começa a escurecer mais cedo (gradiente)
+    const outerRadius = lightRadiusPixels * 1.0; // Escuridão total no limite do FoV
+
+    const gradient = ctx.createRadialGradient(
+        playerScreenX, playerScreenY, innerRadius,
+        playerScreenX, playerScreenY, outerRadius
+    );
+    // Dentro do FoV (0% opacidade / Visível)
+    gradient.addColorStop(0, 'rgba(0, 0, 0, 0)');
+    // Meio do FoV (50% opacidade / Sombra Suave)
+    gradient.addColorStop(0.75, 'rgba(0, 0, 0, 0.2)'); 
+    // Limite do FoV (100% opacidade / Escuridão Total)
+    gradient.addColorStop(1, 'rgba(0, 0, 0, 1)'); 
+
+    // 2. Preenche a tela inteira com o gradiente
+    ctx.fillStyle = gradient;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    ctx.restore(); // Restaura globalCompositeOperation para 'source-over'
+    
+    // 2c. Efeito de Ruído Sombrio Final (Para dar o aspecto MSDOS/Sombrio)
+    if (!fogPattern) {
+        createFogPattern();
+    }
+    ctx.fillStyle = fogPattern;
+    ctx.globalAlpha = 0.5;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.globalAlpha = 1.0;
+    
+    // --- TEXTOS (Sempre por último, acima de tudo) ---
+    for(let i=texts.length-1; i>=0; i--){ 
+        let t=texts[i]; 
+        
+        t.y+=t.vy; 
+        t.vy += 0.003; 
+        
+        t.life--; 
+        ctx.globalAlpha = t.life / 100;
+
+        ctx.fillStyle=t.color; 
+        ctx.font=t.size || "10px Courier New"; 
+        ctx.textAlign="center";
+        ctx.fillText(t.val, ox+t.x*SCALE, oy+t.y*SCALE); 
+        
+        ctx.globalAlpha = 1.0; 
+
+        if(t.life<=0) texts.splice(i,1); 
+    }
 
     // RENDERIZAÇÃO DE HUD MOBILE (dentro do canvas, no topo)
     if (isMobile && me && !gamepadActive) { // Renderiza apenas se não houver Gamepad ativo
