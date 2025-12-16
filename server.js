@@ -23,10 +23,8 @@ if (process.env.MONGO_URL) {
   console.log("MongoDB detected. Initializing connection...");
 
   mongoose.connect(process.env.MONGO_URL, {
-    useNewUrlParser: true,
-    useUnifiedTopology: true,
-    serverSelectionTimeoutMS: 5000, // Timeout de 5s para conexão
-  })
+  serverSelectionTimeoutMS: 5000
+})
     .then(() => {
       console.log("MongoDB Atlas connected successfully.");
     })
@@ -1023,3 +1021,4 @@ server.listen(3000, () => {
     }
     process.exit(1); 
 });
+
