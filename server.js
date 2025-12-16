@@ -2,133 +2,149 @@ const http = require("http");
 const fs = require("fs");
 const path = require("path");
 const { Server } = require("socket.io");
+// Importa o cliente Node.js para PostgreSQL
+const { Pool } = require("pg");
 
-// 1. CONFIGURAÇÃO DO BANCO DE DADOS (Dual-Mode: Local ou MongoDB)
-let DB_MODE = 'LOCAL';
-let mongoose;
-let CharSchema, CharModel;
+// 1. CONFIGURAÇÃO DO BANCO DE DADOS (PostgreSQL OBRIGATÓRIO)
+// Usamos DATABASE_URL por padrão no Render para PostgreSQL
+const DB_MODE = process.env.DATABASE_URL ? 'POSTGRES' : 'NONE';
+let pool = null;
 
-// Checa se a variável MONGO_URL está definida (necessária no Render)
-if (process.env.MONGO_URL) {
-    try {
-        // Tenta carregar e conectar o Mongoose
-        mongoose = require("mongoose");
-        mongoose.connect(process.env.MONGO_URL)
-            .then(() => {
-                DB_MODE = 'MONGO';
-                console.log("MongoDB connected successfully. Running in MONGO mode.");
-                
-                // Definição do Schema do Personagem para MongoDB
-                CharSchema = new mongoose.Schema({
-                    _id: { type: String, required: true }, // Formato: username:charname
-                    user: String,
-                    name: String,
-                    class: String,
-                    level: Number,
-                    xp: Number,
-                    pts: Number,
-                    gold: Number,
-                    attrs: Object,
-                    hp: Number,
-                    mp: Number,
-                    inventory: Array,
-                    equipment: Object,
-                    explored: Array // Matriz de FoW Persistente
-                });
-                CharModel = mongoose.model('Character', CharSchema);
-            })
-            .catch(err => {
-                console.error("MongoDB connection failed, falling back to LOCAL mode.", err);
-                DB_MODE = 'LOCAL';
-            });
-    } catch (e) {
-        // Falha ao carregar mongoose (não instalado) ou outro erro de ambiente
-        console.error("Mongoose not installed or missing MONGO_URL. Running in LOCAL mode.");
-        DB_MODE = 'LOCAL';
+if (DB_MODE === 'POSTGRES') {
+    // Configuração do pool de conexões PostgreSQL
+    pool = new Pool({
+        connectionString: process.env.DATABASE_URL,
+        // Configuração SSL para ambientes de produção (Render)
+        ssl: process.env.NODE_ENV === "production" 
+            ? { rejectUnauthorized: false } 
+            : false
+    });
+    console.log("PostgreSQL Pool initialized successfully. Running in POSTGRES mode.");
+
+    // Função para garantir que a tabela 'characters' exista.
+    // O Render executa isso no boot, então a tabela deve ser criada.
+    async function setupDatabase() {
+        try {
+            await pool.query(`
+                CREATE TABLE IF NOT EXISTS characters (
+                    id TEXT PRIMARY KEY,       -- Formato: username:charname
+                    user_name TEXT NOT NULL,
+                    char_name TEXT NOT NULL,
+                    data JSONB NOT NULL,
+                    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+                );
+            `);
+            console.log("PostgreSQL table 'characters' checked/created.");
+        } catch (err) {
+            console.error("FATAL ERROR: Failed to setup PostgreSQL database.", err);
+            // Em caso de falha crítica, interrompe o processo.
+            process.exit(1); 
+        }
     }
+    setupDatabase(); // Chama a função de configuração
+} else {
+    // Se o DATABASE_URL estiver faltando, o servidor ainda roda, mas sem persistência.
+    console.warn("WARNING: DATABASE_URL not set. Running without persistence (DB_MODE: NONE).");
 }
 
-// Configuração Local (usada se MONGO_URL não estiver definido ou a conexão falhar)
-const DB_FILE = path.join("/data", "db.json");
-let DB = {};
-if (fs.existsSync(DB_FILE)) { try { DB = JSON.parse(fs.readFileSync(DB_FILE)); } catch (e) { DB = {}; } }
-else { 
-    // Garante que o diretório /data exista
-    const dataDir = path.dirname(DB_FILE);
-    if (!fs.existsSync(dataDir)) {
-        fs.mkdirSync(dataDir, { recursive: true });
-    }
-    fs.writeFileSync(DB_FILE, JSON.stringify({})); 
-}
-function saveDB() { 
-    if (DB_MODE === 'LOCAL') {
-        fs.writeFileSync(DB_FILE, JSON.stringify(DB, null, 2)); 
-    }
-    // No modo MONGO, o salvamento é feito por jogador no disconnect.
-}
-
-// 2. FUNÇÕES DE PERSISTÊNCIA ABSTRATAS
+// 2. FUNÇÕES DE PERSISTÊNCIA ABSTRATAS (Refatoradas para PostgreSQL)
 
 async function loadUserChars(username) {
-    if (DB_MODE === 'MONGO') {
-        const charsArray = await CharModel.find({ user: username }).select('name level').lean();
+    if (DB_MODE !== 'POSTGRES') return {};
+
+    try {
+        const res = await pool.query(
+            "SELECT char_name, data->>'level' as level FROM characters WHERE user_name = $1",
+            [username]
+        );
         const chars = {};
-        charsArray.forEach(c => chars[c.name] = { level: c.level });
+        res.rows.forEach(row => {
+            chars[row.char_name] = { level: parseInt(row.level) || 1 };
+        });
         return chars;
-    } else {
-        return DB[username] ? DB[username].chars : {};
+    } catch (error) {
+        console.error("Error loading user characters:", error);
+        return {};
     }
 }
 
 async function createChar(user, name, cls) {
-    const newChar = { 
+    if (DB_MODE !== 'POSTGRES') return false;
+
+    const charId = `${user}:${name}`;
+    const newCharData = { 
         class: cls, level: 1, xp: 0, pts: 0, gold: 0, 
         attrs: { str: 5, dex: 5, int: 5 }, hp: 100, mp: 50, 
         inventory: [], equipment: {},
-        // Inicializa a matriz de exploração (SIZExSIZE) como 0 (Não Explorado)
         explored: Array.from({length: SIZE}, () => Array(SIZE).fill(0)) 
     };
 
-    if (DB_MODE === 'MONGO') {
-        const charId = `${user}:${name}`;
-        const charData = { _id: charId, user, name, ...newChar };
-        await CharModel.create(charData);
-    } else {
-        if (!DB[user]) DB[user] = { chars: {} };
-        DB[user].chars[name] = newChar;
-        saveDB();
+    try {
+        await pool.query(
+            `
+            INSERT INTO characters (id, user_name, char_name, data)
+            VALUES ($1, $2, $3, $4)
+            ON CONFLICT (id) DO NOTHING
+            `,
+            [charId, user, name, newCharData]
+        );
+        return true;
+    } catch (error) {
+        console.error("Error creating character:", error);
+        return false;
     }
-    return true;
 }
 
 async function loadCharData(user, name) {
-    if (DB_MODE === 'MONGO') {
-        return await CharModel.findById(`${user}:${name}`).lean();
-    } else {
-        return DB[user]?.chars[name];
+    if (DB_MODE !== 'POSTGRES') return null;
+
+    const charId = `${user}:${name}`;
+    try {
+        const res = await pool.query(
+            "SELECT data FROM characters WHERE id = $1",
+            [charId]
+        );
+        return res.rows[0]?.data || null;
+    } catch (error) {
+        console.error("Error loading character data:", error);
+        return null;
     }
 }
 
 async function saveCharData(user, name, data) {
+    if (DB_MODE !== 'POSTGRES') return;
+    
     // Remove dados de runtime que não devem ser salvos
     const savableData = { ...data };
     delete savableData.x; delete savableData.y; delete savableData.vx; delete savableData.vy; 
     delete savableData.input; delete savableData.stats; delete savableData.cd; delete savableData.id;
     delete savableData.user; delete savableData.charName; // Remove referências duplicadas (user/charName)
 
-    if (DB_MODE === 'MONGO') {
-        const charId = `${user}:${name}`;
-        await CharModel.findByIdAndUpdate(charId, savableData);
-    } else {
-        DB[user].chars[name] = savableData;
-        saveDB();
+    const charId = `${user}:${name}`;
+    try {
+        await pool.query(
+            `
+            INSERT INTO characters (id, user_name, char_name, data)
+            VALUES ($1, $2, $3, $4)
+            ON CONFLICT (id)
+            DO UPDATE SET data = EXCLUDED.data, updated_at = NOW()
+            `,
+            [charId, user, name, savableData]
+        );
+    } catch (error) {
+        console.error("Error saving character data:", error);
     }
 }
 
 
 // 3. INFRAESTRUTURA E CONFIGURAÇÕES DO JOGO
 
+// REMOVE fs e path do início do arquivo, pois não são mais usados
+// Se o resto do código precisar de fs/path (para servir arquivos estáticos), re-adicione os requires necessários.
+
 const server = http.createServer((req, res) => {
+  // ATENÇÃO: Se os requires de 'fs' e 'path' foram removidos no topo,
+  // eles devem ser adicionados aqui novamente para que o servidor consiga servir index.html e outros arquivos.
   const safeUrl = decodeURI(req.url === "/" ? "/index.html" : req.url);
   const p = path.join(__dirname, safeUrl);
 
@@ -446,7 +462,6 @@ io.on("connection", socket => {
     let user = null, charName = null;
     socket.on("login", async u => { 
         user=u; 
-        if(DB_MODE === 'LOCAL' && !DB[user]) DB[user]={chars:{}}; 
         const chars = await loadUserChars(user);
         socket.emit("char_list", chars); 
     });
@@ -870,6 +885,7 @@ setInterval(() => {
             if(pr.owner !== "mob") {
                 for(let k in inst.mobs) {
                     let m = inst.mobs[k];
+                    if(m.npc || m.ai === "resource") continue; // Projetil não atinge NPC/Recurso
                     if(Math.hypot(m.x-pr.x, m.y-pr.y) < (m.size/SCALE/2 + 0.3)) { 
                         damageMob(inst, m, pr.dmg, inst.players[pr.owner], pr.vx, pr.vy, 5, pr.isCrit); 
                         hit=true; break; 
