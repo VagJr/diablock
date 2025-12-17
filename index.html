@@ -28,6 +28,9 @@ canvas{ width:100%; height:100%; image-rendering:pixelated; cursor: crosshair; d
 #craft-panel{ top:50%; left:35%; transform:translate(-50%, -50%); width:220px; border-color:#d0d; color:#f0f; box-shadow: 5px 5px 0px #303; }
 #char-panel{ top:50%; left:20%; transform:translate(-50%, -50%); width:200px; }
 #shop-panel{ top:40%; left:50%; transform:translate(-50%, -50%); width:300px; border-color:#0ff; color:#0ff; }
+/* NOVO: Dungeon Selection Modal */
+#entry-modal{ top:50%; left:50%; transform:translate(-50%, -50%); width:280px; text-align:center; border-color:#f00; color:#f00; box-shadow: 5px 5px 0px #300; z-index: 1000; }
+
 .grid{ display:grid; grid-template-columns:repeat(8, 1fr); gap:4px; margin-top:10px; }
 .slot{ width:28px; height:28px; background:#000; border:1px solid #0f0; cursor:pointer; position:relative; }
 .slot:hover{ background:#0f0; }
@@ -336,16 +339,25 @@ h1 { text-shadow: 2px 2px #f00; color: #d00; }
             <div class="bar-container xp"><div class="fill xp" id="xp-bar"></div></div>
         </div>
         <div class="skills">
-            <div class="skill-btn">ATK</div>
-            <div class="skill-btn" id="skill-1"><span class="key-hint">E</span>SKL</div>
-            <div class="skill-btn" id="skill-dash"><span class="key-hint">SPC</span>DSH</div>
-            <div class="skill-btn" id="hud-potion"><span class="key-hint">E</span>POT</div>
-            <div class="skill-btn"><span class="key-hint">I</span>INV</div>
-            <div class="skill-btn"><span class="key-hint">K</span>CFT</div>
-            <div class="skill-btn"><span class="key-hint">C</span>CHR</div>
+            <div class="skill-btn" onclick="socket.emit('attack', getAttackAngle())">ATK</div>
+            <div class="skill-btn" id="skill-1" onclick="socket.emit('skill', {angle: getAttackAngle()})"><span class="key-hint">E</span>SKL</div>
+            <div class="skill-btn" id="skill-dash" onclick="socket.emit('dash', getDashAngle())"><span class="key-hint">SPC</span>DSH</div>
+            <div class="skill-btn" id="hud-potion" onclick="socket.emit('potion')"><span class="key-hint">E</span>POT</div>
+            <div class="skill-btn" onclick="toggleUI('inv')"><span class="key-hint">I</span>INV</div>
+            <div class="skill-btn" onclick="toggleUI('craft')"><span class="key-hint">K</span>CFT</div>
+            <div class="skill-btn" onclick="toggleUI('char')"><span class="key-hint">C</span>CHR</div>
         </div>
     </div>
     
+    <div id="entry-modal" class="panel">
+        <h3 style="margin-top:0;">ENTRAR NA MASMORRA</h3>
+        <p style="font-size:11px; color:#fff;">Escolha seu destino:</p>
+        <button class="btn" onclick="dungeonAction('coop')" style="width:100%; color:#0f0; border-color:#0f0;">MODO COOP (Onde há players)</button>
+        <button class="btn" onclick="dungeonAction('solo')" style="width:100%; color:#fb0; border-color:#fb0;">SOLO (Level 1)</button>
+        <br><br>
+        <button class="btn" onclick="document.getElementById('entry-modal').style.display='none'" style="font-size:10px;">CANCELAR</button>
+    </div>
+
     <div id="inventory" class="panel">
         <div style="text-align:center; border-bottom:1px dashed #0f0; font-size:14px; padding-bottom:5px;">[ MOCHILA ]</div>
         <div style="font-size:9px; color:#aaa; text-align:center;">Clique para Equipar</div>
@@ -363,7 +375,7 @@ h1 { text-shadow: 2px 2px #f00; color: #d00; }
         <div style="text-align:center; margin-top:5px; font-size:10px;">Clique para Comprar</div>
         
         <div style="display: flex; justify-content: space-between; margin-top: 10px;">
-            <button class="btn" style="border-color:#0ff; color:#0ff;" onclick="window.closeShop()" id="btn-shop-close">CLOSE</button>
+            <button class="btn" style="border-color:#0ff; color:#0ff;" onclick="closeAllMenus()" id="btn-shop-close">CLOSE</button>
             <button class="btn" style="border-color:#f00; color:#f00;" onclick="window.sell()">VENDER INV</button>
         </div>
     </div>
@@ -409,13 +421,12 @@ h1 { text-shadow: 2px 2px #f00; color: #d00; }
     <div id="btn-inv-mobile" class="skill-btn" data-action="toggle_inv">INV</div>
     <div id="btn-char-mobile" class="skill-btn" data-action="toggle_char">CHR</div>
     <div id="btn-craft-mobile" class="skill-btn" data-action="toggle_craft">CFT</div>
-    <!-- NOVO: Botão para abrir o Chat no Mobile -->
     <div id="btn-chat-mobile" class="skill-btn" data-action="toggle_chat" style="border-color: #fff; color: #fff;">CHAT</div>
 </div>
 
 <div id="menu">
     <h1 style="font-size:50px; margin-bottom:0;">DIABLOCK</h1>
-    <p style="color:#d00; margin-bottom:20px;">V30 - 🔑 A Chave da Masmorra</p>
+    <p style="color:#d00; margin-bottom:20px;">V31 - 🌍 MMO Edition</p>
     <div id="login-form"><input type="text" id="username" placeholder="USER"><button class="btn" onclick="login()">LOGIN</button></div>
     <div id="char-select" style="display:none; text-align:center;">
         <div id="char-list" style="margin-bottom:20px;"></div>
@@ -426,5 +437,15 @@ h1 { text-shadow: 2px 2px #f00; color: #d00; }
 </div>
 <script src="/socket.io/socket.io.js"></script>
 <script src="/game.js"></script>
+<script>
+    function dungeonAction(type) {
+        socket.emit("dungeon_entry_choice", type);
+        document.getElementById('entry-modal').style.display = 'none';
+    }
+    function toggleUI(p) {
+        uiState[p] = !uiState[p];
+        updateUI();
+    }
+</script>
 </body>
 </html>

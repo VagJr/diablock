@@ -42,7 +42,7 @@ async function initializeServer() {
     }
 
     server.listen(3000, () => {
-        console.log("🔥 Diablock V31 - Bug Fixes & City Design");
+        console.log("🔥 Diablock V31 - MMO Synchronization Active");
     });
 }
 
@@ -371,17 +371,24 @@ function recalcStats(p) {
     if(p.hp > p.stats.maxHp) p.hp = p.stats.maxHp;
 }
 
-let instanceId = 0;
-const instances = {};
+// ===================================
+// MMO INSTANCE LOGIC (GLOBAL BY LEVEL)
+// ===================================
+const instances = {}; // Chave: level_0, level_1...
 
-function createInstance(level = 0) {
-    const id = "i" + (++instanceId);
-    const inst = { id, level: level, dungeon: [], props: [], rooms: [], players: {}, mobs: {}, items: {}, projectiles: [], mobId: 0, itemId: 0, theme: "#222" };
+function getOrCreateInstance(level) {
+    const key = `level_${level}`;
+    if (instances[key]) return instances[key];
+
+    const inst = { 
+        id: key, level: level, dungeon: [], props: [], rooms: [], players: {}, mobs: {}, items: {}, projectiles: [], 
+        mobId: 0, itemId: 0, theme: level === 0 ? "#444" : "#222" 
+    };
     
     if (level === 0) generateCity(inst);
     else generateDungeon(inst);
     
-    instances[id] = inst; 
+    instances[key] = inst; 
     return inst;
 }
 
@@ -391,16 +398,12 @@ function generateCity(inst) {
     const cx = SIZE/2, cy = SIZE/2;
     const w = 40, h = 40; 
     const x = cx - w/2, y = cy - h/2;
-    
     for(let yy=y; yy<y+h; yy++) for(let xx=x; xx<x+w; xx++) inst.dungeon[yy][xx] = TILE_FLOOR;
-    
     inst.rooms.push({x, y, w, h, cx, cy});
-
     spawnMob(inst, cx - 8, cy - 8, "merchant", 1);
     spawnMob(inst, cx + 8, cy - 8, "healer", 1);
     spawnMob(inst, cx - 8, cy + 8, "blacksmith", 1);
-
-    inst.props.push({ type: "stairs", x: cx, y: cy + 12, locked: false, label: "DUNGEON LVL 1" });
+    inst.props.push({ type: "stairs", x: cx, y: cy + 12, locked: false, label: "DUNGEON ENTRANCE" });
     inst.props.push({ type: "shrine", x: cx, y: cy, buff: "none" }); 
 }
 
@@ -496,11 +499,6 @@ function spawnMob(inst, x, y, type, mult) {
 
 const rnd = (val) => Math.round(val * 100) / 100;
 
-// ===================================
-// CORREÇÃO EM SERVER.JS
-// Localize a função sendPlayerUpdate e substitua por esta:
-// ===================================
-
 function sendPlayerUpdate(p) {
     if (!p || !p.id || !p.instId || !instances[p.instId]) return;
     const inst = instances[p.instId];
@@ -533,7 +531,7 @@ function sendPlayerUpdate(p) {
             id: m.id, type: m.type, x: rnd(m.x), y: rnd(m.y), vx: rnd(m.vx), hp: m.hp, maxHp: m.maxHp, 
             boss: m.boss, npc: m.npc, name: m.name, hitFlash: m.hitFlash, equipment: m.equipment, 
             chatMsg: m.chatMsg, chatTimer: m.chatTimer, ai: m.ai, drop: m.drop, color: m.color,
-            class: m.class, level: m.level, stats: m.stats // Adicionado stats para mobs tbm
+            class: m.class, level: m.level, stats: m.stats 
         };
     }
     
@@ -541,29 +539,25 @@ function sendPlayerUpdate(p) {
     for (let k in inst.players) {
         const pl = inst.players[k];
         playersSimple[k] = {
-    id: pl.id, 
-    name: pl.name, 
-    x: rnd(pl.x), 
-    y: rnd(pl.y), 
-    hp: pl.hp, 
-    mp: pl.mp,
-    xp: pl.xp,
-    gold: pl.gold,
-    pts: pl.pts,
-    attrs: pl.attrs,
-    stats: pl.stats,
-    class: pl.class, 
-    level: pl.level, 
-
-    // ✅ FIX CRÍTICO
-    inventory: pl.inventory,
-
-    equipment: pl.equipment, 
-    input: pl.input, 
-    chatMsg: pl.chatMsg, 
-    chatTimer: pl.chatTimer
-};
-
+            id: pl.id, 
+            name: pl.name, 
+            x: rnd(pl.x), 
+            y: rnd(pl.y), 
+            hp: pl.hp, 
+            mp: pl.mp,
+            xp: pl.xp,
+            gold: pl.gold,
+            pts: pl.pts,
+            attrs: pl.attrs,
+            stats: pl.stats,
+            class: pl.class, 
+            level: pl.level, 
+            inventory: pl.inventory,
+            equipment: pl.equipment, 
+            input: pl.input, 
+            chatMsg: pl.chatMsg, 
+            chatTimer: pl.chatTimer
+        };
     }
     
     io.to(p.id).emit("u", { 
@@ -591,19 +585,14 @@ function changeLevel(socket, player, nextLevel) {
         delete oldInst.players[player.id];
     }
     
-    let nextInst;
-    if (nextLevel === 0) {
-        nextInst = Object.values(instances).find(i => i.level === 0) || createInstance(0);
-    } else {
-        nextInst = createInstance(nextLevel);
-    }
+    const nextInst = getOrCreateInstance(nextLevel);
     
+    socket.leave(player.instId);
     socket.join(nextInst.id);
     socket.instId = nextInst.id;
     player.x = nextInst.rooms[0].cx;
     player.y = nextInst.rooms[0].cy;
     player.instId = nextInst.id;
-    player.level = player.level;
     nextInst.players[player.id] = player;
     player.explored = Array.from({length: SIZE}, () => Array(SIZE).fill(0));
     socket.emit("map_data", { map: nextInst.dungeon, theme: nextInst.theme });
@@ -623,9 +612,7 @@ io.on("connection", socket => {
         let data = await loadCharData(user, name); 
         if (!data) data = { class: 'knight', level: 0, xp: 0, pts: 0, gold: 100, attrs: { str: 5, dex: 5, int: 5 }, hp: 100, mp: 50, inventory: [], equipment: {} };
         
-        const currentLevel = 0; 
-        
-        let inst = Object.values(instances).find(i => i.level === 0) || createInstance(0);
+        let inst = getOrCreateInstance(0); // Start in city
         socket.join(inst.id); socket.instId = inst.id;
         
         if(!data.attrs) data.attrs = { str:5, dex:5, int:5 };
@@ -645,16 +632,29 @@ io.on("connection", socket => {
         sendLog(inst.id, `${name} entrou na cidade!`, "#0ff");
     });
 
-socket.on("chat", msg => { 
-    const p = instances[socket.instId]?.players[socket.id];
-    if(p) { 
-        p.chatMsg = msg; 
-        p.chatTimer = 80; // Reduzido de 200 para 80
-        io.to(socket.instId).emit("chat", {id:socket.id, msg}); 
-    }
-});
+    // NEW MMO RULE: Choose between COOP (join highest active level) or SOLO (level 1)
+    socket.on("dungeon_entry_choice", type => {
+        const p = instances[socket.instId]?.players[socket.id];
+        if(!p) return;
+        
+        let targetLevel = 1;
+        if(type === "coop") {
+            const activeLevels = Object.values(instances)
+                .filter(i => i.level > 0 && Object.keys(i.players).length > 0)
+                .map(i => i.level);
+            if(activeLevels.length > 0) targetLevel = Math.max(...activeLevels);
+        }
+        changeLevel(socket, p, targetLevel);
+    });
 
-
+    socket.on("chat", msg => { 
+        const p = instances[socket.instId]?.players[socket.id];
+        if(p) { 
+            p.chatMsg = msg; 
+            p.chatTimer = 80;
+            io.to(socket.instId).emit("chat", {id:socket.id, msg}); 
+        }
+    });
 
     socket.on("input", d => { const p = instances[socket.instId]?.players[socket.id]; if(p) { p.input.x=d.x; p.input.y=d.y; p.input.block=d.block; } });
     socket.on("add_stat", s => { const p = instances[socket.instId]?.players[socket.id]; if(p && p.pts>0){ p.attrs[s]++; p.pts--; recalcStats(p); sendPlayerUpdate(p); } });
@@ -686,8 +686,6 @@ socket.on("chat", msg => {
         const inst = instances[socket.instId]; const p = inst?.players[socket.id];
         if(!p || p.cd.atk > 0 || p.input.block) return;
         
-        // --- CORREÇÃO DE BUG ---
-        // Verifica NPC ANTES de verificar se está na cidade.
         let clickedNPC = false;
         Object.values(inst.mobs).forEach(m => { 
             if(m.npc && Math.hypot(m.x-p.x, m.y-p.y) < 3) { 
@@ -697,7 +695,6 @@ socket.on("chat", msg => {
         });
         if(clickedNPC) return;
         
-        // Agora sim verifica se está na cidade (Safe Zone)
         if (inst.level === 0) return;
 
         const wep = p.equipment.hand; const type = wep ? wep.type : "melee";
@@ -856,35 +853,26 @@ function damagePlayer(p, dmg, sourceX=p.x, sourceY=p.y) {
 setInterval(() => {
     Object.values(instances).forEach(inst => {
         Object.values(inst.players).forEach(p => {
-            // Gerenciamento de Cooldowns
             if(p.cd.atk > 0) p.cd.atk--; 
             if(p.cd.skill > 0) p.cd.skill--; 
             if(p.cd.dash > 0) p.cd.dash--;
             
-            // Gerenciamento de Buffs
             if (p.buffs && p.buffs.timer > 0) {
                  p.buffs.timer--;
                  if (p.buffs.timer <= 0) { 
-                     p.buffs = {}; 
-                     recalcStats(p); 
+                     p.buffs = {}; recalcStats(p); 
                      io.to(p.id).emit("txt", {x:p.x, y:p.y, val:"BUFF ENDED", color:"#ccc"}); 
                  }
             }
 
-            // --- SISTEMA DE CHAT (CORRIGIDO) ---
             if (p.chatTimer > 0) {
                 p.chatTimer -= 1; 
-                if (p.chatTimer <= 0) {
-                    p.chatMsg = ""; // Limpa a mensagem para o balão sumir
-                }
+                if (p.chatTimer <= 0) { p.chatMsg = ""; }
             }
-            // -----------------------------------
 
-            // Regeneração Passiva
             p.hp = Math.min(p.stats.maxHp, p.hp + 0.05); 
             p.mp = Math.min(p.stats.maxMp, p.mp + 0.1);
             
-            // Movimentação e Dash
             if(p.dashTime > 0) { 
                 p.dashTime--; 
                 p.x += p.vx; p.y += p.vy; 
@@ -900,7 +888,6 @@ setInterval(() => {
                 p.vx *= 0.8; p.vy *= 0.8; 
             }
             
-            // Coleta de Itens
             for (let k in inst.items) { 
                 const it = inst.items[k]; 
                 if (Math.hypot(p.x - it.x, p.y - it.y) < 0.8 && (!it.pickupDelay || Date.now() > it.pickupDelay)) { 
@@ -917,7 +904,6 @@ setInterval(() => {
                 } 
             }
             
-            // Interação com Props (Shrines, Escadas, Livros)
             for(let i = inst.props.length - 1; i >= 0; i--) {
                 const pr = inst.props[i];
                 const dist = Math.hypot(p.x - pr.x, p.y - pr.y);
@@ -944,14 +930,14 @@ setInterval(() => {
                 
                 if (pr.type === "stairs" && dist < 1.0) {
                     if (!pr.locked) {
-                        changeLevel(io.sockets.sockets.get(p.id), p, inst.level + 1);
+                        // Logic moved to a choice event for city stairs
+                        if (inst.level !== 0) changeLevel(io.sockets.sockets.get(p.id), p, inst.level + 1);
                         return;
                     } else {
                         const keyIdx = p.inventory.findIndex(it => it.key === "key");
                         if (keyIdx !== -1) {
                             p.inventory.splice(keyIdx, 1);
-                            pr.locked = false;
-                            pr.label = "UNLOCKED";
+                            pr.locked = false; pr.label = "UNLOCKED";
                             io.to(inst.id).emit("txt", {x:pr.x, y:pr.y, val:"UNLOCKED!", color:"#ffd700"});
                             sendLog(inst.id, `${p.name} usou uma Chave!`, "#ffd700");
                         } else {
@@ -965,7 +951,6 @@ setInterval(() => {
             }
         });
         
-        // IA dos Monstros
         Object.values(inst.mobs).forEach(m => {
             if(m.npc || m.ai === "static" || m.ai === "resource") return;
             let t = null; let minDistSq = Infinity;
@@ -985,7 +970,6 @@ setInterval(() => {
             resolveCollisions(inst, m, 0.5); m.x += m.vx; m.y += m.vy; m.vx *= 0.8; m.vy *= 0.8;
         });
         
-        // Projéteis
         for(let i = inst.projectiles.length - 1; i >= 0; i--) {
             let pr = inst.projectiles[i]; pr.x += pr.vx; pr.y += pr.vy; pr.life--;
             if(isWall(inst, pr.x, pr.y) || pr.life <= 0) { 

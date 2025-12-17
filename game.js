@@ -125,7 +125,7 @@ socket.on("char_list", list => {
     const l = document.getElementById("char-list"); l.innerHTML="";
     for(let n in list){
         let d=document.createElement("div"); d.className="btn"; d.innerHTML=`${n} <small>Lvl ${list[n].level}</small>`;
-        d.onclick=()=>{ socket.emit("enter_game", n); document.getElementById("menu").style.display="none"; AudioCtrl.init(); };
+        d.onclick=()=>{ socket.emit("enter_game", n); document.getElementById("menu").style.display="none"; AudioCtrl.init(); ensureBGM(); };
         l.appendChild(d);
     }
 });
@@ -145,6 +145,18 @@ socket.on("u", d => {
 
     // --- CORREÇÃO DO BUG DE UI: Força atualização do me ---
     me = state.pl[myId];
+
+    // Lógica para o Modal de Entrada na Dungeon (Regra MMO)
+    if(me && state.theme === "#444") {
+        const stairs = state.props.find(p => p.type === "stairs");
+        if(stairs && Math.hypot(me.x - stairs.x, me.y - stairs.y) < 1.2) {
+            const modal = document.getElementById('entry-modal');
+            if(modal && modal.style.display !== 'block') {
+                modal.style.display = 'block';
+            }
+        }
+    }
+
     if(me) updateUI(); 
 });
 
@@ -675,11 +687,11 @@ function updateUI() {
     document.getElementById("lvl-txt").innerText = `${diffName} [${me.level}]`;
     
     // Atualização do Mobile HUD (Horizontal)
-    document.getElementById("h-lvl-txt").innerText = `${diffName} [${me.level}]`; 
-    document.getElementById("h-gold-txt").innerText = `${me.gold || 0}G`;
-    document.getElementById("h-hp-bar").style.width = hpPct + "%"; 
-    document.getElementById("h-mp-bar").style.width = mpPct + "%"; 
-    document.getElementById("h-xp-bar").style.width = xpPct + "%";
+    const hLvlTxt = document.getElementById("h-lvl-txt"); if(hLvlTxt) hLvlTxt.innerText = `${diffName} [${me.level}]`; 
+    const hGoldTxt = document.getElementById("h-gold-txt"); if(hGoldTxt) hGoldTxt.innerText = `${me.gold || 0}G`;
+    const hHpBar = document.getElementById("h-hp-bar"); if(hHpBar) hHpBar.style.width = hpPct + "%"; 
+    const hMpBar = document.getElementById("h-mp-bar"); if(hMpBar) hMpBar.style.width = mpPct + "%"; 
+    const hXpBar = document.getElementById("h-xp-bar"); if(hXpBar) hXpBar.style.width = xpPct + "%";
 
     document.getElementById("cp-pts").innerText = me.pts || 0;
     
@@ -695,9 +707,9 @@ function updateUI() {
 
     const uiActionButtons = document.getElementById("ui-action-buttons");
     if (uiState.inv || uiState.char || uiState.shop || uiState.craft) { 
-        uiActionButtons.style.display = 'flex'; 
+        if(uiActionButtons) uiActionButtons.style.display = 'flex'; 
     } else { 
-        uiActionButtons.style.display = 'none'; 
+        if(uiActionButtons) uiActionButtons.style.display = 'none'; 
         hideTooltip(); 
     }
 
@@ -715,8 +727,9 @@ function updateUI() {
         if (isSelected) { 
             el.style.outline = '2px solid yellow'; 
             if (me.equipment && me.equipment[slot]) showTooltip(me.equipment[slot], el); 
-            else { hideTooltip(); document.getElementById('ui-btn-equip').innerText = 'VAZIO'; }
-            document.getElementById('ui-btn-equip').innerText = slot==='potion'?'USAR (A)':'DESEQUIPAR (A)';
+            else { hideTooltip(); }
+            const equipBtn = document.getElementById('ui-btn-equip');
+            if(equipBtn) equipBtn.innerText = slot==='potion'?'USAR (A)':'DESEQUIPAR (A)';
         }
         
         if(me.equipment && me.equipment[slot]) {
@@ -744,7 +757,8 @@ function updateUI() {
         if(btn) btn.style.outline = 'none';
         if (uiState.char && focusArea === 'equipment' && focusIndex === globalIndex) {
              if(btn) btn.style.outline = '2px solid yellow'; hideTooltip();
-             document.getElementById('ui-btn-equip').innerText = `ADD ${stat.toUpperCase()} (A)`;
+             const equipBtn = document.getElementById('ui-btn-equip');
+             if(equipBtn) equipBtn.innerText = `ADD ${stat.toUpperCase()} (A)`;
         }
     });
     
@@ -759,10 +773,12 @@ function updateUI() {
             const isSelected = (uiState.inv && focusArea === 'inventory' && focusIndex === idx);
             if (isSelected) {
                 d.style.outline = '2px solid yellow'; showTooltip(it, d); 
-                if (it.key === 'potion') document.getElementById('ui-btn-equip').innerText = 'USAR POÇÃO (A)';
-                else if (it.slot) document.getElementById('ui-btn-equip').innerText = 'EQUIPAR (A)';
-                else document.getElementById('ui-btn-equip').innerText = 'ITEM DE CRAFT';
-                document.getElementById('ui-btn-drop').innerText = 'DROPAR (B)';
+                const equipBtn = document.getElementById('ui-btn-equip');
+                const dropBtn = document.getElementById('ui-btn-drop');
+                if (it.key === 'potion' && equipBtn) equipBtn.innerText = 'USAR POÇÃO (A)';
+                else if (it.slot && equipBtn) equipBtn.innerText = 'EQUIPAR (A)';
+                else if (equipBtn) equipBtn.innerText = 'ITEM DE CRAFT';
+                if(dropBtn) dropBtn.innerText = 'DROPAR (B)';
             } 
             
             d.innerHTML = getIcon(it.key);
@@ -800,10 +816,12 @@ function updateUI() {
 
     if (uiState.craft) {
         const craftList = document.getElementById("craft-list");
-        Array.from(craftList.children).forEach((d, idx) => {
-            d.style.outline = 'none';
-            if (focusArea === 'craft' && focusIndex === idx) { d.style.outline = '2px solid yellow'; }
-        });
+        if(craftList) {
+            Array.from(craftList.children).forEach((d, idx) => {
+                d.style.outline = 'none';
+                if (focusArea === 'craft' && focusIndex === idx) { d.style.outline = '2px solid yellow'; }
+            });
+        }
     }
     
     if(uiState.shop) {
@@ -812,17 +830,22 @@ function updateUI() {
             const d = document.createElement("div"); d.className = "slot"; d.style.borderColor = it.color; d.style.outline = 'none';
             if (focusArea === 'shop' && focusIndex === idx) { d.style.outline = '2px solid yellow'; showTooltip(it, d); }
             d.innerHTML = getIcon(it.key); 
-            d.onclick = () => { window.buy(idx); };
+            d.onclick = () => { socket.emit("buy", idx); };
             if (!isMobile && !gamepadActive) { 
                 d.onmouseover = () => { focusIndex = idx; focusArea = 'shop'; showTooltip(it, d); d.style.outline = '2px solid yellow'; }; 
                 d.onmouseout = () => { hideTooltip(); d.style.outline = 'none'; }; 
             }
             sg.appendChild(d);
         });
-        document.getElementById("btn-shop-close").onclick = closeAllMenus;
+        const closeShopBtn = document.getElementById("btn-shop-close");
+        if(closeShopBtn) closeShopBtn.onclick = closeAllMenus;
     }
     
-    if ((uiState.inv && (!me.inventory || me.inventory.length === 0))) { hideTooltip(); document.getElementById('ui-btn-equip').innerText = 'VAZIO'; } 
+    if ((uiState.inv && (!me.inventory || me.inventory.length === 0))) { 
+        hideTooltip(); 
+        const equipBtn = document.getElementById('ui-btn-equip');
+        if(equipBtn) equipBtn.innerText = 'VAZIO'; 
+    } 
 }
 
 function showTooltip(it, elementRef) {
@@ -889,7 +912,6 @@ function draw() {
     handleGamepadInput();
     
     const mobileControls = document.getElementById("mobile-controls"); 
-    const mobileMenuButtons = document.getElementById("mobile-menu-buttons"); 
     const mobileHorizontalHud = document.getElementById("hud-horizontal-mobile");
     const hudGold = document.getElementById("hud-gold");
     const hudBottom = document.querySelector('.hud-bottom');
@@ -898,14 +920,19 @@ function draw() {
     if(isMobile) {
         const btnChatMobile = document.getElementById("btn-chat-mobile");
         if (btnChatMobile) btnChatMobile.style.display = isMobile ? "block" : "none";
-        mobileHorizontalHud.style.display = "flex"; hudBottom.style.display = "none"; gameLogContainer.style.display = "none";
-        if (!gamepadActive) { mobileControls.style.display = "block"; hudGold.style.display = "none"; } 
-        else { mobileControls.style.display = "none"; hudGold.style.display = "block"; }
-        mobileMenuButtons.style.display = "flex";
+        if(mobileHorizontalHud) mobileHorizontalHud.style.display = "flex"; 
+        if(hudBottom) hudBottom.style.display = "none"; 
+        if(gameLogContainer) gameLogContainer.style.display = "none";
+        if (mobileControls) {
+            if (!gamepadActive) { mobileControls.style.display = "block"; if(hudGold) hudGold.style.display = "none"; } 
+            else { mobileControls.style.display = "none"; if(hudGold) hudGold.style.display = "block"; }
+        }
     } else { 
-        mobileControls.style.display = "none"; mobileMenuButtons.style.display = "none"; 
-        mobileHorizontalHud.style.display = "none"; hudBottom.style.display = "flex";
-        hudGold.style.display = "block"; gameLogContainer.style.display = "block"; 
+        if(mobileControls) mobileControls.style.display = "none"; 
+        if(mobileHorizontalHud) mobileHorizontalHud.style.display = "none"; 
+        if(hudBottom) hudBottom.style.display = "flex";
+        if(hudGold) hudGold.style.display = "block"; 
+        if(gameLogContainer) gameLogContainer.style.display = "block"; 
     }
 
     ctx.fillStyle = "#000"; ctx.fillRect(0,0,canvas.width,canvas.height);
@@ -917,10 +944,7 @@ function draw() {
     const playerScreenX = ox + me.x * SCALE + SCALE/2; const playerScreenY = oy + me.y * SCALE + SCALE/2;
 
     const map = state.map; const explored = state.explored || []; 
-    // Garante que o tema padrão não quebra se state.theme for undefined
     const theme = state.theme || "#222";
-    // --- NOVO DESIGN DA CIDADE ---
-    // Usamos cores mais claras se for a cidade (SAFE ZONE)
     const isCity = state.theme === "#444"; 
 
     if(map && map.length){
@@ -929,22 +953,20 @@ function draw() {
             if(!map[y]) continue; 
             for(let x=sx; x<ex; x++){ 
                 if(map[y][x]===0) { 
-                    // CHÃO
                     if (isCity) {
-                        ctx.fillStyle="#333"; // Pedra cinza escura (pavimento)
+                        ctx.fillStyle="#333";
                         ctx.fillRect(ox+x*SCALE,oy+y*SCALE,SCALE,SCALE);
-                        if((x+y)%2===0) { ctx.fillStyle="#3a3a3a"; ctx.fillRect(ox+x*SCALE+4, oy+y*SCALE+4, 8, 8); } // Detalhe de pedra
+                        if((x+y)%2===0) { ctx.fillStyle="#3a3a3a"; ctx.fillRect(ox+x*SCALE+4, oy+y*SCALE+4, 8, 8); }
                     } else {
                         ctx.fillStyle="#080808"; 
                         ctx.fillRect(ox+x*SCALE,oy+y*SCALE,SCALE,SCALE); 
                         if((x+y)%3===0) { ctx.fillStyle=theme; ctx.fillRect(ox+x*SCALE+6, oy+y*SCALE+6, 2, 2); } 
                     }
                 } else if(map[y][x]===1) { 
-                    // PAREDE
                     if (isCity) {
-                        ctx.fillStyle="#222"; // Parede de pedra
+                        ctx.fillStyle="#222";
                         ctx.fillRect(ox+x*SCALE,oy+y*SCALE,SCALE,SCALE);
-                        ctx.strokeStyle="#555"; // Borda mais clara
+                        ctx.strokeStyle="#555";
                         ctx.strokeRect(ox+x*SCALE,oy+y*SCALE,SCALE,SCALE);
                     } else {
                         ctx.fillStyle="#000"; 
@@ -1039,15 +1061,15 @@ function draw() {
         else if(e.type === "chest") { ctx.fillStyle = "#a80"; ctx.fillRect(-6, -4, 12, 8); ctx.fillStyle="#ff0"; ctx.fillRect(-1, -2, 2, 2); }
         else if(e.class) {
             let c = e.class; ctx.fillStyle = blink?"#fff" : (c==="knight"?"#668":c==="hunter"?"#464":"#448"); ctx.fillRect(-4, -6, 8, 12);
-            if(e.equipment.head) { ctx.fillStyle=e.equipment.head.color; ctx.fillRect(-4,-8,8,4); }
-            if(e.equipment.body) { ctx.fillStyle=e.equipment.body.color; ctx.fillRect(-3,-4,6,6); }
-            if(e.equipment.hand) {
+            if(e.equipment && e.equipment.head) { ctx.fillStyle=e.equipment.head.color; ctx.fillRect(-4,-8,8,4); }
+            if(e.equipment && e.equipment.body) { ctx.fillStyle=e.equipment.body.color; ctx.fillRect(-3,-4,6,6); }
+            if(e.equipment && e.equipment.hand) {
                 let k = e.equipment.hand.key;
                 if(k.includes("sword")||k.includes("axe")||k.includes("dagger")) { ctx.fillStyle="#ddd"; ctx.fillRect(4, -4, 2, 10); ctx.fillStyle="#840"; ctx.fillRect(3, 2, 4, 2); }
                 if(k.includes("bow")||k.includes("xbow")) { ctx.strokeStyle="#a84"; ctx.lineWidth=2; ctx.beginPath(); ctx.arc(4, 0, 6, -1, 1); ctx.stroke(); }
                 if(k.includes("staff")||k.includes("wand")) { ctx.fillStyle="#840"; ctx.fillRect(4, -8, 2, 16); ctx.fillStyle=e.equipment.hand.color; ctx.fillRect(3,-10,4,4); }
             }
-            if(e.equipment.rune) { ctx.fillStyle = e.equipment.rune.color; ctx.globalAlpha = 0.8; ctx.fillRect(-2, 0, 4, 4); ctx.globalAlpha = 1.0; }
+            if(e.equipment && e.equipment.rune) { ctx.fillStyle = e.equipment.rune.color; ctx.globalAlpha = 0.8; ctx.fillRect(-2, 0, 4, 4); ctx.globalAlpha = 1.0; }
             
             if (e.id === myId) {
                 ctx.fillStyle = "white"; ctx.fillRect(-3, -3, 2, 2); ctx.fillRect(1, -3, 2, 2); 
@@ -1103,7 +1125,6 @@ function draw() {
         const hintDy = state.hint.y - me.y;
         const dist = Math.hypot(hintDx, hintDy);
         
-        // Show arrow only if far
         if(dist > 8) {
             const angle = Math.atan2(hintDy, hintDx);
             const radius = 40; 
@@ -1114,7 +1135,6 @@ function draw() {
             ctx.translate(ax, ay);
             ctx.rotate(angle);
             
-            // Pulsing effect
             const scale = 1 + Math.sin(Date.now() / 200) * 0.2;
             ctx.scale(scale, scale);
             
