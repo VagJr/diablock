@@ -1,9 +1,33 @@
+/* =========================
+   MOBILE-SAFE BGM (Diablock)
+   ========================= */
+let bgm = null;
+let bgmStarted = false;
+
+function ensureBGM() {
+    if (bgmStarted) return;
+    bgmStarted = true;
+
+    bgm = new Audio("assets/bgm.mp3");
+    bgm.loop = true;
+    bgm.volume = 0.4;
+
+    const p = bgm.play();
+    if (p && p.catch) {
+        p.catch(err => {
+            console.warn("BGM bloqueado:", err);
+            bgmStarted = false;
+        });
+    }
+}
+/* ========================= */
+
 const socket = io();
 const canvas = document.getElementById("c");
 const ctx = canvas.getContext("2d");
 const SCALE = 16;
 let myId = null, me = null;
-let state = { pl:{}, mb:{}, it:{}, pr:[], props:[], map:[], explored: [], lightRadius: 15 }; 
+let state = { pl:{}, mb:{}, it:{}, pr:[], props:[], map:[], explored: [], lightRadius: 15, hint: null }; 
 let recipes = [];
 let cam = { x:0, y:0 }, mouse = { x:0, y:0 };
 let texts = [], effects = [];
@@ -13,14 +37,12 @@ let shopItems = [];
 const tooltip = document.getElementById("tooltip");
 let dragItem = null;
 
-// Detecção de Mobile e Gamepad
 let isMobile = /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent);
 let gamepad = null;
 let gamepadActive = false; 
 let focusIndex = 0;
 let focusArea = 'equipment'; 
 
-// NOVO: Log de Jogo
 const gameLog = document.getElementById("game-log");
 
 window.addEventListener("gamepadconnected", (e) => { 
@@ -108,38 +130,81 @@ socket.on("char_list", list => {
     }
 });
 socket.on("game_start", d => { recipes = d.recipes; renderCrafting(); });
-socket.on("u", d => { Object.assign(state, d); me=state.pl[myId]; if(me) updateUI(); });
 
-// === CORREÇÃO DOS TEXTOS FLUTUANTES ===
+socket.on("map_data", d => {
+    state.map = d.map;
+    state.theme = d.theme;
+    state.explored = []; 
+    addLog("Mapa Carregado.", "#0f0");
+});
+
+socket.on("u", d => { 
+    const currentMap = state.map;
+    Object.assign(state, d); 
+    if (!d.map && currentMap) state.map = currentMap;
+
+    // --- CORREÇÃO DO BUG DE UI: Força atualização do me ---
+    me = state.pl[myId];
+    if(me) updateUI(); 
+});
+
+// --- ORGANIZAÇÃO DE TEXTOS ---
+function preventTextOverlap(newText) {
+    let attempts = 0;
+    while(attempts < 5) {
+        let collision = false;
+        for(let t of texts) {
+            // Se estiver muito perto de outro texto ativo
+            if(Math.abs(t.x - newText.x) < 2 && Math.abs(t.y - newText.y) < 2) {
+                collision = true;
+                break;
+            }
+        }
+        if(collision) {
+            newText.y -= 1.0; // Sobe um pouco
+            newText.x += (Math.random() - 0.5) * 2; // Espalha um pouco
+            attempts++;
+        } else {
+            break;
+        }
+    }
+}
+
 socket.on("txt", d => {
-    // Garante que o valor seja string para evitar erros
     const valStr = String(d.val);
-    
-    // Velocidade vertical reduzida para não sumir rápido demais (Mapa tem escala 16x)
     let vy = -0.05; 
-    let life = 120; // Vida mais longa
+    let life = 120;
     
-    // Configurações personalizadas baseadas no conteúdo do texto
+    // Adiciona uma leve variação inicial para evitar stack perfeito
+    let startX = d.x + (Math.random() - 0.5) * 0.5;
+    let startY = d.y + (Math.random() - 0.5) * 0.5;
+
     if(valStr.includes("LEVEL UP!")) { vy = -0.02; life = 200; d.size="16px bold Courier New"; d.color="#fb0"; }
     else if(valStr.includes("CRIT!")) { vy = -0.08; life = 150; d.color="#f0f"; d.size="14px bold Courier New"; d.isCrit=true; }
     else if(valStr.includes("CRAFT") || valStr.includes("SOCKETED") || valStr.includes("BLOCK")) { vy = -0.04; life = 100; }
     else if(valStr.includes("DEATH!")) { vy = -0.02; life = 250; d.size="20px bold Courier New"; } 
-    else if(valStr.includes("+")) { vy = -0.05; life = 100; } // Gold/Drops
+    else if(valStr.includes("OPEN!") || valStr.includes("UNLOCKED!")) { vy = -0.03; life = 200; d.size="16px bold Courier New"; }
+    else if(valStr.includes("+")) { vy = -0.05; life = 100; } 
     else if(valStr.includes("SHRINE")) { vy = -0.03; life = 180; d.color="#0ff"; d.size="12px bold Courier New"; }
+    else if(valStr.includes("LOCKED")) { vy = -0.03; life = 80; d.color="#f00"; }
     
-    texts.push({
+    const newText = {
         val: valStr,
-        x: d.x,
-        y: d.y,
+        x: startX,
+        y: startY,
         color: d.color || "#fff",
         life: life,
         vy: vy,
         size: d.size || "10px Courier New"
-    });
+    };
+
+    preventTextOverlap(newText);
+    texts.push(newText);
     
     if(valStr.includes("CRAFT")) playSfx("craft");
     if(valStr.includes("LEVEL")) playSfx("levelup");
     if(valStr.includes("SHRINE")) playSfx("shrine");
+    if(valStr.includes("OPEN")) playSfx("shrine");
 });
 
 socket.on("fx", d => {
@@ -148,8 +213,10 @@ socket.on("fx", d => {
     else if (d.type === "nova") effects.push({ type: "nova", x: d.x, y: d.y, life: d.life || 20 });
     else if (d.type === "dash") playSfx("dash");
     else if (d.type === "gold_txt") { 
-        // Fallback se o servidor mandar como fx
-        texts.push({ val: String(d.val), x: d.x, y: d.y, color: "#fb0", life: 100, vy: -0.05, size: "10px Courier New" }); 
+        // Usa a nova lógica de overlap para gold também
+        const t = { val: String(d.val), x: d.x, y: d.y, color: "#fb0", life: 100, vy: -0.05, size: "10px Courier New" };
+        preventTextOverlap(t);
+        texts.push(t); 
         playSfx("gold"); 
     }
     else if (d.type === "hit") playSfx("hit");
@@ -212,10 +279,6 @@ function getAttackAngle() {
 }
 
 const chatInput = document.getElementById("chat-input");
-
-// ----------------------------------------------------
-// BOTÃO DE CHAT (MOBILE) — ISOLADO E SEGURO
-// ----------------------------------------------------
 const btnChatMobile = document.getElementById("btn-chat-mobile");
 if (btnChatMobile) {
     btnChatMobile.onclick = () => {
@@ -223,10 +286,8 @@ if (btnChatMobile) {
         uiState.chat = true;
         const container = document.getElementById("chat-container");
         container.style.display = "block";
-        setTimeout(() => {
-            chatInput.focus();
-        }, 100);
-        sendInput(); // trava movimento enquanto chat estiver aberto
+        setTimeout(() => { chatInput.focus(); }, 100);
+        sendInput();
     };
 }
 
@@ -234,38 +295,20 @@ chatInput.onkeydown = (e) => {
     if (e.key === "Enter") {
         const msg = chatInput.value.trim();
         if (msg.length > 0) socket.emit("chat", msg.substring(0, 30));
-
         closeChat();
     }
 };
 
-// FECHAMENTO FORÇADO DO CHAT (PC + MOBILE)
 function closeChat() {
     chatInput.value = "";
     uiState.chat = false;
-
-    const container = document.getElementById("chat-container");
-    container.style.display = "none";
-
-    // Força remoção de foco (mobile precisa disso)
+    document.getElementById("chat-container").style.display = "none";
     chatInput.blur();
-
-    // Garante que nenhum elemento fique focado
     document.activeElement.blur?.();
-
-    // Devolve controle ao jogo
-    setTimeout(() => {
-        canvas.focus();
-        sendInput();
-    }, 50);
+    setTimeout(() => { canvas.focus(); sendInput(); }, 50);
 }
 
-// MOBILE: se perder foco, fecha o chat
-chatInput.onblur = () => {
-    if (uiState.chat) closeChat();
-};
-
-
+chatInput.onblur = () => { if (uiState.chat) closeChat(); };
 
 window.onkeydown = e => {
     if (document.getElementById("menu").style.display !== "none") return;
@@ -326,35 +369,19 @@ window.onmousedown = (e) => {
 
     if (!me || uiState.chat || gamepadActive || document.getElementById("menu").style.display !== "none") return;
 
-    // CORREÇÃO: usar a posição REAL do clique (e.clientX / e.clientY)
     const isPanel = (id) => {
         const el = document.getElementById(id);
         if (!el || el.style.display !== "block") return false;
-
         const r = el.getBoundingClientRect();
-        return (
-            e.clientX >= r.left &&
-            e.clientX <= r.right &&
-            e.clientY >= r.top &&
-            e.clientY <= r.bottom
-        );
+        return (e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom);
     };
 
-    // Se clicou em qualquer painel de UI, NÃO ataca
-    if (
-        isPanel("inventory") ||
-        isPanel("char-panel") ||
-        isPanel("shop-panel") ||
-        isPanel("craft-panel")
-    ) return;
+    if (isPanel("inventory") || isPanel("char-panel") || isPanel("shop-panel") || isPanel("craft-panel")) return;
 
     const ang = getAttackAngle();
-
     if (e.button === 0) socket.emit("attack", ang);
     if (e.button === 2) socket.emit("skill", { idx: 1, angle: ang });
 };
-
-
 
 // ----------------------------------------------------
 // JOYSTICK & TOUCH HANDLERS
@@ -383,7 +410,6 @@ const handleTouchStart = (e) => {
             joystick.knob.style.top = (joystickRect.height / 2 - 20) + 'px';
             handleTouchMove(e); processed = true;
         } 
-        
         else if (target.closest('.action-btn')) {
             const action = target.closest('.action-btn').dataset.action;
             const ang = getAttackAngle(); 
@@ -506,7 +532,7 @@ function handleGamepadAction() {
         const item = me.inventory[focusIndex];
         if (item) { 
             if (item.key === "potion") socket.emit("potion");
-            else if (item.slot && item.type !== "material" && item.type !== "consumable") socket.emit("equip", focusIndex);
+            else if (item.slot && item.type !== "material" && item.type !== "consumable" && item.type !== "key") socket.emit("equip", focusIndex);
         }
     } else if (uiState.craft && recipes.length > 0) { 
         socket.emit("craft", {action:"create", recipeIdx: focusIndex});
@@ -604,27 +630,68 @@ function getIcon(key) {
     if(key.includes("sapphire")) return "🔹"; if(key.includes("emerald")) return "🟩"; 
     if(key.includes("diamond")) return "⚪"; if(key.includes("topaz")) return "🔶"; 
     if(key.includes("amethyst")) return "🟣"; if(key.includes("runa")) return "⚛️";
+    if(key.includes("key")) return "🔑";
     return "📦";
 }
 
-function updateUI() {
-    if(!me) return;
-    const hpPct = (me.hp/me.stats.maxHp)*100; const mpPct = (me.mp/me.stats.maxMp)*100; const xpPct = (me.xp/(me.level*100))*100;
-    let diffName = state.theme === "#f00" ? "HORDE I" : state.theme === "#900" ? "HORDE II" : state.theme === "#102" ? "HELL" : state.theme === "#311" ? "NIGHTMARE" : "NORMAL";
+// ===================================
+// CORREÇÃO EM GAME.JS
+// Substitua a função updateUI por esta versão:
+// ===================================
 
-    document.getElementById("hp-bar").style.width = hpPct + "%"; document.getElementById("mp-bar").style.width = mpPct + "%"; document.getElementById("xp-bar").style.width = xpPct + "%";
-    document.getElementById("hp-txt").innerText = `HP: ${Math.floor(me.hp)}/${me.stats.maxHp}`; 
-    document.getElementById("mp-txt").innerText = `MP: ${Math.floor(me.mp)}/${me.stats.maxMp}`; 
+function updateUI() {
+    // Garante que tentamos pegar o 'me' se ele estiver nulo mas tivermos dados
+    if(!me && state.pl && myId) me = state.pl[myId];
+    
+    // PROTEÇÃO CRÍTICA: Se 'me' não existe ou se 'stats' ainda não chegou, aborta para não travar o script
+    if(!me || !me.stats) return;
+
+    // A partir daqui, me.stats existe, então o erro "undefined reading maxHp" não ocorrerá
+    const maxHp = me.stats.maxHp || 100; // Valor default de segurança
+    const maxMp = me.stats.maxMp || 50;
+    
+    const hpPct = (me.hp / maxHp) * 100; 
+    const mpPct = (me.mp / maxMp) * 100; 
+    const xpPct = (me.xp / ((me.level+1)*100)) * 100;
+    
+    let diffName = "NORMAL";
+    if (state.theme === "#444") diffName = "SAFE ZONE";
+    else if (state.theme === "#f00") diffName = "HORDE I";
+    else if (state.theme === "#900") diffName = "HORDE II";
+    else if (state.theme === "#102") diffName = "HELL";
+    else if (state.theme === "#311") diffName = "NIGHTMARE";
+
+    const elHpBar = document.getElementById("hp-bar");
+    const elMpBar = document.getElementById("mp-bar");
+    const elXpBar = document.getElementById("xp-bar");
+
+    if(elHpBar) elHpBar.style.width = hpPct + "%"; 
+    if(elMpBar) elMpBar.style.width = mpPct + "%"; 
+    if(elXpBar) elXpBar.style.width = xpPct + "%";
+    
+    document.getElementById("hp-txt").innerText = `HP: ${Math.floor(me.hp)}/${maxHp}`; 
+    document.getElementById("mp-txt").innerText = `MP: ${Math.floor(me.mp)}/${maxMp}`; 
     document.getElementById("xp-txt").innerText = `${Math.floor(xpPct)}%`; 
     document.getElementById("lvl-txt").innerText = `${diffName} [${me.level}]`;
     
-    document.getElementById("h-lvl-txt").innerText = `${diffName} [${me.level}]`; document.getElementById("h-gold-txt").innerText = `${me.gold}G`;
-    document.getElementById("h-hp-bar").style.width = hpPct + "%"; document.getElementById("h-mp-bar").style.width = mpPct + "%"; document.getElementById("h-xp-bar").style.width = xpPct + "%";
+    // Atualização do Mobile HUD (Horizontal)
+    document.getElementById("h-lvl-txt").innerText = `${diffName} [${me.level}]`; 
+    document.getElementById("h-gold-txt").innerText = `${me.gold || 0}G`;
+    document.getElementById("h-hp-bar").style.width = hpPct + "%"; 
+    document.getElementById("h-mp-bar").style.width = mpPct + "%"; 
+    document.getElementById("h-xp-bar").style.width = xpPct + "%";
 
-    document.getElementById("cp-pts").innerText = me.pts;
-    document.getElementById("val-str").innerText = me.attrs.str; document.getElementById("val-dex").innerText = me.attrs.dex; document.getElementById("val-int").innerText = me.attrs.int;
-    document.getElementById("stat-dmg").innerText = me.stats.dmg + ` (CRIT: ${Math.floor((me.stats.crit || 0.01)*100)}%)`; document.getElementById("stat-spd").innerText = Math.floor(me.stats.spd*100);
-    document.getElementById("hud-gold").innerText = "GOLD: " + me.gold;
+    document.getElementById("cp-pts").innerText = me.pts || 0;
+    
+    // Proteção para attrs caso venha undefined
+    const attrs = me.attrs || {str:0, dex:0, int:0};
+    document.getElementById("val-str").innerText = attrs.str; 
+    document.getElementById("val-dex").innerText = attrs.dex; 
+    document.getElementById("val-int").innerText = attrs.int;
+    
+    document.getElementById("stat-dmg").innerText = (me.stats.dmg || 0) + ` (CRIT: ${Math.floor((me.stats.crit || 0.01)*100)}%)`; 
+    document.getElementById("stat-spd").innerText = Math.floor((me.stats.spd || 0)*100);
+    document.getElementById("hud-gold").innerText = "GOLD: " + (me.gold || 0);
 
     const uiActionButtons = document.getElementById("ui-action-buttons");
     if (uiState.inv || uiState.char || uiState.shop || uiState.craft) { 
@@ -639,7 +706,6 @@ function updateUI() {
     document.getElementById("shop-panel").style.display = uiState.shop ? "block" : "none";
     document.getElementById("craft-panel").style.display = uiState.craft ? "block" : "none";
 
-    // 1. EQUIPAMENTO
     const eq_slots = ["head","body","hand","rune","potion"];
     eq_slots.forEach((slot, index) => {
         const el = document.getElementById("eq-"+slot); if (!el) return; 
@@ -648,12 +714,12 @@ function updateUI() {
         const isSelected = (uiState.char && focusArea === 'equipment' && focusIndex === index);
         if (isSelected) { 
             el.style.outline = '2px solid yellow'; 
-            if (me.equipment[slot]) showTooltip(me.equipment[slot], el); 
+            if (me.equipment && me.equipment[slot]) showTooltip(me.equipment[slot], el); 
             else { hideTooltip(); document.getElementById('ui-btn-equip').innerText = 'VAZIO'; }
             document.getElementById('ui-btn-equip').innerText = slot==='potion'?'USAR (A)':'DESEQUIPAR (A)';
         }
         
-        if(me.equipment[slot]) {
+        if(me.equipment && me.equipment[slot]) {
             const it = me.equipment[slot];
             el.style.borderColor = it.color; el.innerHTML = getIcon(it.key); 
             el.onclick = (e) => {
@@ -671,99 +737,67 @@ function updateUI() {
         }
     });
     
-    // 2. STATS
     const stat_btns = ['str', 'dex', 'int'];
     stat_btns.forEach((stat, index) => {
         const btn = document.getElementById("btn-"+stat);
         const globalIndex = index + 5;
-        btn.style.outline = 'none';
+        if(btn) btn.style.outline = 'none';
         if (uiState.char && focusArea === 'equipment' && focusIndex === globalIndex) {
-             btn.style.outline = '2px solid yellow'; hideTooltip();
+             if(btn) btn.style.outline = '2px solid yellow'; hideTooltip();
              document.getElementById('ui-btn-equip').innerText = `ADD ${stat.toUpperCase()} (A)`;
         }
     });
     
-    // 3. INVENTÁRIO
     const ig = document.getElementById("inv-grid"); ig.innerHTML = "";
     if (uiState.inv && focusArea === 'inventory' && me.inventory.length > 0 && focusIndex >= me.inventory.length) focusIndex = Math.max(0, me.inventory.length - 1);
 
-    me.inventory.forEach((it, idx) => {
-        if (!it) return;
-        const d = document.createElement("div"); d.className = "slot"; d.style.borderColor = it.color; d.style.outline = 'none';
-        
-        const isSelected = (uiState.inv && focusArea === 'inventory' && focusIndex === idx);
-        if (isSelected) {
-             d.style.outline = '2px solid yellow'; showTooltip(it, d); 
-             if (it.key === 'potion') document.getElementById('ui-btn-equip').innerText = 'USAR POÇÃO (A)';
-             else if (it.slot) document.getElementById('ui-btn-equip').innerText = 'EQUIPAR (A)';
-             else document.getElementById('ui-btn-equip').innerText = 'ITEM DE CRAFT';
-             document.getElementById('ui-btn-drop').innerText = 'DROPAR (B)';
-        } 
-        
-        d.innerHTML = getIcon(it.key);
-        if(it.sockets && it.sockets.length > 0) {
-            const socks = document.createElement("div"); socks.style.cssText="position:absolute;bottom:0;right:0;display:flex;";
-            it.sockets.forEach((s, i) => { const dot = document.createElement("div"); dot.style.cssText=`width:4px;height:4px;background:${it.gems[i]?it.gems[i].color:"#222"};border:1px solid #555;margin-right:1px;`; socks.appendChild(dot); });
-            d.appendChild(socks);
-        }
-        
-        // INTERAÇÃO DO INVENTÁRIO (PC estável / Mobile intacto)
-d.onclick = (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-
-    // MOBILE → 2 toques
-    if (isMobile) {
-        if (focusIndex === idx && focusArea === 'inventory') {
-            if (it.key === "potion") socket.emit("potion");
-            else if (it.slot && it.type !== "material" && it.type !== "gem") {
-                socket.emit("equip", idx);
+    if(me.inventory) {
+        me.inventory.forEach((it, idx) => {
+            if (!it) return;
+            const d = document.createElement("div"); d.className = "slot"; d.style.borderColor = it.color; d.style.outline = 'none';
+            
+            const isSelected = (uiState.inv && focusArea === 'inventory' && focusIndex === idx);
+            if (isSelected) {
+                d.style.outline = '2px solid yellow'; showTooltip(it, d); 
+                if (it.key === 'potion') document.getElementById('ui-btn-equip').innerText = 'USAR POÇÃO (A)';
+                else if (it.slot) document.getElementById('ui-btn-equip').innerText = 'EQUIPAR (A)';
+                else document.getElementById('ui-btn-equip').innerText = 'ITEM DE CRAFT';
+                document.getElementById('ui-btn-drop').innerText = 'DROPAR (B)';
+            } 
+            
+            d.innerHTML = getIcon(it.key);
+            if(it.sockets && it.sockets.length > 0) {
+                const socks = document.createElement("div"); socks.style.cssText="position:absolute;bottom:0;right:0;display:flex;";
+                it.sockets.forEach((s, i) => { const dot = document.createElement("div"); dot.style.cssText=`width:4px;height:4px;background:${it.gems[i]?it.gems[i].color:"#222"};border:1px solid #555;margin-right:1px;`; socks.appendChild(dot); });
+                d.appendChild(socks);
             }
-        } else {
-            focusIndex = idx;
-            focusArea = 'inventory';
-            updateUI();
-        }
-        return;
+            
+            d.onclick = (e) => {
+                e.preventDefault(); e.stopPropagation();
+                if (isMobile) {
+                    if (focusIndex === idx && focusArea === 'inventory') {
+                        if (it.key === "potion") socket.emit("potion");
+                        else if (it.slot && it.type !== "material" && it.type !== "gem") socket.emit("equip", idx);
+                    } else { focusIndex = idx; focusArea = 'inventory'; updateUI(); }
+                    return;
+                }
+                if (it.key === "potion") socket.emit("potion");
+                else if (it.slot && it.type !== "material" && it.type !== "gem" && it.type !== "key") socket.emit("equip", idx);
+                focusIndex = idx; focusArea = 'inventory';
+            };
+            
+            d.draggable = true; d.ondragstart = (e) => { dragItem = { idx, item: it }; }; d.ondragover = (e) => e.preventDefault();
+            d.ondrop = (e) => { e.preventDefault(); if(dragItem && dragItem.item.type === "gem" && it.type !== "gem") socket.emit("craft", {action:"socket", itemIdx:idx, gemIdx:dragItem.idx}); };
+            
+            if (!isMobile) { 
+                d.onmouseover = () => { focusIndex = idx; focusArea = 'inventory'; showTooltip(it, d); d.style.outline = '2px solid yellow'; }; 
+                d.onmouseout = () => { hideTooltip(); d.style.outline = 'none'; }; 
+            }
+            d.oncontextmenu = (e) => { e.preventDefault(); socket.emit("drop", idx); };
+            ig.appendChild(d);
+        });
     }
 
-    // PC → 1 clique equipa (SEM redraw aqui)
-    if (it.key === "potion") {
-        socket.emit("potion");
-    }
-    else if (it.slot && it.type !== "material" && it.type !== "gem") {
-        socket.emit("equip", idx);
-    }
-
-    // Apenas atualiza foco local (sem updateUI)
-    focusIndex = idx;
-    focusArea = 'inventory';
-};
-
-        
-        d.draggable = true; d.ondragstart = (e) => { dragItem = { idx, item: it }; }; d.ondragover = (e) => e.preventDefault();
-        d.ondrop = (e) => { e.preventDefault(); if(dragItem && dragItem.item.type === "gem" && it.type !== "gem") socket.emit("craft", {action:"socket", itemIdx:idx, gemIdx:dragItem.idx}); };
-        
-        // Hover no PC sempre ativo para feedback visual, independente do gamepad
-        if (!isMobile) { 
-            d.onmouseover = () => { 
-                focusIndex = idx; 
-                focusArea = 'inventory'; 
-                showTooltip(it, d); 
-                d.style.outline = '2px solid yellow'; 
-            }; 
-            d.onmouseout = () => { 
-                hideTooltip(); 
-                d.style.outline = 'none'; 
-            }; 
-        }
-        
-        d.oncontextmenu = (e) => { e.preventDefault(); socket.emit("drop", idx); };
-        ig.appendChild(d);
-    });
-
-
-    // 4. CRAFTING
     if (uiState.craft) {
         const craftList = document.getElementById("craft-list");
         Array.from(craftList.children).forEach((d, idx) => {
@@ -772,7 +806,6 @@ d.onclick = (e) => {
         });
     }
     
-    // 5. SHOP
     if(uiState.shop) {
         const sg = document.getElementById("shop-grid"); sg.innerHTML = "";
         shopItems.forEach((it, idx) => {
@@ -781,32 +814,21 @@ d.onclick = (e) => {
             d.innerHTML = getIcon(it.key); 
             d.onclick = () => { window.buy(idx); };
             if (!isMobile && !gamepadActive) { 
-                d.onmouseover = () => { 
-                    focusIndex = idx; 
-                    focusArea = 'shop';
-                    showTooltip(it, d); 
-                    d.style.outline = '2px solid yellow';
-                }; 
-                d.onmouseout = () => { 
-                    hideTooltip(); 
-                    d.style.outline = 'none';
-                }; 
+                d.onmouseover = () => { focusIndex = idx; focusArea = 'shop'; showTooltip(it, d); d.style.outline = '2px solid yellow'; }; 
+                d.onmouseout = () => { hideTooltip(); d.style.outline = 'none'; }; 
             }
             sg.appendChild(d);
         });
         document.getElementById("btn-shop-close").onclick = closeAllMenus;
     }
     
-    if ((uiState.inv && me.inventory.length === 0)) { hideTooltip(); document.getElementById('ui-btn-equip').innerText = 'VAZIO'; } 
+    if ((uiState.inv && (!me.inventory || me.inventory.length === 0))) { hideTooltip(); document.getElementById('ui-btn-equip').innerText = 'VAZIO'; } 
 }
-
-
-
-
 
 function showTooltip(it, elementRef) {
     if (!it) return;
     let html = `<b style="color:${it.color}">${it.name}</b><br><span style="color:#aaa">${(it.type || "UNKNOWN").toUpperCase()}</span>`;
+    if(it.desc) html += `<br><span style="color:#ff0">${it.desc}</span>`;
     if(it.price) html += `<br>Price: ${it.price}G`;
     const isSellable = (uiState.inv || uiState.shop) && it.key !== 'gold';
     if (isSellable) html += `<br><span style="color:#fff">Sell Value: ${Math.floor((it.price || 1) * 0.5)}G</span>`;
@@ -874,12 +896,8 @@ function draw() {
     const gameLogContainer = document.getElementById("game-log-container");
     
     if(isMobile) {
-
-    const btnChatMobile = document.getElementById("btn-chat-mobile");
-    if (btnChatMobile) {
-        btnChatMobile.style.display = isMobile ? "block" : "none";
-    }
-
+        const btnChatMobile = document.getElementById("btn-chat-mobile");
+        if (btnChatMobile) btnChatMobile.style.display = isMobile ? "block" : "none";
         mobileHorizontalHud.style.display = "flex"; hudBottom.style.display = "none"; gameLogContainer.style.display = "none";
         if (!gamepadActive) { mobileControls.style.display = "block"; hudGold.style.display = "none"; } 
         else { mobileControls.style.display = "none"; hudGold.style.display = "block"; }
@@ -898,10 +916,44 @@ function draw() {
     const lightRadiusPixels = state.lightRadius * SCALE;
     const playerScreenX = ox + me.x * SCALE + SCALE/2; const playerScreenY = oy + me.y * SCALE + SCALE/2;
 
-    const map = state.map; const explored = state.explored || []; const theme = state.theme || "#222";
-    if(map.length){
+    const map = state.map; const explored = state.explored || []; 
+    // Garante que o tema padrão não quebra se state.theme for undefined
+    const theme = state.theme || "#222";
+    // --- NOVO DESIGN DA CIDADE ---
+    // Usamos cores mais claras se for a cidade (SAFE ZONE)
+    const isCity = state.theme === "#444"; 
+
+    if(map && map.length){
         const sy=Math.floor(cam.y/SCALE), ey=sy+Math.ceil(canvas.height/SCALE)+1; const sx=Math.floor(cam.x/SCALE), ex=sx+Math.ceil(canvas.width/SCALE)+1;
-        for(let y=sy; y<ey; y++){ if(!map[y]) continue; for(let x=sx; x<ex; x++){ if(map[y][x]===0) { ctx.fillStyle="#080808"; ctx.fillRect(ox+x*SCALE,oy+y*SCALE,SCALE,SCALE); if((x+y)%3===0) { ctx.fillStyle=theme; ctx.fillRect(ox+x*SCALE+6, oy+y*SCALE+6, 2, 2); } } else if(map[y][x]===1) { ctx.fillStyle="#000"; ctx.fillRect(ox+x*SCALE,oy+y*SCALE,SCALE,SCALE); ctx.strokeStyle=theme; ctx.strokeRect(ox+x*SCALE,oy+y*SCALE,SCALE,SCALE); } } }
+        for(let y=sy; y<ey; y++){ 
+            if(!map[y]) continue; 
+            for(let x=sx; x<ex; x++){ 
+                if(map[y][x]===0) { 
+                    // CHÃO
+                    if (isCity) {
+                        ctx.fillStyle="#333"; // Pedra cinza escura (pavimento)
+                        ctx.fillRect(ox+x*SCALE,oy+y*SCALE,SCALE,SCALE);
+                        if((x+y)%2===0) { ctx.fillStyle="#3a3a3a"; ctx.fillRect(ox+x*SCALE+4, oy+y*SCALE+4, 8, 8); } // Detalhe de pedra
+                    } else {
+                        ctx.fillStyle="#080808"; 
+                        ctx.fillRect(ox+x*SCALE,oy+y*SCALE,SCALE,SCALE); 
+                        if((x+y)%3===0) { ctx.fillStyle=theme; ctx.fillRect(ox+x*SCALE+6, oy+y*SCALE+6, 2, 2); } 
+                    }
+                } else if(map[y][x]===1) { 
+                    // PAREDE
+                    if (isCity) {
+                        ctx.fillStyle="#222"; // Parede de pedra
+                        ctx.fillRect(ox+x*SCALE,oy+y*SCALE,SCALE,SCALE);
+                        ctx.strokeStyle="#555"; // Borda mais clara
+                        ctx.strokeRect(ox+x*SCALE,oy+y*SCALE,SCALE,SCALE);
+                    } else {
+                        ctx.fillStyle="#000"; 
+                        ctx.fillRect(ox+x*SCALE,oy+y*SCALE,SCALE,SCALE); 
+                        ctx.strokeStyle=theme; ctx.strokeRect(ox+x*SCALE,oy+y*SCALE,SCALE,SCALE); 
+                    }
+                } 
+            } 
+        }
     }
     
     if(state.props) state.props.forEach(p => { 
@@ -916,6 +968,14 @@ function draw() {
         else if(p.type==="book") {
             ctx.fillStyle="#a52"; ctx.fillRect(px,py,6,4);
             ctx.fillStyle="#eee"; ctx.fillRect(px+1,py+1,4,2);
+        }
+        else if(p.type==="stairs") {
+            ctx.fillStyle = p.locked ? "#f00" : "#0f0";
+            ctx.fillRect(px-4, py-6, 8, 12);
+            ctx.strokeStyle = "#fff"; ctx.strokeRect(px-4, py-6, 8, 12);
+            if (p.locked) {
+                ctx.fillStyle = "#fff"; ctx.font = "8px Arial"; ctx.textAlign="center"; ctx.fillText("🔒", px, py);
+            }
         }
         else { ctx.fillStyle="#232"; ctx.fillRect(px,py,2,4); ctx.fillRect(px+3,py+1,2,3); } 
     });
@@ -1037,36 +1097,61 @@ function draw() {
     ctx.fillStyle = gradient; ctx.fillRect(0, 0, canvas.width, canvas.height);
     ctx.restore(); 
     
+    // --- NAVIGATION HINT ARROW ---
+    if(state.hint && me) {
+        const hintDx = state.hint.x - me.x;
+        const hintDy = state.hint.y - me.y;
+        const dist = Math.hypot(hintDx, hintDy);
+        
+        // Show arrow only if far
+        if(dist > 8) {
+            const angle = Math.atan2(hintDy, hintDx);
+            const radius = 40; 
+            const ax = ox + me.x*SCALE + SCALE/2 + Math.cos(angle)*radius;
+            const ay = oy + me.y*SCALE + SCALE/2 + Math.sin(angle)*radius;
+            
+            ctx.save();
+            ctx.translate(ax, ay);
+            ctx.rotate(angle);
+            
+            // Pulsing effect
+            const scale = 1 + Math.sin(Date.now() / 200) * 0.2;
+            ctx.scale(scale, scale);
+            
+            ctx.fillStyle = state.hint.type === "exit" ? "#0f0" : "#f00";
+            ctx.shadowBlur = 10;
+            ctx.shadowColor = ctx.fillStyle;
+            
+            ctx.beginPath();
+            ctx.moveTo(6, 0);
+            ctx.lineTo(-6, -6);
+            ctx.lineTo(-6, 6);
+            ctx.closePath();
+            ctx.fill();
+            
+            ctx.restore();
+            ctx.shadowBlur = 0;
+        }
+    }
+
     if (!fogPattern) createFogPattern();
     ctx.fillStyle = fogPattern; ctx.globalAlpha = 0.5; ctx.fillRect(0, 0, canvas.width, canvas.height); ctx.globalAlpha = 1.0;
     
     drawOffscreenPlayerIndicators(); 
     
-    // DESENHA OS TEXTOS POR ÚLTIMO (PARA FICAR EM CIMA DE TUDO)
     for(let i=texts.length-1; i>=0; i--){ 
         let t=texts[i]; 
-        
-        // Atualiza a posição
         t.y += t.vy;
-        
-        // Reduz a vida
         t.life--; 
-        
-        // Se a vida for grande (ex: 200), o alpha fica > 1, o que é seguro.
-        ctx.globalAlpha = Math.min(1.0, Math.max(0, t.life / 50)); // Fade out apenas no final
-        
+        ctx.globalAlpha = Math.min(1.0, Math.max(0, t.life / 50)); 
         ctx.fillStyle = t.color; 
         ctx.font = t.size || "10px Courier New"; 
         ctx.textAlign = "center"; 
-        
-        // Contorno para legibilidade
         ctx.strokeStyle = "#000";
         ctx.lineWidth = 3;
         ctx.strokeText(t.val, ox+t.x*SCALE, oy+t.y*SCALE);
-        
         ctx.fillText(t.val, ox+t.x*SCALE, oy+t.y*SCALE); 
         ctx.globalAlpha = 1.0; 
-        
         if(t.life<=0) texts.splice(i,1); 
     }
 }
