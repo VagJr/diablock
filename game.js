@@ -212,16 +212,60 @@ function getAttackAngle() {
 }
 
 const chatInput = document.getElementById("chat-input");
+
+// ----------------------------------------------------
+// BOTÃO DE CHAT (MOBILE) — ISOLADO E SEGURO
+// ----------------------------------------------------
+const btnChatMobile = document.getElementById("btn-chat-mobile");
+if (btnChatMobile) {
+    btnChatMobile.onclick = () => {
+        if (uiState.chat) return;
+        uiState.chat = true;
+        const container = document.getElementById("chat-container");
+        container.style.display = "block";
+        setTimeout(() => {
+            chatInput.focus();
+        }, 100);
+        sendInput(); // trava movimento enquanto chat estiver aberto
+    };
+}
+
 chatInput.onkeydown = (e) => {
-    if(e.key === "Enter") {
-        if(chatInput.value.trim().length > 0) socket.emit("chat", chatInput.value.substring(0,30));
-        chatInput.value = "";
-        document.getElementById("chat-container").style.display = "none";
-        uiState.chat = false;
-        canvas.focus();
-        sendInput(); 
+    if (e.key === "Enter") {
+        const msg = chatInput.value.trim();
+        if (msg.length > 0) socket.emit("chat", msg.substring(0, 30));
+
+        closeChat();
     }
 };
+
+// FECHAMENTO FORÇADO DO CHAT (PC + MOBILE)
+function closeChat() {
+    chatInput.value = "";
+    uiState.chat = false;
+
+    const container = document.getElementById("chat-container");
+    container.style.display = "none";
+
+    // Força remoção de foco (mobile precisa disso)
+    chatInput.blur();
+
+    // Garante que nenhum elemento fique focado
+    document.activeElement.blur?.();
+
+    // Devolve controle ao jogo
+    setTimeout(() => {
+        canvas.focus();
+        sendInput();
+    }, 50);
+}
+
+// MOBILE: se perder foco, fecha o chat
+chatInput.onblur = () => {
+    if (uiState.chat) closeChat();
+};
+
+
 
 window.onkeydown = e => {
     if (document.getElementById("menu").style.display !== "none") return;
@@ -830,6 +874,12 @@ function draw() {
     const gameLogContainer = document.getElementById("game-log-container");
     
     if(isMobile) {
+
+    const btnChatMobile = document.getElementById("btn-chat-mobile");
+    if (btnChatMobile) {
+        btnChatMobile.style.display = isMobile ? "block" : "none";
+    }
+
         mobileHorizontalHud.style.display = "flex"; hudBottom.style.display = "none"; gameLogContainer.style.display = "none";
         if (!gamepadActive) { mobileControls.style.display = "block"; hudGold.style.display = "none"; } 
         else { mobileControls.style.display = "none"; hudGold.style.display = "block"; }

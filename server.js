@@ -42,7 +42,7 @@ async function initializeServer() {
     }
 
     server.listen(3000, () => {
-        console.log("🔥 Diablock V28 - Boss Aggro Fixed");
+        console.log("🔥 Diablock V29 - Collision & Persistence Fix");
     });
 }
 
@@ -98,11 +98,11 @@ async function saveCharData(user, name, data) {
     delete savableData.input; delete savableData.stats; delete savableData.cd; delete savableData.id;
     delete savableData.user; delete savableData.charName; delete savableData.chatMsg; delete savableData.chatTimer;
     delete savableData.instId;
-    delete savableData.buffs; // Não salvar buffs temporários
+    delete savableData.buffs; 
         
     if (DB_MODE === 'NONE' || !isDbReady) {
-        if(localCharacters[user] && localCharacters[user][name]) {
-            savableData.class = localCharacters[user][name].class;
+        if(localCharacters[user]) {
+            // Garante que estamos atualizando a referência correta
             localCharacters[user][name] = savableData;
         }
         return;
@@ -364,6 +364,8 @@ function recalcStats(p) {
     
     p.stats.dmg = Math.floor(baseDmg);
     p.stats.cd_mult = (1 - cdRed); 
+    
+    // CORREÇÃO: Não resetar HP se for menor que max, apenas capar
     if(p.hp > p.stats.maxHp) p.hp = p.stats.maxHp;
 }
 
@@ -471,6 +473,14 @@ io.on("connection", socket => {
         if(!data.explored) data.explored = Array.from({length: SIZE}, () => Array(SIZE).fill(0)); 
         inst.players[socket.id] = { id: socket.id, name, user, charName, ...JSON.parse(JSON.stringify(data)), x: inst.rooms[0].cx, y: inst.rooms[0].cy, vx:0, vy:0, input: {x:0,y:0,block:false}, cd: { atk:0, skill:0, dash:0 }, stats: {}, instId: inst.id, chatMsg: "", chatTimer: 0, buffs: {} };
         recalcStats(inst.players[socket.id]); 
+        
+        // FIX: Garantir que HP/MP persistem e não resetam, mas respeitam o teto máximo
+        const p = inst.players[socket.id];
+        if (p.hp === undefined || p.hp === null) p.hp = p.stats.maxHp;
+        if (p.mp === undefined || p.mp === null) p.mp = p.stats.maxMp;
+        p.hp = Math.min(p.hp, p.stats.maxHp);
+        p.mp = Math.min(p.mp, p.stats.maxMp);
+
         socket.emit("game_start", {recipes: RECIPES});
         sendLog(inst.id, `${name} entrou no calabouço!`, "#0ff");
     });
@@ -659,7 +669,29 @@ setInterval(() => {
             
             p.hp=Math.min(p.stats.maxHp, p.hp+0.05); p.mp=Math.min(p.stats.maxMp, p.mp+0.1);
             
-            if(p.dashTime > 0) { p.dashTime--; p.x+=p.vx; p.y+=p.vy; } else { const spd = p.input.block ? p.stats.spd*0.3 : p.stats.spd; p.x+=p.input.x*spd; p.y+=p.input.y*spd; resolveCollisions(inst, p, 0.4); p.x+=p.vx; p.y+=p.vy; p.vx*=0.8; p.vy*=0.8; }
+            if(p.dashTime > 0) { 
+                p.dashTime--; 
+                p.x+=p.vx; p.y+=p.vy; 
+                // FIX: Colisão durante dash para não atravessar paredes
+                if(isWall(inst, p.x, p.y)) { 
+                    p.x -= p.vx; p.y -= p.vy; p.dashTime = 0; 
+                }
+            } else { 
+                const spd = p.input.block ? p.stats.spd*0.3 : p.stats.spd;
+                // FIX: Checagem de Colisão com Paredes ANTES do movimento (Separated Axis)
+                let nx = p.x + p.input.x * spd;
+                let ny = p.y + p.input.y * spd;
+                
+                // Checa X (margem de 0.3 para evitar prender nos cantos, mas bloquear centro)
+                if(!isWall(inst, nx + (p.input.x>0?0.3:-0.3), p.y)) p.x = nx;
+                // Checa Y
+                if(!isWall(inst, p.x, ny + (p.input.y>0?0.3:-0.3))) p.y = ny;
+                
+                // Colisões de empurrão/knockback
+                resolveCollisions(inst, p, 0.4); 
+                p.x+=p.vx; p.y+=p.vy; 
+                p.vx*=0.8; p.vy*=0.8; 
+            }
             
             // Itens pickup
             for(let k in inst.items) { 
@@ -667,10 +699,10 @@ setInterval(() => {
                 if(Math.hypot(p.x-it.x, p.y-it.y)<0.8 && (!it.pickupDelay || Date.now()>it.pickupDelay)) { 
                     if(it.item.key==="gold") { 
                         p.gold+=it.item.val; 
-                        io.to(p.id).emit("txt", {x:p.x, y:p.y, val:`+${it.item.val}G`, color:"#fb0"}); // Gold Text
+                        io.to(p.id).emit("txt", {x:p.x, y:p.y, val:`+${it.item.val}G`, color:"#fb0"}); 
                     } else if(p.inventory.length<20) { 
                         p.inventory.push(it.item); 
-                        io.to(p.id).emit("txt", {x:p.x, y:p.y, val:`${it.item.name}`, color:it.item.color}); // Item Text
+                        io.to(p.id).emit("txt", {x:p.x, y:p.y, val:`${it.item.name}`, color:it.item.color}); 
                     } 
                     delete inst.items[k]; 
                 } 
@@ -681,7 +713,7 @@ setInterval(() => {
                 const pr = inst.props[i];
                 if ((pr.type === "shrine" || pr.type === "book") && Math.hypot(p.x - pr.x, p.y - pr.y) < 1.0) {
                      if (pr.type === "shrine") {
-                         p.buffs = { [pr.buff]: true, timer: 600 }; // 30s buff
+                         p.buffs = { [pr.buff]: true, timer: 600 }; 
                          p.hp = p.stats.maxHp; p.mp = p.stats.maxMp;
                          recalcStats(p);
                          io.to(p.id).emit("txt", {x:p.x, y:p.y, val:"SHRINE POWER!", color:"#0ff"});
