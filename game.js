@@ -276,15 +276,40 @@ window.onmousemove = e => {
     }
 };
 
-window.onmousedown = e => {
-    if (AudioCtrl.ctx.state === 'suspended') AudioCtrl.ctx.resume(); AudioCtrl.init();
-    if(!me || uiState.chat || gamepadActive || document.getElementById("menu").style.display !== "none") return;
-    const isPanel = (id) => { const r = document.getElementById(id).getBoundingClientRect(); return mouse.x > r.left && mouse.x < r.right && mouse.y > r.top && mouse.y < r.bottom && document.getElementById(id).style.display==="block"; };
-    if(isPanel("inventory") || isPanel("char-panel") || isPanel("shop-panel") || isPanel("craft-panel")) return;
-    const ang = getAttackAngle(); 
-    if(e.button===0) socket.emit("attack", ang);
-    if(e.button===2) socket.emit("skill", {idx:1, angle:ang});
+window.onmousedown = (e) => {
+    if (AudioCtrl.ctx.state === 'suspended') AudioCtrl.ctx.resume();
+    AudioCtrl.init();
+
+    if (!me || uiState.chat || gamepadActive || document.getElementById("menu").style.display !== "none") return;
+
+    // CORREÇÃO: usar a posição REAL do clique (e.clientX / e.clientY)
+    const isPanel = (id) => {
+        const el = document.getElementById(id);
+        if (!el || el.style.display !== "block") return false;
+
+        const r = el.getBoundingClientRect();
+        return (
+            e.clientX >= r.left &&
+            e.clientX <= r.right &&
+            e.clientY >= r.top &&
+            e.clientY <= r.bottom
+        );
+    };
+
+    // Se clicou em qualquer painel de UI, NÃO ataca
+    if (
+        isPanel("inventory") ||
+        isPanel("char-panel") ||
+        isPanel("shop-panel") ||
+        isPanel("craft-panel")
+    ) return;
+
+    const ang = getAttackAngle();
+
+    if (e.button === 0) socket.emit("attack", ang);
+    if (e.button === 2) socket.emit("skill", { idx: 1, angle: ang });
 };
+
 
 
 // ----------------------------------------------------
@@ -593,7 +618,10 @@ function updateUI() {
                     else { focusIndex = index; focusArea = 'equipment'; updateUI(); }
                 } else { slot === 'potion' ? socket.emit("potion") : socket.emit("unequip", slot); }
             };
-            if (!isMobile && !gamepadActive) { el.onmouseover = () => showTooltip(it, el); el.onmouseout = hideTooltip; }
+            if (!isMobile && !gamepadActive) { 
+                el.onmouseover = () => { showTooltip(it, el); focusIndex = index; focusArea = 'equipment'; el.style.outline = '2px solid yellow'; }; 
+                el.onmouseout = () => { hideTooltip(); el.style.outline = 'none'; }; 
+            }
         } else { 
             el.style.borderColor = "#0f0"; el.onclick=null; 
         }
@@ -635,29 +663,61 @@ function updateUI() {
             d.appendChild(socks);
         }
         
-        // INTERAÇÃO DO INVENTÁRIO (PC E MOBILE) - CORRIGIDO PARA EQUIPAR DIRETO
-        d.onclick = (e) => {
-            // Unificado: Clicar tenta equipar/usar imediatamente (como pedido)
-            if(it.key === "potion") {
-                 socket.emit("potion");
-            } else if(it.slot && it.type !== "material" && it.type !== "gem") {
-                 socket.emit("equip", idx);
+        // INTERAÇÃO DO INVENTÁRIO (PC estável / Mobile intacto)
+d.onclick = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+
+    // MOBILE → 2 toques
+    if (isMobile) {
+        if (focusIndex === idx && focusArea === 'inventory') {
+            if (it.key === "potion") socket.emit("potion");
+            else if (it.slot && it.type !== "material" && it.type !== "gem") {
+                socket.emit("equip", idx);
             }
-            
-            // Atualiza o foco visual caso esteja usando gamepad/teclado hibrido
+        } else {
             focusIndex = idx;
             focusArea = 'inventory';
             updateUI();
-        };
+        }
+        return;
+    }
+
+    // PC → 1 clique equipa (SEM redraw aqui)
+    if (it.key === "potion") {
+        socket.emit("potion");
+    }
+    else if (it.slot && it.type !== "material" && it.type !== "gem") {
+        socket.emit("equip", idx);
+    }
+
+    // Apenas atualiza foco local (sem updateUI)
+    focusIndex = idx;
+    focusArea = 'inventory';
+};
+
         
         d.draggable = true; d.ondragstart = (e) => { dragItem = { idx, item: it }; }; d.ondragover = (e) => e.preventDefault();
         d.ondrop = (e) => { e.preventDefault(); if(dragItem && dragItem.item.type === "gem" && it.type !== "gem") socket.emit("craft", {action:"socket", itemIdx:idx, gemIdx:dragItem.idx}); };
         
-        if (!isMobile && !gamepadActive) { d.onmouseover = () => showTooltip(it, d); d.onmouseout = hideTooltip; }
+        // Hover no PC sempre ativo para feedback visual, independente do gamepad
+        if (!isMobile) { 
+            d.onmouseover = () => { 
+                focusIndex = idx; 
+                focusArea = 'inventory'; 
+                showTooltip(it, d); 
+                d.style.outline = '2px solid yellow'; 
+            }; 
+            d.onmouseout = () => { 
+                hideTooltip(); 
+                d.style.outline = 'none'; 
+            }; 
+        }
         
         d.oncontextmenu = (e) => { e.preventDefault(); socket.emit("drop", idx); };
         ig.appendChild(d);
     });
+
 
     // 4. CRAFTING
     if (uiState.craft) {
@@ -676,7 +736,18 @@ function updateUI() {
             if (focusArea === 'shop' && focusIndex === idx) { d.style.outline = '2px solid yellow'; showTooltip(it, d); }
             d.innerHTML = getIcon(it.key); 
             d.onclick = () => { window.buy(idx); };
-            if (!isMobile && !gamepadActive) { d.onmouseover = () => showTooltip(it, d); d.onmouseout = hideTooltip; }
+            if (!isMobile && !gamepadActive) { 
+                d.onmouseover = () => { 
+                    focusIndex = idx; 
+                    focusArea = 'shop';
+                    showTooltip(it, d); 
+                    d.style.outline = '2px solid yellow';
+                }; 
+                d.onmouseout = () => { 
+                    hideTooltip(); 
+                    d.style.outline = 'none';
+                }; 
+            }
             sg.appendChild(d);
         });
         document.getElementById("btn-shop-close").onclick = closeAllMenus;
@@ -684,6 +755,10 @@ function updateUI() {
     
     if ((uiState.inv && me.inventory.length === 0)) { hideTooltip(); document.getElementById('ui-btn-equip').innerText = 'VAZIO'; } 
 }
+
+
+
+
 
 function showTooltip(it, elementRef) {
     if (!it) return;

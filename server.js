@@ -42,7 +42,7 @@ async function initializeServer() {
     }
 
     server.listen(3000, () => {
-        console.log("🔥 Diablock V27 - Mode: " + DB_MODE);
+        console.log("🔥 Diablock V28 - Boss Aggro Fixed");
     });
 }
 
@@ -98,6 +98,7 @@ async function saveCharData(user, name, data) {
     delete savableData.input; delete savableData.stats; delete savableData.cd; delete savableData.id;
     delete savableData.user; delete savableData.charName; delete savableData.chatMsg; delete savableData.chatTimer;
     delete savableData.instId;
+    delete savableData.buffs; // Não salvar buffs temporários
         
     if (DB_MODE === 'NONE' || !isDbReady) {
         if(localCharacters[user] && localCharacters[user][name]) {
@@ -313,7 +314,7 @@ function generateItem(level, diffMult=1, forceType=null) {
 
 function recalcStats(p) {
     if(!p.attrs) p.attrs = { str:5, dex:5, int:5 };
-    if(!p.buffs) p.buffs = {}; // Ensure buffs object exists
+    if(!p.buffs) p.buffs = {}; 
     let str=p.attrs.str, dex=p.attrs.dex, int=p.attrs.int;
     
     // Apply buff stats
@@ -358,8 +359,8 @@ function recalcStats(p) {
         if(wep.type === "magic") baseDmg += int * 0.6;
     } else { baseDmg += str * 0.3; }
     
-    if (p.buffs.dmg) baseDmg *= 1.5; // Massive damage buff
-    if (p.buffs.spd) p.stats.spd *= 1.5; // Haste buff
+    if (p.buffs.dmg) baseDmg *= 1.5; 
+    if (p.buffs.spd) p.stats.spd *= 1.5; 
     
     p.stats.dmg = Math.floor(baseDmg);
     p.stats.cd_mult = (1 - cdRed); 
@@ -397,7 +398,6 @@ function generateDungeon(inst) {
         }
     }
     inst.rooms.forEach((r, i) => {
-        // Decor and Props
         for(let j=0; j<(Math.random()*6|0); j++) {
             const rx = r.x+1+Math.random()*(r.w-2); 
             const ry = r.y+1+Math.random()*(r.h-2);
@@ -405,7 +405,6 @@ function generateDungeon(inst) {
             else { inst.props.push({ x:rx, y:ry, type:Math.random()>0.5?"bones":"grass" }); }
         }
         
-        // Shrines & Lore Books (New Feature)
         if (Math.random() < 0.3) {
              const px = r.x + Math.random()*(r.w-2); const py = r.y + Math.random()*(r.h-2);
              if (Math.random() < 0.5) inst.props.push({ x:px, y:py, type: "shrine", buff: Math.random()>0.5?"dmg":"spd" });
@@ -697,12 +696,39 @@ setInterval(() => {
             }
             
         });
+        
+        // --- MOB AI FIX ---
         Object.values(inst.mobs).forEach(m => {
             if(m.npc || m.ai==="static" || m.ai==="resource") return;
-            let t = Object.values(inst.players)[0]; if(!t) return; const dist = Math.hypot(t.x-m.x, t.y-m.y);
-            if(dist < 10) { let dx=Math.sign(t.x-m.x), dy=Math.sign(t.y-m.y); if(!isWall(inst, m.x+dx*m.spd, m.y)) m.x+=dx*m.spd; if(!isWall(inst, m.x, m.y+dy*m.spd)) m.y+=dy*m.spd; if(dist<1 && Math.random()<0.05) damagePlayer(t, m.dmg, m.x, m.y); }
+            
+            // Find closest player (AGGRO FIX)
+            let t = null;
+            let minDistSq = Infinity;
+            const players = Object.values(inst.players);
+            
+            for(let p of players) {
+                if(p.hp <= 0) continue; // Ignore dead
+                const dx = p.x - m.x;
+                const dy = p.y - m.y;
+                const distSq = dx*dx + dy*dy;
+                if(distSq < 225 && distSq < minDistSq) { // 15 tiles range squared
+                    minDistSq = distSq;
+                    t = p;
+                }
+            }
+            
+            if(!t) return;
+            
+            const dist = Math.sqrt(minDistSq);
+            if(dist < 10) { 
+                let dx=Math.sign(t.x-m.x), dy=Math.sign(t.y-m.y); 
+                if(!isWall(inst, m.x+dx*m.spd, m.y)) m.x+=dx*m.spd; 
+                if(!isWall(inst, m.x, m.y+dy*m.spd)) m.y+=dy*m.spd; 
+                if(dist<1 && Math.random()<0.05) damagePlayer(t, m.dmg, m.x, m.y); 
+            }
             resolveCollisions(inst, m, 0.5); m.x+=m.vx; m.y+=m.vy; m.vx*=0.8; m.vy*=0.8;
         });
+        
         for(let i=inst.projectiles.length-1; i>=0; i--) {
             let pr = inst.projectiles[i]; pr.x+=pr.vx; pr.y+=pr.vy; pr.life--;
             if(isWall(inst, pr.x, pr.y) || pr.life<=0) { if(pr.type==="meteor"||pr.type==="fireball") hitArea(inst, {id:pr.owner}, pr.x, pr.y, 1.5, null, 0, pr.dmg*0.5, 10); inst.projectiles.splice(i,1); continue; }
