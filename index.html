@@ -2,315 +2,429 @@
 <html lang="pt-BR">
 <head>
 <meta charset="utf-8"/>
-<title>DIABLOCK V2.0v - EYES OF THE VOID</title>
+<title>DIABLOCK V26 - LEGADO DAS RUNAS SOMBRIAS</title>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Courier+New&family=VT323&display=swap');
-
-:root {
-    --primary: #0f0;
-    --primary-dim: #050;
-    --danger: #f00;
-    --mana: #00f;
-    --gold: #fb0;
-    --bg: #000;
-    --panel-bg: rgba(0, 10, 0, 0.9);
-    --border-glow: 0 0 10px rgba(0, 255, 0, 0.2);
-}
-
-* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
-
-html, body { 
-    margin: 0; padding: 0; width: 100%; height: 100%; 
-    background: var(--bg); overflow: hidden; 
-    font-family: 'Courier New', monospace; user-select: none; 
-    color: var(--primary); touch-action: none; 
-}
-
-canvas { 
-    width: 100%; height: 100%; image-rendering: pixelated; 
-    cursor: crosshair; display: block; 
-}
-
-/* Efeito CRT/Scanlines */
-.scanlines { 
-    position: fixed; top: 0; left: 0; width: 100%; height: 100%; 
-    pointer-events: none; 
-    background: linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.1) 50%), 
-                linear-gradient(90deg, rgba(255, 0, 0, 0.03), rgba(0, 255, 0, 0.01), rgba(0, 0, 255, 0.03)); 
-    background-size: 100% 3px, 3px 100%; z-index: 1000; 
-}
-
-#ui-layer { 
-    position: absolute; top: 0; left: 0; width: 100%; height: 100%; 
-    pointer-events: none; z-index: 10;
-}
-
-/* Painéis de Interface */
-.panel { 
-    display: none; position: absolute; 
-    background: var(--panel-bg); border: 2px solid var(--primary); 
-    padding: 15px; pointer-events: auto; color: var(--primary); 
-    box-shadow: 6px 6px 0px var(--primary-dim);
-    backdrop-filter: blur(4px);
-    animation: panelSlide 0.2s ease-out;
-}
-
-@keyframes panelSlide {
-    from { transform: translate(-50%, -45%); opacity: 0; }
-    to { transform: translate(-50%, -50%); opacity: 1; }
-}
-
-#inventory { top: 50%; left: 70%; transform: translate(-50%, -50%); width: 300px; }
-#char-panel { top: 50%; left: 20%; transform: translate(-50%, -50%); width: 220px; }
-#craft-panel { top: 50%; left: 45%; transform: translate(-50%, -50%); width: 240px; border-color: #d0d; box-shadow: 6px 6px 0px #303; }
-#shop-panel { top: 45%; left: 50%; transform: translate(-50%, -50%); width: 320px; border-color: #0ff; color: #0ff; box-shadow: 6px 6px 0px #033; }
-
-.panel-header {
-    text-align: center; font-weight: bold; border-bottom: 1px dashed currentColor;
-    margin-bottom: 10px; padding-bottom: 5px; text-transform: uppercase;
-    letter-spacing: 2px;
-}
-
-/* HUD Principal (PC) */
-.hud-bottom { 
-    position: absolute; bottom: 20px; left: 50%; 
-    transform: translateX(-50%); display: flex; 
-    flex-direction: column; align-items: center; 
-}
-
-.bar-box { 
-    width: 320px; padding: 10px; background: rgba(0,0,0,0.85); 
-    border: 2px solid var(--primary); margin-bottom: 10px;
-    box-shadow: var(--border-glow);
-}
-
-.bar-container { 
-    width: 100%; height: 10px; background: #111; 
-    margin: 4px 0 8px 0; border: 1px solid var(--primary-dim); 
-    overflow: hidden;
-}
-
-.fill { 
-    height: 100%; transition: width 0.3s cubic-bezier(0.4, 0, 0.2, 1); 
-    box-shadow: inset 0 0 5px rgba(0,0,0,0.5);
-}
-.fill.hp { background: var(--danger); }
-.fill.mp { background: var(--mana); }
-.fill.xp { background: var(--gold); }
-
-/* Skills & Atalhos */
-.skills { display: flex; gap: 8px; pointer-events: auto; }
-.skill-btn { 
-    width: 42px; height: 42px; background: #000; 
-    border: 2px solid var(--primary); color: var(--primary); 
-    display: flex; align-items: center; justify-content: center; 
-    font-size: 11px; font-weight: bold; cursor: pointer; 
-    position: relative; transition: 0.1s;
-}
-.skill-btn:hover { background: var(--primary); color: #000; box-shadow: 0 0 15px var(--primary); }
-.skill-btn:active { transform: translateY(2px); }
-.key-hint { position: absolute; top: -14px; font-size: 9px; color: #888; width: 100%; text-align: center; }
-
-/* Grid de Itens */
-.grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; margin-top: 10px; }
-.slot { 
-    width: 48px; height: 48px; background: rgba(0,20,0,0.5); 
-    border: 1px solid var(--primary); cursor: pointer; 
-    display: flex; align-items: center; justify-content: center;
-    font-size: 20px; transition: 0.2s;
-}
-.slot:hover { background: var(--primary-dim); border-color: #fff; }
-
-/* Game Log */
+@import url('https://fonts.googleapis.com/css2?family=Courier+New&display=swap');
+html,body{ margin:0; width:100%; height:100%; background:#000; overflow:hidden; font-family:'Courier New', monospace; user-select:none; color:#0f0; touch-action: none; }
+canvas{ width:100%; height:100%; image-rendering:pixelated; cursor: crosshair; display:block; touch-action: none;}
+.scanlines { position: fixed; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; background: linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.25) 50%), linear-gradient(90deg, rgba(255, 0, 0, 0.06), rgba(0, 255, 0, 0.02), rgba(0, 0, 255, 0.06)); background-size: 100% 2px, 2px 100%; z-index: 999; }
+#ui-layer{ position:absolute; top:0; left:0; width:100%; height:100%; pointer-events:none; }
+/* PC/Portrait HUD */
+.hud-bottom{ position:absolute; bottom:10px; left:50%; transform:translateX(-50%); display:flex; flex-direction:column; align-items:center; }
+.bar-box{ width:300px; padding:5px 10px; background:rgba(0,0,0,0.8); border:2px solid #0f0; margin-bottom:5px; box-shadow: 0 0 10px #0f03; }
+.bar-status-text{ display:flex; justify-content:space-between; font-size:12px; color:#fff; margin-bottom:2px; font-weight:bold; }
+.bar-container{ width:100%; height:8px; background:#111; margin-bottom:4px; border:1px solid #040; position:relative; }
+.bar-container.xp { height: 4px; }
+.fill{ height:100%; transition:width 0.1s; }
+.fill.hp{ background:#f00; } .fill.mp{ background:#00f; } .fill.xp{ background:#fb0; }
+.skills{ display:flex; gap:5px; pointer-events:auto; align-items: flex-end; }
+.skill-btn{ width:36px; height:36px; background:#000; border:2px solid #0f0; color:#0f0; display:flex; align-items:center; justify-content:center; font-size:10px; font-weight:bold; cursor:pointer; position: relative;}
+.skill-btn:hover { background: #0f0; color:#000; }
+.key-hint { position: absolute; top:-12px; font-size: 8px; color: #aaa; }
+/* Panels */
+.panel{ display:none; position:absolute; background:#000; border:2px solid #0f0; padding:10px; pointer-events:auto; color:#0f0; box-shadow: 5px 5px 0px #003300; }
+#inventory{ top:50%; left:65%; transform:translate(-50%, -50%); width:280px; }
+#craft-panel{ top:50%; left:35%; transform:translate(-50%, -50%); width:220px; border-color:#d0d; color:#f0f; box-shadow: 5px 5px 0px #303; }
+#char-panel{ top:50%; left:20%; transform:translate(-50%, -50%); width:200px; }
+#shop-panel{ top:40%; left:50%; transform:translate(-50%, -50%); width:300px; border-color:#0ff; color:#0ff; }
+.grid{ display:grid; grid-template-columns:repeat(8, 1fr); gap:4px; margin-top:10px; }
+.slot{ width:28px; height:28px; background:#000; border:1px solid #0f0; cursor:pointer; position:relative; }
+.slot:hover{ background:#0f0; }
+.stat-row{ display:flex; justify-content:space-between; margin-bottom:5px; align-items:center; }
+.plus-btn{ background:#000; border:1px solid #0f0; color:#0f0; width:16px; height:16px; line-height:14px; text-align:center; cursor:pointer; font-size:12px; }
+.plus-btn:hover{ background:#0f0; color:#000; }
+#tooltip { position: absolute; background: #000; border: 1px solid #fff; padding: 5px; z-index: 1000; display: none; pointer-events: none; font-size: 10px; color:#fff; white-space:nowrap; }
+.equip-slots { display: flex; gap: 10px; justify-content: center; margin-bottom: 10px; flex-wrap: wrap; }
+#menu{ position:absolute; top:0; left:0; width:100%; height:100%; background:#000; display:flex; flex-direction:column; align-items:center; justify-content:center; pointer-events:auto; z-index:10; }
+.btn{ padding:10px 20px; background:#000; color:#0f0; border:2px solid #0f0; margin:5px; cursor:pointer; font-family:inherit; font-weight:bold;}
+.btn:hover{ background:#0f0; color:#000; }
+.craft-item { padding: 5px; border-bottom: 1px solid #303; cursor:pointer; }
+.craft-item:hover { background: #303; }
+input, select{ padding:10px; background:#000; border:2px solid #0f0; color:#0f0; margin:5px; font-family:inherit;}
+h1 { text-shadow: 2px 2px #f00; color: #d00; }
+#hud-gold { position: absolute; top: 10px; left: 10px; font-size: 18px; color: #fb0; font-weight: bold; text-shadow: 1px 1px #000; }
+/* CHAT INPUT */
+#chat-container { position: absolute; bottom: 100px; left: 50%; transform: translateX(-50%); width: 300px; display: none; pointer-events: auto; }
+#chat-input { width: 100%; background: rgba(0,0,0,0.8); border: 1px solid #0f0; color: #fff; padding: 5px; font-family: inherit; }
+/* NOVO: GAME LOG */
 #game-log-container {
-    position: absolute; top: 15px; right: 15px; 
-    width: 280px; height: 180px; background: rgba(0, 5, 0, 0.8);
-    border: 1px solid var(--primary-dim); padding: 8px;
-    font-size: 11px; pointer-events: none;
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    width: 250px;
+    height: 150px;
+    background: rgba(0, 0, 0, 0.7);
+    border: 1px solid #0f0;
+    padding: 5px;
+    pointer-events: none; /* Não bloqueia o mouse na tela principal */
+    overflow-y: hidden; /* Mantém apenas o topo visível */
+    font-size: 10px;
 }
-#game-log { 
-    display: flex; flex-direction: column-reverse; 
-    gap: 4px; height: 100%; overflow: hidden; 
+#game-log {
+    display: flex;
+    flex-direction: column-reverse; /* Novas mensagens no topo */
+    gap: 3px;
+    height: 100%;
+    overflow-y: scroll;
+}
+#game-log::-webkit-scrollbar { width: 4px; }
+#game-log::-webkit-scrollbar-thumb { background: #0f0; border-radius: 2px; }
+
+
+/* MOBILE CONTROLS */
+#mobile-controls { 
+    display: none; 
+    position: fixed; 
+    bottom: 0; 
+    left: 0; 
+    width: 100%; 
+    height: 120px; 
+    pointer-events: none; 
+    z-index: 5; 
 }
 
-/* Gold Display */
-#hud-gold { 
-    position: absolute; top: 20px; left: 20px; 
-    font-family: 'VT323', monospace; font-size: 28px; 
-    color: var(--gold); text-shadow: 2px 2px #000; 
+/* NOVO: Joystick Area (apenas para detecção de toque) */
+#joystick-area {
+    position: absolute;
+    bottom: 10px;
+    left: 15px;
+    width: 120px; 
+    height: 120px;
+    pointer-events: auto;
+    /* Para visualização do joystick */
+    /* border: 1px solid rgba(0, 255, 0, 0.5); */
+    border-radius: 50%;
+    z-index: 1;
 }
 
-/* Mobile Controls */
-#mobile-controls { display: none; position: fixed; bottom: 20px; width: 100%; height: 150px; z-index: 100; }
-#action-container { position: absolute; right: 20px; bottom: 0; width: 180px; height: 180px; }
+/* Novo: Visual do Joystick (círculo estático no fundo) */
+#joystick-base {
+    position: absolute;
+    left: 15px;
+    bottom: 10px;
+    width: 100px;
+    height: 100px;
+    border: 2px solid rgba(0, 255, 0, 0.5);
+    background: rgba(0, 0, 0, 0.4);
+    border-radius: 50%;
+    pointer-events: none;
+    z-index: 0;
+    transform: translate(10px, 10px); /* Centraliza na área de 120x120 */
+}
 
+/* Novo: Botão (Knob) do Joystick */
+#joystick-knob {
+    position: absolute;
+    width: 40px;
+    height: 40px;
+    background: rgba(0, 255, 0, 0.7);
+    border: 1px solid #0f0;
+    border-radius: 50%;
+    pointer-events: none;
+    z-index: 1;
+    transition: transform 0.05s ease-out;
+}
+
+/* ACTION BUTTONS (Right Side) - ESPACAMENTO CORRIGIDO E DEFESA ADICIONADA */
+#action-container { 
+    right: 15px; 
+    width: 160px; /* Aumentado para acomodar 3 botões na horizontal */
+    height: 110px; /* Aumentado para melhor espaçamento */
+    bottom: 0px; 
+    position: absolute;
+    pointer-events: auto;
+}
 .action-btn { 
-    position: absolute; width: 60px; height: 60px; 
-    border-radius: 50%; background: rgba(20,20,20,0.85); 
-    border: 2px solid var(--primary); color: #fff; 
-    display: flex; align-items: center; justify-content: center; 
-    font-weight: bold; font-size: 14px; pointer-events: auto;
-    box-shadow: 0 4px 10px rgba(0,0,0,0.5);
+    position: absolute; 
+    width: 45px; height: 45px; 
+    border-radius: 50%; 
+    background: rgba(0, 0, 0, 0.6); 
+    border: 2px solid; 
+    color: #f00; 
+    display: flex; 
+    align-items: center; 
+    justify-content: center; 
+    font-size: 14px; 
+    font-weight: bold; 
+    box-shadow: 0 0 5px rgba(255, 0, 0, 0.5);
+    z-index: 2; 
 }
-.action-btn:active { transform: scale(0.9); background: var(--primary-dim); }
 
-#btn-atk { width: 80px; height: 80px; bottom: 0; right: 0; border-color: var(--danger); font-size: 18px; }
-#btn-skill { bottom: 85px; right: 10px; border-color: var(--mana); }
-#btn-dash { bottom: 10px; right: 85px; border-color: #fff; }
-#btn-potion { bottom: 90px; right: 85px; border-color: #f33; font-size: 10px; }
-#btn-block { bottom: 10px; right: 155px; border-color: var(--primary); }
+/* Posicionamento dos botões de combate - AJUSTADO */
+#btn-atk { 
+    width: 55px; height: 55px; 
+    font-size: 16px; 
+    bottom: 0px; 
+    right: 0px;
+    border-color: #f00; 
+    color: #f00;
+} 
+#btn-skill { 
+    width: 45px; height: 45px; 
+    font-size: 12px; 
+    border-color: #0ff; 
+    color: #0ff; 
+    bottom: 55px; 
+    right: 55px; 
+} 
+#btn-dash { 
+    width: 45px; height: 45px; 
+    font-size: 12px; 
+    border-color: #fff; 
+    color: #fff;
+    bottom: 0px; 
+    right: 60px; 
+} 
+#btn-potion { 
+    width: 45px; height: 45px; 
+    font-size: 10px; 
+    border-color: #f33; 
+    color: #f33;
+    bottom: 60px; 
+    right: 0px; 
+}
 
-/* Mobile HUD Top */
+/* NOVO: Botão de Bloqueio/Defesa */
+#btn-block {
+    width: 45px; height: 45px;
+    font-size: 12px;
+    border-color: #0f0;
+    color: #0f0;
+    bottom: 60px;
+    right: 110px;
+}
+
+/* HUD MENU BUTTONS (INV/CHR/CFT) - AJUSTADO */
+#mobile-menu-buttons {
+    position: absolute; 
+    bottom: 115px; /* Mais alto para liberar espaço de ação */
+    right: 5px; 
+    display: flex; 
+    gap: 5px; 
+    pointer-events: auto;
+    z-index: 10; 
+}
+#mobile-menu-buttons .skill-btn {
+    width: 38px; 
+    height: 38px; 
+    background: rgba(0,0,0,0.7); 
+    font-size: 10px;
+    border-radius: 5px;
+}
+
+/* NOVO: HUD MINUSCULO PARA MOBILE */
 #hud-horizontal-mobile {
-    position: absolute; top: 0; left: 0; width: 100%; 
-    height: 30px; background: #000; border-bottom: 1px solid var(--primary-dim);
-    display: none; align-items: center; padding: 0 10px; font-size: 10px;
+    position: absolute; 
+    top: 0px; 
+    left: 0px; 
+    width: 100%; 
+    height: 20px; 
+    background: rgba(0, 0, 0, 0.8); 
+    border-bottom: 1px solid #0f0;
+    pointer-events: none;
+    display: none; 
+    justify-content: space-between;
+    align-items: center;
+    padding: 0 5px;
+    box-sizing: border-box;
+    font-size: 9px;
+    z-index: 5;
+}
+.h-bar-container {
+    width: 60px;
+    height: 5px;
+    background: #111;
+    border: 1px solid #040;
+    position: relative;
+    display: inline-block;
+    vertical-align: middle;
+    margin-right: 5px;
 }
 
-/* Botões Reutilizáveis */
-.btn { 
-    padding: 8px 15px; background: #000; color: var(--primary); 
-    border: 2px solid var(--primary); cursor: pointer; 
-    font-family: inherit; font-weight: bold; text-transform: uppercase;
-}
-.btn:hover { background: var(--primary); color: #000; }
+/* MEDIA QUERIES PARA RESPONSIVIDADE */
 
-/* Tooltip */
-#tooltip { 
-    position: absolute; background: #000; border: 1px solid #fff; 
-    padding: 8px; z-index: 2000; display: none; font-size: 12px; 
-    color: #fff; box-shadow: 4px 4px 0 rgba(0,0,0,0.5);
+/* Mobile (Qualquer Orientação) - CORRIGIDO: Esconde HUD de PC */
+@media (max-width: 1024px) { 
+    .hud-bottom { display: none !important; } /* Esconde HUD de PC */
+    #hud-gold { display: none !important; } /* Esconde HUD de Gold grande */
 }
 
-@media (max-width: 1024px) {
-    .hud-bottom, #game-log-container { display: none !important; }
-    #hud-horizontal-mobile { display: flex !important; }
-    #mobile-controls { display: block; }
+/* Mobile Horizontal (Landscape) - Lógica de CSS mantida */
+@media (max-width: 768px) and (orientation: landscape) {
+    /* #mobile-controls é gerenciado por JS no draw() */
+    #mobile-menu-buttons { /* Ajusta a posição no canto superior direito para liberar espaço */
+        top: 0;
+        bottom: auto;
+        right: 5px;
+    }
+}
+
+/* NOVO: Botões de Ação UI (Aparecem apenas com INV/CHR/CFT/SHOP abertos) */
+.ui-action-buttons {
+    position: absolute;
+    bottom: 50px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: none; /* Controlado pelo JS */
+    gap: 15px;
+    pointer-events: auto;
+    z-index: 100;
+}
+.ui-action-buttons .btn {
+    padding: 8px 12px;
+    font-size: 14px;
+    border-radius: 5px;
+    border: 2px solid #fff;
+    background: rgba(0,0,0,0.8);
+    color: #fff;
+    cursor: pointer;
+}
+.ui-action-buttons .btn:hover {
+    background: #fff;
+    color: #000;
 }
 
 </style>
 </head>
 <body oncontextmenu="return false">
-
 <canvas id="c"></canvas>
 <div class="scanlines"></div>
 <div id="tooltip"></div>
 
 <div id="ui-layer">
-    <div id="hud-gold">● 000,000G</div>
+    <div id="hud-gold">GOLD: 0</div>
     
-    <div id="game-log-container">
-        <div id="game-log"></div>
-    </div>
+    <div id="game-log-container"><div id="game-log"></div></div>
 
     <div id="hud-horizontal-mobile">
-        <span id="h-lvl-txt">LVL 1</span>
-        <div style="flex-grow:1; text-align:center; color:var(--gold)" id="h-gold-txt">0G</div>
-        <div class="h-bar-container" style="width:50px; height:6px; background:#200; margin:0 5px;"><div class="fill hp" id="h-hp-bar" style="width:100%"></div></div>
-        <div class="h-bar-container" style="width:40px; height:6px; background:#002; margin:0 5px;"><div class="fill mp" id="h-mp-bar" style="width:100%"></div></div>
+        <span id="h-lvl-txt" style="color:#0f0;">NORMAL [1]</span>
+        <div style="flex-grow: 1; text-align: center;">
+            <span id="h-gold-txt" style="color:#fb0;">0G</span>
+        </div>
+        <div>
+            <span style="color:#f00; font-weight: bold;">HP</span>
+            <div class="h-bar-container"><div class="fill hp" id="h-hp-bar"></div></div>
+        </div>
+        <div>
+            <span style="color:#00f; font-weight: bold;">MP</span>
+            <div class="h-bar-container"><div class="fill mp" id="h-mp-bar"></div></div>
+        </div>
+        <div style="width: 80px;">
+            <span style="color:#fb0; font-weight: bold;">EXP</span>
+            <div class="h-bar-container" style="width: 100%;"><div class="fill xp" id="h-xp-bar"></div></div>
+        </div>
     </div>
-
+    
+    <div id="chat-container"><input type="text" id="chat-input" placeholder="Say something..." maxlength="30"></div>
+    
     <div class="hud-bottom">
         <div class="bar-box">
-            <div style="display:flex; justify-content:space-between; font-size:11px; margin-bottom:2px;">
-                <span id="lvl-txt" style="color:var(--primary)">LEVEL 1</span>
-                <span id="hp-txt" style="color:var(--danger)">100 / 100 HP</span>
+            <div class="bar-status-text">
+                <span id="lvl-txt">NORMAL [1]</span>
+                <span id="hp-txt">HP: 100/100</span>
             </div>
-            <div class="bar-container"><div class="fill hp" id="hp-bar" style="width:100%"></div></div>
+            <div class="bar-container hp"><div class="fill hp" id="hp-bar"></div></div>
             
-            <div style="display:flex; justify-content:space-between; font-size:11px; margin-bottom:2px;">
-                <span style="color:var(--mana)">ENERGY</span>
-                <span id="mp-txt" style="color:var(--mana)">50 / 50 MP</span>
+            <div class="bar-status-text" style="color:#0ff;">
+                <span>MANA</span>
+                <span id="mp-txt">MP: 50/50</span>
             </div>
-            <div class="bar-container"><div class="fill mp" id="mp-bar" style="width:100%"></div></div>
+            <div class="bar-container mp"><div class="fill mp" id="mp-bar"></div></div>
             
-            <div class="bar-container" style="height:4px;"><div class="fill xp" id="xp-bar" style="width:10%"></div></div>
+            <div class="bar-status-text" style="color:#fb0;">
+                <span>EXP</span>
+                <span id="xp-txt">0%</span>
+            </div>
+            <div class="bar-container xp"><div class="fill xp" id="xp-bar"></div></div>
         </div>
-
         <div class="skills">
-            <div class="skill-btn" title="Ataque Básico"><span class="key-hint">M1</span>ATK</div>
+            <div class="skill-btn">ATK</div>
             <div class="skill-btn" id="skill-1"><span class="key-hint">E</span>SKL</div>
             <div class="skill-btn" id="skill-dash"><span class="key-hint">SPC</span>DSH</div>
-            <div class="skill-btn" id="hud-potion"><span class="key-hint">Q</span>POT</div>
-            <div class="skill-btn" onclick="uiState.inv = !uiState.inv; updateUI()"><span class="key-hint">I</span>INV</div>
-            <div class="skill-btn" onclick="uiState.craft = !uiState.craft; updateUI()"><span class="key-hint">K</span>CFT</div>
-            <div class="skill-btn" onclick="uiState.char = !uiState.char; updateUI()"><span class="key-hint">C</span>CHR</div>
+            <div class="skill-btn" id="hud-potion"><span class="key-hint">E</span>POT</div>
+            <div class="skill-btn"><span class="key-hint">I</span>INV</div>
+            <div class="skill-btn"><span class="key-hint">K</span>CFT</div>
+            <div class="skill-btn"><span class="key-hint">C</span>CHR</div>
         </div>
     </div>
-
+    
     <div id="inventory" class="panel">
-        <div class="panel-header">Backpack</div>
-        <div id="inv-grid" class="grid" style="grid-template-columns: repeat(5, 1fr);"></div>
+        <div style="text-align:center; border-bottom:1px dashed #0f0; font-size:14px; padding-bottom:5px;">[ BACKPACK ]</div>
+        <div style="font-size:9px; color:#aaa; text-align:center;">Drag Gem to Item to Socket</div>
+        <div class="grid" id="inv-grid"></div>
     </div>
 
+    <div id="craft-panel" class="panel">
+        <div style="text-align:center; border-bottom:1px dashed #f0f; font-size:14px; padding-bottom:5px;">[ CRAFTING ]</div>
+        <div id="craft-list" style="max-height: 200px; overflow-y: auto;"></div>
+    </div>
+
+    <div id="shop-panel" class="panel">
+        <div style="text-align:center; border-bottom:1px dashed #0ff; font-size:14px; padding-bottom:5px; margin-bottom: 10px;">[ MERCHANT ]</div>
+        <div class="grid" id="shop-grid" style="grid-template-columns:repeat(5, 1fr);"></div>
+        <div style="text-align:center; margin-top:5px; font-size:10px;">Click to Buy</div>
+        
+        <div style="display: flex; justify-content: space-between; margin-top: 10px;">
+            <button class="btn" style="border-color:#0ff; color:#0ff;" onclick="window.closeShop()" id="btn-shop-close">CLOSE</button>
+            <button class="btn" style="border-color:#f00; color:#f00;" onclick="window.sell()">SELL INVENTORY</button>
+        </div>
+    </div>
+    
     <div id="char-panel" class="panel">
-        <div class="panel-header">Hero Stats</div>
-        <div class="equip-slots" style="display:grid; grid-template-columns: repeat(3, 1fr); gap:10px; margin-bottom:15px;">
-            <div class="slot" id="eq-head" style="grid-column: 2"></div>
-            <div class="slot" id="eq-hand" style="grid-column: 1"></div>
-            <div class="slot" id="eq-body" style="grid-column: 2"></div>
-            <div class="slot" id="eq-rune" style="grid-column: 3"></div>
+        <div style="text-align:center; border-bottom:1px dashed #0f0; font-size:14px; margin-bottom:10px;">[ ATTRIBUTES ]</div>
+        <div class="equip-slots">
+            <div class="slot" id="eq-head" title="Head"></div>
+            <div class="slot" id="eq-body" title="Body"></div>
+            <div class="slot" id="eq-hand" title="Hand"></div>
+            <div class="slot" id="eq-rune" title="Rune"></div> 
+            <div class="slot" id="eq-potion" title="Potion (E)"></div>
         </div>
-        <div style="text-align:center; color:var(--gold); margin-bottom:10px;">Attributes: <span id="cp-pts">0</span></div>
-        <div class="stat-row" style="display:flex; justify-content:space-between; margin: 5px 0;">
-            <span>STR</span>
-            <span><span id="val-str">5</span> <button class="plus-btn" onclick="addStat('str')">+</button></span>
-        </div>
-        <div class="stat-row" style="display:flex; justify-content:space-between; margin: 5px 0;">
-            <span>DEX</span>
-            <span><span id="val-dex">5</span> <button class="plus-btn" onclick="addStat('dex')">+</button></span>
-        </div>
-        <div class="stat-row" style="display:flex; justify-content:space-between; margin: 5px 0;">
-            <span>INT</span>
-            <span><span id="val-int">5</span> <button class="plus-btn" onclick="addStat('int')">+</button></span>
-        </div>
+        <div style="text-align:center; color:#fb0; margin-bottom:10px;">PTS: <span id="cp-pts">0</span></div>
+        <div class="stat-row"><span>STR</span> <div><span id="val-str">5</span> <div class="plus-btn" id="btn-str" onclick="addStat('str')">+</div></div></div>
+        <div class="stat-row"><span>DEX</span> <div><span id="val-dex">5</span> <div class="plus-btn" id="btn-dex" onclick="addStat('dex')">+</div></div></div>
+        <div class="stat-row"><span>INT</span> <div><span id="val-int">5</span> <div class="plus-btn" id="btn-int" onclick="addStat('int')">+</div></div></div>
+        <hr style="border:0; border-top:1px dashed #0f0"><div style="font-size:11px; color:#0f0;">DMG: <span id="stat-dmg">0</span> | SPD: <span id="stat-spd">0</span></div>
     </div>
+</div>
 
-    <div class="ui-action-buttons" id="ui-action-buttons">
-        <button class="btn" id="ui-btn-equip" onclick="handleGamepadAction()">USE</button>
-        <button class="btn" id="ui-btn-drop" onclick="handleGamepadSecondaryAction()" style="border-color:var(--danger); color:var(--danger)">DROP</button>
-    </div>
+<div class="ui-action-buttons" id="ui-action-buttons">
+    <button class="btn" id="ui-btn-equip" onclick="handleGamepadAction()">EQUIPAR / USAR (A)</button>
+    <button class="btn" id="ui-btn-drop" onclick="handleGamepadSecondaryAction()">DROPAR (B)</button>
 </div>
 
 <div id="mobile-controls">
     <div id="joystick-base"></div>
-    <div id="joystick-knob" style="display:none"></div>
-    <div id="joystick-area"></div>
+    <div id="joystick-knob" style="display:none;"></div>
+
+    <div id="joystick-area" class="control-area"></div>
 
     <div id="action-container">
-        <div id="btn-block" class="action-btn">DEF</div>
-        <div id="btn-potion" class="action-btn">POT</div>
-        <div id="btn-skill" class="action-btn">SKL</div>
-        <div id="btn-dash" class="action-btn">DSH</div>
-        <div id="btn-atk" class="action-btn">ATK</div>
+        <div id="btn-block" class="action-btn" data-action="block">BLK</div> 
+        <div id="btn-potion" class="action-btn" data-action="potion">POT</div>
+        <div id="btn-skill" class="action-btn" data-action="skill">SKL</div>
+        <div id="btn-dash" class="action-btn" data-action="dash">DSH</div>
+        <div id="btn-atk" class="action-btn" data-action="attack">ATK</div>
     </div>
+</div>
+
+<div id="mobile-menu-buttons">
+    <div id="btn-inv-mobile" class="skill-btn" data-action="toggle_inv">INV</div>
+    <div id="btn-char-mobile" class="skill-btn" data-action="toggle_char">CHR</div>
+    <div id="btn-craft-mobile" class="skill-btn" data-action="toggle_craft">CFT</div>
 </div>
 
 <div id="menu">
-    <h1 style="font-family:'VT323'; font-size:80px; margin:0; letter-spacing:10px;">DIABLOCK</h1>
-    <p style="color:var(--danger); margin-top:-10px; font-weight:bold;">V2.0v EYES OF THE VOID</p>
-    
-    <div id="login-form" style="margin-top:30px;">
-        <input type="text" id="username" placeholder="IDENTIFY USER..." style="text-align:center; width:250px;">
-        <br>
-        <button class="btn" onclick="login()" style="width:250px; margin-top:10px; font-size:18px;">Enter Dungeon</button>
-    </div>
-
-    <div id="char-select" style="display:none; text-align:center; margin-top:20px;">
+    <h1 style="font-size:50px; margin-bottom:0;">DIABLOCK</h1>
+    <p style="color:#d00; margin-bottom:20px;">V26 - 🔥 Legado das Runas Sombrias</p>
+    <div id="login-form"><input type="text" id="username" placeholder="USER"><button class="btn" onclick="login()">LOGIN</button></div>
+    <div id="char-select" style="display:none; text-align:center;">
         <div id="char-list" style="margin-bottom:20px;"></div>
-        <input type="text" id="cname" placeholder="HERO NAME..." maxlength="12">
-        <br>
-        <select id="cclass" style="width:200px;">
-            <option value="knight">WARRIOR</option>
-            <option value="hunter">RANGER</option>
-            <option value="mage">WIZARD</option>
-        </select>
-        <br>
-        <button class="btn" onclick="create()" style="width:200px; margin-top:10px;">Initialize</button>
+        <input type="text" id="cname" placeholder="NAME">
+        <select id="cclass"><option value="knight">WARRIOR</option><option value="hunter">RANGER</option><option value="mage">WIZARD</option></select>
+        <button class="btn" onclick="create()">CREATE</button>
     </div>
 </div>
-
 <script src="/socket.io/socket.io.js"></script>
 <script src="/game.js"></script>
 </body>
