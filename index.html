@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="utf-8"/>
-<title>DIABLOCK V26 - LEGADO DAS RUNAS SOMBRIAS</title>
+<title>DIABLOCK V27 - LEGADO DAS RUNAS SOMBRIAS</title>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Courier+New&display=swap');
@@ -57,13 +57,13 @@ h1 { text-shadow: 2px 2px #f00; color: #d00; }
     background: rgba(0, 0, 0, 0.7);
     border: 1px solid #0f0;
     padding: 5px;
-    pointer-events: none; /* Não bloqueia o mouse na tela principal */
-    overflow-y: hidden; /* Mantém apenas o topo visível */
+    pointer-events: none; 
+    overflow-y: hidden;
     font-size: 10px;
 }
 #game-log {
     display: flex;
-    flex-direction: column-reverse; /* Novas mensagens no topo */
+    flex-direction: column-reverse; 
     gap: 3px;
     height: 100%;
     overflow-y: scroll;
@@ -92,8 +92,6 @@ h1 { text-shadow: 2px 2px #f00; color: #d00; }
     width: 120px; 
     height: 120px;
     pointer-events: auto;
-    /* Para visualização do joystick */
-    /* border: 1px solid rgba(0, 255, 0, 0.5); */
     border-radius: 50%;
     z-index: 1;
 }
@@ -110,7 +108,7 @@ h1 { text-shadow: 2px 2px #f00; color: #d00; }
     border-radius: 50%;
     pointer-events: none;
     z-index: 0;
-    transform: translate(10px, 10px); /* Centraliza na área de 120x120 */
+    transform: translate(10px, 10px); 
 }
 
 /* Novo: Botão (Knob) do Joystick */
@@ -129,8 +127,8 @@ h1 { text-shadow: 2px 2px #f00; color: #d00; }
 /* ACTION BUTTONS (Right Side) - ESPACAMENTO CORRIGIDO E DEFESA ADICIONADA */
 #action-container { 
     right: 15px; 
-    width: 160px; /* Aumentado para acomodar 3 botões na horizontal */
-    height: 110px; /* Aumentado para melhor espaçamento */
+    width: 160px; 
+    height: 110px; 
     bottom: 0px; 
     position: absolute;
     pointer-events: auto;
@@ -198,7 +196,7 @@ h1 { text-shadow: 2px 2px #f00; color: #d00; }
 /* HUD MENU BUTTONS (INV/CHR/CFT) - AJUSTADO */
 #mobile-menu-buttons {
     position: absolute; 
-    bottom: 115px; /* Mais alto para liberar espaço de ação */
+    bottom: 115px; 
     right: 5px; 
     display: flex; 
     gap: 5px; 
@@ -246,14 +244,13 @@ h1 { text-shadow: 2px 2px #f00; color: #d00; }
 
 /* Mobile (Qualquer Orientação) - CORRIGIDO: Esconde HUD de PC */
 @media (max-width: 1024px) { 
-    .hud-bottom { display: none !important; } /* Esconde HUD de PC */
-    #hud-gold { display: none !important; } /* Esconde HUD de Gold grande */
+    .hud-bottom { display: none !important; } 
+    #hud-gold { display: none !important; } 
 }
 
-/* Mobile Horizontal (Landscape) - Lógica de CSS mantida */
+/* Mobile Horizontal (Landscape) */
 @media (max-width: 768px) and (orientation: landscape) {
-    /* #mobile-controls é gerenciado por JS no draw() */
-    #mobile-menu-buttons { /* Ajusta a posição no canto superior direito para liberar espaço */
+    #mobile-menu-buttons { 
         top: 0;
         bottom: auto;
         right: 5px;
@@ -266,7 +263,7 @@ h1 { text-shadow: 2px 2px #f00; color: #d00; }
     bottom: 50px;
     left: 50%;
     transform: translateX(-50%);
-    display: none; /* Controlado pelo JS */
+    display: none; 
     gap: 15px;
     pointer-events: auto;
     z-index: 100;
@@ -350,29 +347,29 @@ h1 { text-shadow: 2px 2px #f00; color: #d00; }
     </div>
     
     <div id="inventory" class="panel">
-        <div style="text-align:center; border-bottom:1px dashed #0f0; font-size:14px; padding-bottom:5px;">[ BACKPACK ]</div>
-        <div style="font-size:9px; color:#aaa; text-align:center;">Drag Gem to Item to Socket</div>
+        <div style="text-align:center; border-bottom:1px dashed #0f0; font-size:14px; padding-bottom:5px;">[ MOCHILA ]</div>
+        <div style="font-size:9px; color:#aaa; text-align:center;">Clique para Equipar</div>
         <div class="grid" id="inv-grid"></div>
     </div>
 
     <div id="craft-panel" class="panel">
-        <div style="text-align:center; border-bottom:1px dashed #f0f; font-size:14px; padding-bottom:5px;">[ CRAFTING ]</div>
+        <div style="text-align:center; border-bottom:1px dashed #f0f; font-size:14px; padding-bottom:5px;">[ FORJA ]</div>
         <div id="craft-list" style="max-height: 200px; overflow-y: auto;"></div>
     </div>
 
     <div id="shop-panel" class="panel">
-        <div style="text-align:center; border-bottom:1px dashed #0ff; font-size:14px; padding-bottom:5px; margin-bottom: 10px;">[ MERCHANT ]</div>
+        <div style="text-align:center; border-bottom:1px dashed #0ff; font-size:14px; padding-bottom:5px; margin-bottom: 10px;">[ MERCADOR ]</div>
         <div class="grid" id="shop-grid" style="grid-template-columns:repeat(5, 1fr);"></div>
-        <div style="text-align:center; margin-top:5px; font-size:10px;">Click to Buy</div>
+        <div style="text-align:center; margin-top:5px; font-size:10px;">Clique para Comprar</div>
         
         <div style="display: flex; justify-content: space-between; margin-top: 10px;">
             <button class="btn" style="border-color:#0ff; color:#0ff;" onclick="window.closeShop()" id="btn-shop-close">CLOSE</button>
-            <button class="btn" style="border-color:#f00; color:#f00;" onclick="window.sell()">SELL INVENTORY</button>
+            <button class="btn" style="border-color:#f00; color:#f00;" onclick="window.sell()">VENDER INV</button>
         </div>
     </div>
     
     <div id="char-panel" class="panel">
-        <div style="text-align:center; border-bottom:1px dashed #0f0; font-size:14px; margin-bottom:10px;">[ ATTRIBUTES ]</div>
+        <div style="text-align:center; border-bottom:1px dashed #0f0; font-size:14px; margin-bottom:10px;">[ ATRIBUTOS ]</div>
         <div class="equip-slots">
             <div class="slot" id="eq-head" title="Head"></div>
             <div class="slot" id="eq-body" title="Body"></div>
@@ -416,7 +413,7 @@ h1 { text-shadow: 2px 2px #f00; color: #d00; }
 
 <div id="menu">
     <h1 style="font-size:50px; margin-bottom:0;">DIABLOCK</h1>
-    <p style="color:#d00; margin-bottom:20px;">V26 - 🔥 Legado das Runas Sombrias</p>
+    <p style="color:#d00; margin-bottom:20px;">V27 - 🔥 Legado das Runas Sombrias</p>
     <div id="login-form"><input type="text" id="username" placeholder="USER"><button class="btn" onclick="login()">LOGIN</button></div>
     <div id="char-select" style="display:none; text-align:center;">
         <div id="char-list" style="margin-bottom:20px;"></div>
