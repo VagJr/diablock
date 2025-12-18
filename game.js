@@ -8,31 +8,18 @@ let cameraShake = 0;
 function ensureBGM() {
     if (bgmStarted) return;
     bgmStarted = true;
-
-    // Tenta carregar o áudio, mas não trava se falhar
     bgm = new Audio("assets/bgm.mp3");
     bgm.loop = true;
     bgm.volume = 0.4;
-    
-    // Adiciona listener de erro para evitar logs vermelhos feios se o arquivo não existir
-    bgm.addEventListener('error', function() {
-        console.log("BGM file not found or failed to load. Playing without music.");
-    });
-
+    bgm.addEventListener('error', function() { console.log("BGM file not found."); });
     const p = bgm.play();
-    if (p && p.catch) {
-        p.catch(err => {
-            // Auto-play foi bloqueado ou arquivo não existe
-            // Apenas ignoramos
-            bgmStarted = false; 
-        });
-    }
+    if (p && p.catch) { p.catch(err => { bgmStarted = false; }); }
 }
 /* ========================= */
 
-const socket = io();
+const socket = io({transports: ['websocket'], upgrade: false}); // Força Websocket para menos latência
 const canvas = document.getElementById("c");
-const ctx = canvas.getContext("2d");
+const ctx = canvas.getContext("2d", { alpha: false }); // Otimização de Canvas
 const SCALE = 16;
 let myId = null, me = null;
 let state = { pl:{}, mb:{}, it:{}, pr:[], props:[], map:[], explored: [], lightRadius: 15, hint: null }; 
@@ -45,6 +32,7 @@ let shopItems = [];
 const tooltip = document.getElementById("tooltip");
 let dragItem = null;
 
+// Detecção Mobile
 let isMobile = /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent);
 let gamepad = null;
 let gamepadActive = false; 
@@ -71,10 +59,9 @@ const AudioCtrl = {
     bgm: null, muted: false,
     init: function() {
         if(!this.bgm) {
-            // Tentativa de áudio simplificada
             this.bgm = new Audio("assets/bgm.mp3");
             this.bgm.loop = true; this.bgm.volume = 0.3;
-            this.bgm.play().catch(e => {}); // Silencia erros
+            this.bgm.play().catch(e => {}); 
         }
     },
     playTone: function(freq, type, dur, vol=0.1) {
@@ -99,15 +86,16 @@ const AudioCtrl = {
 };
 
 function playSfx(name) {
+    if(isMobile && Math.random() > 0.5) return; // Reduz chamadas de audio no mobile
     switch(name) {
         case "atk": AudioCtrl.playNoise(0.1, 0.1); break;
         case "hit": AudioCtrl.playTone(150, "square", 0.1, 0.15); break;
         case "dash": AudioCtrl.playTone(300, "sawtooth", 0.2, 0.1); break;
-        case "gold": AudioCtrl.playTone(1200, "sine", 0.3, 0.1); AudioCtrl.playTone(1800, "sine", 0.3, 0.1); break;
+        case "gold": AudioCtrl.playTone(1200, "sine", 0.3, 0.1); break; // Simplificado
         case "craft": AudioCtrl.playTone(400, "triangle", 0.5, 0.2); break;
         case "levelup": [440, 554, 659, 880].forEach((f,i) => setTimeout(()=>AudioCtrl.playTone(f,"square",0.4,0.2), i*100)); break;
         case "chat": AudioCtrl.playTone(800, "sine", 0.1, 0.05); break;
-        case "shrine": AudioCtrl.playTone(200, "sine", 0.5, 0.2); AudioCtrl.playTone(400, "sine", 0.5, 0.2); break;
+        case "shrine": AudioCtrl.playTone(200, "sine", 0.5, 0.2); break;
         case "lore": AudioCtrl.playTone(100, "triangle", 1.0, 0.1); break;
     }
 }
@@ -171,76 +159,51 @@ socket.on("u", d => {
     if(me) updateUI(); 
 });
 
+// Otimização: Reutiliza objetos de texto para evitar GC
 function preventTextOverlap(newText) {
+    if(texts.length > 15) texts.shift(); // Limita textos na tela
     let attempts = 0;
-    while(attempts < 5) {
+    while(attempts < 3) {
         let collision = false;
         for(let t of texts) {
             if(Math.abs(t.x - newText.x) < 2 && Math.abs(t.y - newText.y) < 2) {
-                collision = true;
-                break;
+                collision = true; break;
             }
         }
-        if(collision) {
-            newText.y -= 1.0; 
-            newText.x += (Math.random() - 0.5) * 2; 
-            attempts++;
-        } else {
-            break;
-        }
+        if(collision) { newText.y -= 1.0; newText.x += (Math.random() - 0.5) * 2; attempts++; } 
+        else { break; }
     }
 }
 
 socket.on("txt", d => {
     const valStr = String(d.val);
-    let vy = -0.05; 
-    let life = 120;
-    
+    let vy = -0.05; let life = 80; // Vida reduzida para performance
     let startX = d.x + (Math.random() - 0.5) * 0.5;
     let startY = d.y + (Math.random() - 0.5) * 0.5;
 
-    if(valStr.includes("LEVEL UP!")) { vy = -0.02; life = 200; d.size="16px bold Courier New"; d.color="#fb0"; }
-    else if(valStr.includes("CRIT!")) { vy = -0.08; life = 150; d.color="#f0f"; d.size="14px bold Courier New"; d.isCrit=true; }
-    else if(valStr.includes("CRAFT") || valStr.includes("SOCKETED") || valStr.includes("BLOCK")) { vy = -0.04; life = 100; }
-    else if(valStr.includes("DEATH!")) { vy = -0.02; life = 250; d.size="20px bold Courier New"; } 
-    else if(valStr.includes("OPEN!") || valStr.includes("UNLOCKED!")) { vy = -0.03; life = 200; d.size="16px bold Courier New"; }
-    else if(valStr.includes("+")) { vy = -0.05; life = 100; } 
-    else if(valStr.includes("SHRINE")) { vy = -0.03; life = 180; d.color="#0ff"; d.size="12px bold Courier New"; }
-    else if(valStr.includes("LOCKED")) { vy = -0.03; life = 80; d.color="#f00"; }
-    else if(valStr.includes("GRABBED!") || valStr.includes("FRESH MEAT!") || valStr.includes("!!!")) { vy = -0.05; life = 120; d.size = "12px bold Courier New"; }
+    if(valStr.includes("LEVEL UP!")) { vy = -0.02; life = 150; d.size="16px bold Courier New"; d.color="#fb0"; }
+    else if(valStr.includes("CRIT!")) { vy = -0.08; life = 100; d.color="#f0f"; d.size="14px bold Courier New"; }
     
-    const newText = {
-        val: valStr,
-        x: startX,
-        y: startY,
-        color: d.color || "#fff",
-        life: life,
-        vy: vy,
-        size: d.size || "10px Courier New"
-    };
-
+    const newText = { val: valStr, x: startX, y: startY, color: d.color || "#fff", life: life, vy: vy, size: d.size || "10px Courier New" };
     preventTextOverlap(newText);
     texts.push(newText);
     
     if(valStr.includes("CRAFT")) playSfx("craft");
     if(valStr.includes("LEVEL")) playSfx("levelup");
-    if(valStr.includes("SHRINE")) playSfx("shrine");
-    if(valStr.includes("OPEN")) playSfx("shrine");
 });
 
 socket.on("fx", d => {
-    if (d.type === "slash") { effects.push({ type: "slash", x: d.x, y: d.y, angle: d.angle, life: 10 }); playSfx("atk"); }
-    else if (d.type === "spin") { effects.push({ type: "spin", x: d.x, y: d.y, angle: d.angle || 0, life: 20 }); playSfx("atk"); }
-    else if (d.type === "nova") effects.push({ type: "nova", x: d.x, y: d.y, life: d.life || 20 });
+    if(effects.length > 20) effects.shift(); // Limite de efeitos
+    if (d.type === "slash") { effects.push({ type: "slash", x: d.x, y: d.y, angle: d.angle, life: 8 }); playSfx("atk"); }
+    else if (d.type === "spin") { effects.push({ type: "spin", x: d.x, y: d.y, angle: d.angle || 0, life: 15 }); playSfx("atk"); }
+    else if (d.type === "nova") effects.push({ type: "nova", x: d.x, y: d.y, life: d.life || 15 });
     else if (d.type === "dash") playSfx("dash");
     else if (d.type === "gold_txt") { 
-        const t = { val: String(d.val), x: d.x, y: d.y, color: "#fb0", life: 100, vy: -0.05, size: "10px Courier New" };
-        preventTextOverlap(t);
-        texts.push(t); 
-        playSfx("gold"); 
+        const t = { val: String(d.val), x: d.x, y: d.y, color: "#fb0", life: 80, vy: -0.05, size: "10px Courier New" };
+        texts.push(t); playSfx("gold"); 
     }
-    else if (d.type === "boss_hit") { cameraShake = 8; playSfx("hit"); }
-    else if (d.type === "charge") { effects.push({ type: "charge", x: d.x, y: d.y, life: 30 }); }
+    else if (d.type === "boss_hit") { if(!isMobile) cameraShake = 8; playSfx("hit"); }
+    else if (d.type === "charge") { effects.push({ type: "charge", x: d.x, y: d.y, life: 20 }); }
     else if (d.type === "hit") playSfx("hit");
     else if (d.type === "gold") playSfx("gold");
     else if (d.type === "lore") playSfx("lore");
@@ -248,19 +211,30 @@ socket.on("fx", d => {
 
 socket.on("chat", d => { 
     playSfx("chat"); 
-    // CORREÇÃO: Adicionar chat ao log visual do jogo
     addLog(`${state.pl[d.id]?.name || "Unknown"}: ${d.msg}`, "#fff");
 });
 socket.on("open_shop", items => { uiState.shop = true; shopItems = items; updateUI(); });
 socket.on("log", d => addLog(d.msg, d.color));
 
 const keys = { w:false, a:false, s:false, d:false, q:false, game_x: 0, game_y: 0 };
+
+// --- OTIMIZAÇÃO: THROTTLE DE INPUT ---
+let lastInputTime = 0;
 function sendInput() {
+    const now = Date.now();
+    if (now - lastInputTime < 50) return; // Limita a 20 inputs por segundo (igual ao server)
+    
     let dx = keys.a?-1:keys.d?1:0, dy = keys.w?-1:keys.s?1:0;
     if (gamepadActive && (Math.abs(keys.game_x) > 0.1 || Math.abs(keys.game_y) > 0.1)) { dx = keys.game_x; dy = keys.game_y; }
     if (joystick.active) { dx = joystick.normX; dy = joystick.normY; }
     if(uiState.chat) { dx = 0; dy = 0; }
-    if(dx!==inputState.x || dy!==inputState.y || keys.q !== inputState.block){ inputState={x:dx,y:dy,block:keys.q}; socket.emit("input", inputState); }
+    
+    // Só envia se houve mudança ou se passou tempo
+    if(dx!==inputState.x || dy!==inputState.y || keys.q !== inputState.block){ 
+        inputState={x:dx,y:dy,block:keys.q}; 
+        socket.emit("input", inputState); 
+        lastInputTime = now;
+    }
 }
 
 function getMouseAngle() { return Math.atan2((mouse.y - canvas.height/2), (mouse.x - canvas.width/2)); }
@@ -647,12 +621,7 @@ function renderCrafting() {
 function getIcon(it) {
     if (!it || !it.key) return "❓"; 
     const key = it.key;
-    
-    // CORREÇÃO: Hash determinístico baseado no ID para evitar que o ícone pisque
-    let seed = 0;
-    if(it.id) {
-        for(let i=0; i<it.id.length; i++) seed += it.id.charCodeAt(i);
-    }
+    let seed = 0; if(it.id) { for(let i=0; i<it.id.length; i++) seed += it.id.charCodeAt(i); }
     const pick = (arr) => arr[seed % arr.length];
 
     if(key.includes("sword")) return pick(["🗡️", "⚔️", "🔪"]);
@@ -813,7 +782,6 @@ function updateUI() {
             
             d.onclick = (e) => {
                 e.preventDefault(); e.stopPropagation();
-                // CORREÇÃO PC: Ação direta no clique
                 if (!isMobile && !gamepadActive) {
                     if (it.key === "potion") socket.emit("potion");
                     else if (it.slot && it.type !== "material" && it.type !== "gem" && it.type !== "key") socket.emit("equip", idx);
@@ -900,6 +868,7 @@ function showTooltip(it, elementRef) {
 function hideTooltip() { tooltip.style.display = "none"; }
 
 function drawAura(x, y, color, intensity) {
+    if (isMobile) return; // Otimização para mobile
     ctx.shadowBlur = intensity; ctx.shadowColor = color; ctx.fillStyle = color; ctx.globalAlpha = 0.2;
     ctx.beginPath(); ctx.arc(x, y, 10 + Math.sin(Date.now()/200)*2, 0, Math.PI*2); ctx.fill();
     ctx.globalAlpha = 1.0; ctx.shadowBlur = 0;
@@ -925,7 +894,8 @@ function drawOffscreenPlayerIndicators() {
         const angle = Math.atan2(dy, dx);
         let ix = screenCenterX + Math.cos(angle) * indicatorRadius; let iy = screenCenterY + Math.sin(angle) * indicatorRadius;
         ctx.save(); ctx.translate(ix, iy); ctx.rotate(angle); 
-        ctx.fillStyle = "#0ff"; ctx.shadowBlur = 5; ctx.shadowColor = "#0ff";
+        ctx.fillStyle = "#0ff"; 
+        if(!isMobile) { ctx.shadowBlur = 5; ctx.shadowColor = "#0ff"; }
         ctx.beginPath(); ctx.moveTo(indicatorSize, 0); ctx.lineTo(-indicatorSize, -indicatorSize); ctx.lineTo(-indicatorSize, indicatorSize); ctx.closePath(); ctx.fill();
         ctx.font = "8px Courier New"; ctx.textAlign = "center"; ctx.fillText(p.name, 0, -indicatorSize - 2); 
         ctx.restore(); ctx.shadowBlur = 0;
@@ -962,21 +932,15 @@ function draw() {
 
     ctx.fillStyle = "#000"; ctx.fillRect(0,0,canvas.width,canvas.height);
     
-    // CORREÇÃO: Feedback Visual de Conexão
     if(!me) {
-        ctx.fillStyle = "#0f0";
-        ctx.font = "16px Courier New";
-        ctx.textAlign = "center";
-        ctx.fillText("CONNECTING TO SERVER...", canvas.width/2, canvas.height/2);
-        return;
+        ctx.fillStyle = "#0f0"; ctx.font = "16px Courier New"; ctx.textAlign = "center";
+        ctx.fillText("CONNECTING...", canvas.width/2, canvas.height/2); return;
     }
 
     cam.x += (me.x*SCALE - canvas.width/2 - cam.x)*0.2; cam.y += (me.y*SCALE - canvas.height/2 - cam.y)*0.2;
     if (cameraShake > 0) {
-        cam.x += (Math.random() - 0.5) * cameraShake;
-        cam.y += (Math.random() - 0.5) * cameraShake;
-        cameraShake *= 0.85;
-        if (cameraShake < 0.5) cameraShake = 0;
+        cam.x += (Math.random() - 0.5) * cameraShake; cam.y += (Math.random() - 0.5) * cameraShake;
+        cameraShake *= 0.85; if (cameraShake < 0.5) cameraShake = 0;
     }
     const ox = -cam.x, oy = -cam.y; const now = Date.now();
     const lightRadiusPixels = state.lightRadius * SCALE;
@@ -991,27 +955,18 @@ function draw() {
         for(let y=sy; y<ey; y++){ 
             if(!map[y]) continue; 
             for(let x=sx; x<ex; x++){ 
+                // OTIMIZAÇÃO: Desenho de Tiles sem contorno no mobile para performance
                 if(map[y][x]===0) { 
                     if (isCity) {
-                        ctx.fillStyle="#333";
-                        ctx.fillRect(ox+x*SCALE,oy+y*SCALE,SCALE,SCALE);
+                        ctx.fillStyle="#333"; ctx.fillRect(ox+x*SCALE,oy+y*SCALE,SCALE,SCALE);
                         if((x+y)%2===0) { ctx.fillStyle="#3a3a3a"; ctx.fillRect(ox+x*SCALE+4, oy+y*SCALE+4, 8, 8); }
                     } else {
-                        ctx.fillStyle="#080808"; 
-                        ctx.fillRect(ox+x*SCALE,oy+y*SCALE,SCALE,SCALE); 
+                        ctx.fillStyle="#080808"; ctx.fillRect(ox+x*SCALE,oy+y*SCALE,SCALE,SCALE); 
                         if((x+y)%3===0) { ctx.fillStyle=theme; ctx.fillRect(ox+x*SCALE+6, oy+y*SCALE+6, 2, 2); } 
                     }
                 } else if(map[y][x]===1) { 
-                    if (isCity) {
-                        ctx.fillStyle="#222";
-                        ctx.fillRect(ox+x*SCALE,oy+y*SCALE,SCALE,SCALE);
-                        ctx.strokeStyle="#555";
-                        ctx.strokeRect(ox+x*SCALE,oy+y*SCALE,SCALE,SCALE);
-                    } else {
-                        ctx.fillStyle="#000"; 
-                        ctx.fillRect(ox+x*SCALE,oy+y*SCALE,SCALE,SCALE); 
-                        ctx.strokeStyle=theme; ctx.strokeRect(ox+x*SCALE,oy+y*SCALE,SCALE,SCALE); 
-                    }
+                    ctx.fillStyle=isCity?"#222":"#000"; ctx.fillRect(ox+x*SCALE,oy+y*SCALE,SCALE,SCALE);
+                    if(!isMobile) { ctx.strokeStyle=isCity?"#555":theme; ctx.strokeRect(ox+x*SCALE,oy+y*SCALE,SCALE,SCALE); }
                 } 
             } 
         }
@@ -1022,29 +977,33 @@ function draw() {
         if(p.type==="rock") { ctx.fillStyle="#333"; ctx.fillRect(px,py,4,3); } 
         else if(p.type==="bones") { ctx.fillStyle="#ccc"; ctx.fillRect(px,py,3,1); ctx.fillRect(px+2,py+1,3,1); } 
         else if(p.type==="shrine") { 
-            ctx.shadowBlur=10; ctx.shadowColor="#0ff"; ctx.fillStyle="#0ff"; 
-            ctx.fillRect(px,py-4,4,12); ctx.fillRect(px-2,py,8,2);
-            ctx.shadowBlur=0; 
+            if(!isMobile){ ctx.shadowBlur=10; ctx.shadowColor="#0ff"; } 
+            ctx.fillStyle="#0ff"; ctx.fillRect(px,py-4,4,12); ctx.fillRect(px-2,py,8,2); ctx.shadowBlur=0; 
         }
-        else if(p.type==="book") {
-            ctx.fillStyle="#a52"; ctx.fillRect(px,py,6,4);
-            ctx.fillStyle="#eee"; ctx.fillRect(px+1,py+1,4,2);
-        }
+        else if(p.type==="book") { ctx.fillStyle="#a52"; ctx.fillRect(px,py,6,4); ctx.fillStyle="#eee"; ctx.fillRect(px+1,py+1,4,2); }
         else if(p.type==="stairs") {
-            ctx.fillStyle = p.locked ? "#f00" : "#0f0";
-            ctx.fillRect(px-4, py-6, 8, 12);
+            ctx.fillStyle = p.locked ? "#f00" : "#0f0"; ctx.fillRect(px-4, py-6, 8, 12);
             ctx.strokeStyle = "#fff"; ctx.strokeRect(px-4, py-6, 8, 12);
-            if (p.locked) {
-                ctx.fillStyle = "#fff"; ctx.font = "8px Arial"; ctx.textAlign="center"; ctx.fillText("🔒", px, py);
-            }
+            if (p.locked) { ctx.fillStyle = "#fff"; ctx.font = "8px Arial"; ctx.textAlign="center"; ctx.fillText("🔒", px, py); }
         }
         else { ctx.fillStyle="#232"; ctx.fillRect(px,py,2,4); ctx.fillRect(px+3,py+1,2,3); } 
     });
     
-    for(let k in state.it){ let i=state.it[k]; let yb = Math.sin(now/200)*2; if(i.item.key === "gold") { ctx.shadowBlur=5; ctx.shadowColor="#fb0"; ctx.fillStyle="#fb0"; ctx.fillRect(ox+i.x*SCALE+4, oy+i.y*SCALE+6+yb, 3, 3); ctx.shadowBlur=0; } else { ctx.shadowBlur = i.item.rarity==="legendary"?10:i.item.rarity==="rare"?5:0; ctx.shadowColor=i.item.color; ctx.fillStyle=i.item.color; ctx.fillRect(ox+i.x*SCALE+4, oy+i.y*SCALE+4+yb, 8, 8); ctx.shadowBlur=0; } }
+    for(let k in state.it){ 
+        let i=state.it[k]; let yb = Math.sin(now/200)*2; 
+        if(i.item.key === "gold") { 
+            if(!isMobile){ctx.shadowBlur=5; ctx.shadowColor="#fb0";} 
+            ctx.fillStyle="#fb0"; ctx.fillRect(ox+i.x*SCALE+4, oy+i.y*SCALE+6+yb, 3, 3); ctx.shadowBlur=0; 
+        } else { 
+            if(!isMobile){ctx.shadowBlur = i.item.rarity==="legendary"?10:i.item.rarity==="rare"?5:0; ctx.shadowColor=i.item.color;} 
+            ctx.fillStyle=i.item.color; ctx.fillRect(ox+i.x*SCALE+4, oy+i.y*SCALE+4+yb, 8, 8); ctx.shadowBlur=0; 
+        } 
+    }
 
     if(state.pr) state.pr.forEach(p => {
-        ctx.save(); ctx.translate(ox+p.x*SCALE, oy+p.y*SCALE); ctx.rotate(p.angle || 0); ctx.shadowBlur=10;
+        ctx.save(); ctx.translate(ox+p.x*SCALE, oy+p.y*SCALE); ctx.rotate(p.angle || 0); 
+        if(!isMobile) ctx.shadowBlur=10;
+        
         if(p.type === "arrow") { ctx.shadowColor="#ff0"; ctx.fillStyle = "#ff0"; ctx.fillRect(-6, -1, 12, 2); } 
         else if (p.type === "fireball") { ctx.shadowColor="#f80"; ctx.fillStyle = "#f80"; ctx.beginPath(); ctx.arc(0,0, 4, 0, Math.PI*2); ctx.fill(); }
         else if (p.type === "meteor") { ctx.shadowColor="#f00"; ctx.fillStyle = "#f00"; ctx.beginPath(); ctx.arc(0,0, 8, 0, Math.PI*2); ctx.fill(); } 
@@ -1061,54 +1020,28 @@ function draw() {
     });
 
     for(let i = effects.length - 1; i >= 0; i--) {
-        let e = effects[i];
-        e.life--;
-        if (e.life <= 0) {
-            effects.splice(i, 1);
-            continue;
-        }
-
-        const x = ox + e.x * SCALE;
-        const y = oy + e.y * SCALE;
-
-        ctx.shadowBlur = 10;
-        ctx.shadowColor = "#fff";
+        let e = effects[i]; e.life--; if (e.life <= 0) { effects.splice(i, 1); continue; }
+        const x = ox + e.x * SCALE; const y = oy + e.y * SCALE;
+        
+        if(!isMobile) { ctx.shadowBlur = 10; ctx.shadowColor = "#fff"; }
 
         if (e.type === "slash") {
-            ctx.strokeStyle = `rgba(255,255,255,${e.life/10})`;
-            ctx.lineWidth = 3;
-            ctx.beginPath();
-            ctx.arc(x, y, 20, e.angle - 0.8, e.angle + 0.8);
-            ctx.stroke();
+            ctx.strokeStyle = `rgba(255,255,255,${e.life/10})`; ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(x, y, 20, e.angle - 0.8, e.angle + 0.8); ctx.stroke();
         }
         else if (e.type === "spin") {
-            ctx.strokeStyle = `rgba(255,255,0,${e.life/20})`;
-            ctx.lineWidth = 4;
-            ctx.beginPath();
-            const radius = 35 - (20 - e.life) * 2;
-            if (radius > 0) ctx.arc(x, y, radius, 0, Math.PI * 2);
-            ctx.stroke();
+            ctx.strokeStyle = `rgba(255,255,0,${e.life/20})`; ctx.lineWidth = 4; ctx.beginPath(); const radius = 35 - (20 - e.life) * 2; if (radius > 0) ctx.arc(x, y, radius, 0, Math.PI * 2); ctx.stroke();
         }
         else if (e.type === "nova") {
-            ctx.strokeStyle = `rgba(255,0,0,${e.life/(e.life > 15 ? 20 : 10)})`;
-            ctx.lineWidth = 2;
-            ctx.beginPath();
-            ctx.arc(x, y, 30 - e.life, 0, Math.PI * 2);
-            ctx.stroke();
+            ctx.strokeStyle = `rgba(255,0,0,${e.life/(e.life > 15 ? 20 : 10)})`; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(x, y, 30 - e.life, 0, Math.PI * 2); ctx.stroke();
         }
         else if (e.type === "charge") {
-            ctx.strokeStyle = `rgba(255,0,0,${e.life/30})`;
-            ctx.lineWidth = 2;
-            ctx.beginPath();
-            ctx.arc(x, y, 25 + (30 - e.life), 0, Math.PI * 2);
-            ctx.stroke();
+            ctx.strokeStyle = `rgba(255,0,0,${e.life/30})`; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(x, y, 25 + (30 - e.life), 0, Math.PI * 2); ctx.stroke();
         }
-
         ctx.shadowBlur = 0;
     }
 
     const ents = [...Object.values(state.mb), ...Object.values(state.pl)]; 
-    ents.sort((a,b) => a.y - b.y); // Ordena por Y para profundidade correta
+    ents.sort((a,b) => a.y - b.y);
 
     ents.forEach(e => {
         const x = ox + e.x * SCALE + SCALE/2;
@@ -1116,19 +1049,15 @@ function draw() {
         const s = e.size || 12; 
         const blink = e.hitFlash > 0;
 
-        // --- AURAS (Raridade e Bosses) ---
         if (e.equipment && e.equipment.body) {
              if (e.equipment.body.rarity === "legendary") drawAura(x, y, "#f0f", 15); 
              else if (e.equipment.body.rarity === "rare") drawAura(x, y, "#ff0", 8);
         }
         
         if (e.boss) drawAura(x, y, "#f00", 25);
-        else if (e.color && !e.npc && !e.class) drawAura(x, y, e.color, 10); // Elite Aura
+        else if (e.color && !e.npc && !e.class) drawAura(x, y, e.color, 10);
 
-        ctx.save(); 
-        ctx.translate(x, y);
-        
-        // Direção do olhar
+        ctx.save(); ctx.translate(x, y);
         let dirX = (e.vx > 0.01) ? 1 : (e.vx < -0.01) ? -1 : 1; 
         if (e.id === myId) {
             if (!isMobile && !gamepadActive) { dirX = (mouse.x > canvas.width/2) ? 1 : -1; } 
@@ -1139,196 +1068,97 @@ function draw() {
         }
         ctx.scale(dirX, 1);
 
+        const isFlashing = blink && (e.hitFlash % 4 < 2);
+        
+        // OTIMIZAÇÃO CRÍTICA: Não usar filter em mobile
+        if (isFlashing) {
+            if (isMobile) {
+                // Modo rápido para mobile (Superposição)
+                ctx.globalCompositeOperation = "source-atop";
+                ctx.fillStyle = "#fff";
+            } else {
+                ctx.filter = "brightness(1000%) grayscale(100%)"; 
+            }
+        }
+
         // ===============================================
-// HIT FLASH — pisca o PRÓPRIO CORPO em branco usando filtro
-    // ===============================================
-    
-    // Configura o filtro se estiver piscando (2 frames sim, 2 não = piscar rápido)
-    const isFlashing = blink && (e.hitFlash % 4 < 2);
-    
-    if (isFlashing) {
-        // Aumenta o brilho para 1000% (vira branco) e remove cor
-        ctx.filter = "brightness(1000%) grayscale(100%)"; 
-    }
-
-    // ===============================================
-    //  DESENHO DOS MOBS E BOSSES (VISUAL NOVO)
-    // ===============================================
-    
-    // --- JOGADORES (CLASSES) ---
-    if (e.class) {
-        let c = e.class; 
-        // Corpo
-        ctx.fillStyle = (c==="knight"?"#668":c==="hunter"?"#464":"#448"); 
-        ctx.fillRect(-4, -6, 8, 12);
+        //  DESENHO DOS MOBS E BOSSES (VISUAL NOVO)
+        // ===============================================
         
-        // Equipamentos Visuais
-        if(e.equipment && e.equipment.head) { ctx.fillStyle=e.equipment.head.color; ctx.fillRect(-4,-9,8,5); }
-        if(e.equipment && e.equipment.body) { ctx.fillStyle=e.equipment.body.color; ctx.fillRect(-3,-4,6,8); }
-        
-        // Arma
-        if(e.equipment && e.equipment.hand) {
-            let k = e.equipment.hand.key;
-            if(k.includes("sword")||k.includes("axe")||k.includes("dagger")) { 
-                ctx.fillStyle="#ccc"; ctx.fillRect(4, -8, 2, 14); // Lamina
-                ctx.fillStyle="#840"; ctx.fillRect(3, 2, 4, 2); // Cabo
+        if (e.class) {
+            let c = e.class; ctx.fillStyle = (c==="knight"?"#668":c==="hunter"?"#464":"#448"); ctx.fillRect(-4, -6, 8, 12);
+            if(e.equipment && e.equipment.head) { ctx.fillStyle=e.equipment.head.color; ctx.fillRect(-4,-9,8,5); }
+            if(e.equipment && e.equipment.body) { ctx.fillStyle=e.equipment.body.color; ctx.fillRect(-3,-4,6,8); }
+            if(e.equipment && e.equipment.hand) {
+                let k = e.equipment.hand.key;
+                if(k.includes("sword")||k.includes("axe")||k.includes("dagger")) { ctx.fillStyle="#ccc"; ctx.fillRect(4, -8, 2, 14); ctx.fillStyle="#840"; ctx.fillRect(3, 2, 4, 2); }
+                if(k.includes("bow")) { ctx.strokeStyle="#a84"; ctx.lineWidth=2; ctx.beginPath(); ctx.arc(4, 0, 7, -1.5, 1.5); ctx.stroke(); ctx.beginPath(); ctx.moveTo(4, -7); ctx.lineTo(4, 7); ctx.strokeStyle="#fff"; ctx.lineWidth=0.5; ctx.stroke(); }
+                if(k.includes("staff")) { ctx.fillStyle="#630"; ctx.fillRect(5, -10, 2, 18); ctx.fillStyle=e.equipment.hand.color; ctx.beginPath(); ctx.arc(6, -12, 3, 0, Math.PI*2); ctx.fill(); }
             }
-            if(k.includes("bow")) { 
-                ctx.strokeStyle="#a84"; ctx.lineWidth=2; ctx.beginPath(); ctx.arc(4, 0, 7, -1.5, 1.5); ctx.stroke(); 
-                ctx.beginPath(); ctx.moveTo(4, -7); ctx.lineTo(4, 7); ctx.strokeStyle="#fff"; ctx.lineWidth=0.5; ctx.stroke(); 
+            if (e.id === myId) {
+                ctx.fillStyle = "white"; ctx.fillRect(-2, -4, 2, 2); ctx.fillRect(2, -4, 2, 2); 
+                let lookAngle = (!isMobile && !gamepadActive) ? getMouseAngle() : getAttackAngle();
+                let lx = Math.cos(lookAngle); let ly = Math.sin(lookAngle); if (dirX === -1) lx = -lx; 
+                ctx.fillStyle = "black"; ctx.fillRect(-2 + lx, -4 + ly, 1, 1); ctx.fillRect(2 + lx, -4 + ly, 1, 1); 
+            } else { ctx.fillStyle = "#000"; ctx.fillRect(-2, -4, 1, 1); ctx.fillRect(2, -4, 1, 1); }
+        }
+        else if (e.ai === "resource") {
+            if(e.drop==="wood") { ctx.fillStyle="#532"; ctx.fillRect(-2, -2, 4, 6); ctx.fillStyle="#151"; ctx.beginPath(); ctx.moveTo(0,-16); ctx.lineTo(-10,-2); ctx.lineTo(10,-2); ctx.fill(); ctx.fillStyle="#262"; ctx.beginPath(); ctx.moveTo(0,-14); ctx.lineTo(-7,-4); ctx.lineTo(7,-4); ctx.fill(); } 
+            else { ctx.fillStyle="#555"; ctx.beginPath(); ctx.arc(0,0,6,0,Math.PI*2); ctx.fill(); ctx.fillStyle="#777"; ctx.beginPath(); ctx.arc(-2,-2,3,0,Math.PI*2); ctx.fill(); }
+        }
+        else if (e.npc) {
+            ctx.fillStyle = e.name==="Merchant"?"#a84":e.name==="Healer"?"#fff":"#555"; ctx.fillRect(-5,-8,10,14); ctx.fillStyle="#fcc"; ctx.fillRect(-3,-12,6,4); 
+            if(e.name==="Merchant") { ctx.fillStyle="#a84"; ctx.fillRect(-4,-13,8,2); ctx.fillStyle="#0f0"; ctx.fillText("$", 0, -16); } 
+            if(e.name==="Healer") { ctx.fillStyle="#f00"; ctx.fillRect(-1,-10,2,6); ctx.fillRect(-3,-8,6,2); } 
+            if(e.name==="Blacksmith") { ctx.fillStyle="#333"; ctx.fillRect(4, -2, 4, 8); } 
+        }
+        else if (e.boss) {
+            const bs = s; 
+            if (e.name.includes("Butcher")) {
+                ctx.fillStyle = "#900"; ctx.fillRect(-bs/1.1, -bs/2, bs*1.8, bs);
+                ctx.fillStyle = "#700"; ctx.fillRect(-bs/3, -bs + 4, bs/1.5, bs/2);
+                ctx.fillStyle = "#fff"; ctx.fillRect(-3, -bs + 8, 2, 2); ctx.fillRect(3, -bs + 8, 2, 2);
+                ctx.fillStyle = "#ccc"; ctx.fillRect(-bs/1.5, -bs/3, bs*1.3, bs*0.7);
+                ctx.fillStyle = "#b00"; ctx.fillRect(-5, 0, 4, 4); ctx.fillRect(6, -5, 3, 3); ctx.fillRect(-bs/2, 5, 5, 5);
+                ctx.save(); ctx.translate(bs, 0); ctx.fillStyle = "#421"; ctx.fillRect(-2, 2, 4, 6); ctx.fillStyle = "#667"; ctx.fillRect(-2, -14, 12, 16); ctx.fillStyle = "#aaa"; ctx.fillRect(-2, -14, 2, 16); ctx.fillStyle = "#a00"; ctx.fillRect(-2, -4, 12, 6); ctx.restore();
+            } 
+            else if (e.name.includes("Lich")) {
+                ctx.fillStyle = "#222"; ctx.beginPath(); ctx.moveTo(0, -bs); ctx.lineTo(-bs/2, bs/2); ctx.lineTo(bs/2, bs/2); ctx.fill(); ctx.fillStyle = "#eee"; ctx.beginPath(); ctx.arc(0, -bs/2, 6, 0, Math.PI*2); ctx.fill(); ctx.fillStyle = "#0ff"; ctx.fillRect(-2, -bs/2 - 2, 1, 1); ctx.fillRect(1, -bs/2 - 2, 1, 1); ctx.strokeStyle = "#db0"; ctx.lineWidth=2; ctx.strokeRect(-4, -bs/2-6, 8, 2); 
             }
-            if(k.includes("staff")) { 
-                ctx.fillStyle="#630"; ctx.fillRect(5, -10, 2, 18); 
-                ctx.fillStyle=e.equipment.hand.color; ctx.beginPath(); ctx.arc(6, -12, 3, 0, Math.PI*2); ctx.fill();
+            else if (e.name.includes("Broodmother")) {
+                ctx.fillStyle = "#120"; ctx.lineWidth = 2; ctx.strokeStyle = "#120"; for(let i=0; i<4; i++) { ctx.beginPath(); ctx.moveTo(0,0); ctx.lineTo(bs, (i*6)-10); ctx.moveTo(0,0); ctx.lineTo(-bs, (i*6)-10); ctx.stroke(); } ctx.fillStyle = "#241"; ctx.beginPath(); ctx.arc(0, 0, bs/2, 0, Math.PI*2); ctx.fill(); ctx.fillStyle = "#f00"; ctx.fillRect(-2, -bs/2, 1, 1); ctx.fillRect(1, -bs/2, 1, 1); 
             }
+            else if (e.name.includes("Fire Lord")) {
+                ctx.fillStyle = "#f80"; let wobble = Math.sin(Date.now()/100) * 2; ctx.beginPath(); ctx.arc(0, wobble, bs/2, 0, Math.PI*2); ctx.fill(); ctx.fillStyle = "#ff0"; ctx.beginPath(); ctx.arc(0, wobble, bs/3, 0, Math.PI*2); ctx.fill(); ctx.fillStyle = "#f40"; ctx.fillRect(-bs, wobble - 10, 6, 6); ctx.fillRect(bs-6, wobble - 10, 6, 6);
+            }
+            else if (e.name.includes("Void")) {
+                ctx.fillStyle = "#fff"; ctx.beginPath(); ctx.arc(0, 0, bs/2, 0, Math.PI*2); ctx.fill(); ctx.fillStyle = "#909"; ctx.beginPath(); ctx.arc(0, 0, bs/3, 0, Math.PI*2); ctx.fill(); ctx.fillStyle = "#000"; ctx.beginPath(); ctx.arc(0, 0, bs/5, 0, Math.PI*2); ctx.fill(); ctx.strokeStyle = "#909"; ctx.lineWidth=2; ctx.beginPath(); ctx.moveTo(0, bs/2); ctx.quadraticCurveTo(5, bs, 0, bs+5); ctx.stroke(); ctx.beginPath(); ctx.moveTo(-5, bs/2); ctx.quadraticCurveTo(-10, bs, -5, bs+5); ctx.stroke();
+            }
+            else if (e.name.includes("DIABLO")) {
+                const scale = 1.6; const b = bs * scale; ctx.fillStyle = "#a00"; ctx.beginPath(); ctx.moveTo(-10*scale, 10*scale); ctx.lineTo(-b/2, -b/2); ctx.lineTo(b/2, -b/2); ctx.lineTo(10*scale, 10*scale); ctx.fill(); ctx.fillRect(-6*scale, -b/2 - 8*scale, 12*scale, 10*scale); ctx.fillStyle = "#eee"; ctx.beginPath(); ctx.moveTo(-6*scale, -b/2 - 6*scale); ctx.lineTo(-12*scale, -b - 5*scale); ctx.lineTo(-2*scale, -b/2 - 8*scale); ctx.fill(); ctx.beginPath(); ctx.moveTo(6*scale, -b/2 - 6*scale); ctx.lineTo(12*scale, -b - 5*scale); ctx.lineTo(2*scale, -b/2 - 8*scale); ctx.fill(); ctx.fillStyle = "#ff0"; ctx.fillRect(-3*scale, -b/2 - 4*scale, 2*scale, 2*scale); ctx.fillRect(1*scale, -b/2 - 4*scale, 2*scale, 2*scale); ctx.strokeStyle = "#a00"; ctx.lineWidth = 4 * scale; ctx.beginPath(); ctx.moveTo(0, 5*scale); ctx.quadraticCurveTo(-b, 5*scale, -b - 5*scale, -5*scale); ctx.stroke();
+            }
+            else { ctx.fillStyle = e.color || "#f00"; ctx.fillRect(-s/2, -s/2, s, s); }
+        }
+        else {
+            const t = e.type;
+            if (t === "rat") { ctx.fillStyle = "#654"; ctx.beginPath(); ctx.ellipse(0, 2, 6, 3, 0, 0, Math.PI*2); ctx.fill(); ctx.fillStyle = "#fbb"; ctx.beginPath(); ctx.moveTo(6, 2); ctx.lineTo(10, 2); ctx.stroke(); }
+            else if (t === "bat") { ctx.fillStyle = "#222"; ctx.beginPath(); ctx.moveTo(0,0); ctx.lineTo(-8, -6); ctx.lineTo(-4, 2); ctx.lineTo(0,0); ctx.lineTo(4, 2); ctx.lineTo(8, -6); ctx.fill(); }
+            else if (t === "slime") { ctx.fillStyle = e.color || "#0f0"; ctx.globalAlpha = 0.8; ctx.beginPath(); ctx.arc(0, 0, 6, Math.PI, 0); ctx.lineTo(6, 4); ctx.lineTo(-6, 4); ctx.fill(); ctx.fillStyle = "#000"; ctx.fillRect(-2, -1, 1, 1); ctx.fillRect(2, -1, 1, 1); ctx.globalAlpha = 1.0; }
+            else if (t === "goblin" || t === "imp") { ctx.fillStyle = e.color || (t==="imp"?"#d40":"#484"); ctx.fillRect(-4, -6, 8, 10); ctx.beginPath(); ctx.moveTo(-4, -4); ctx.lineTo(-7, -8); ctx.lineTo(-4, -2); ctx.fill(); ctx.beginPath(); ctx.moveTo(4, -4); ctx.lineTo(7, -8); ctx.lineTo(4, -2); ctx.fill(); ctx.fillStyle = "#ccc"; ctx.fillRect(4, 0, 4, 1); }
+            else if (t === "skeleton" || t === "archer") { ctx.fillStyle = "#eee"; ctx.fillRect(-3, -7, 6, 6); ctx.fillRect(-2, 0, 4, 8); ctx.strokeStyle = "#eee"; ctx.lineWidth=1; ctx.beginPath(); ctx.moveTo(-4, 2); ctx.lineTo(4, 2); ctx.moveTo(-4, 4); ctx.lineTo(4, 4); ctx.stroke(); if (t==="archer") { ctx.strokeStyle="#852"; ctx.lineWidth=1; ctx.beginPath(); ctx.arc(5, 0, 5, -1, 1); ctx.stroke(); } else { ctx.fillStyle="#aaa"; ctx.fillRect(4, -2, 2, 8); } }
+            else if (t === "orc" || t === "hellknight") { ctx.fillStyle = t==="orc"?"#262":"#300"; ctx.fillRect(-6, -8, 12, 14); if(t==="orc"){ ctx.fillStyle="#fff"; ctx.fillRect(-3,-3,1,2); ctx.fillRect(2,-3,1,2); } else { ctx.fillStyle="#111"; ctx.fillRect(-2, -6, 4, 2); } ctx.fillStyle = "#555"; ctx.fillRect(6, -8, 2, 16); ctx.fillRect(4, -8, 6, 4); }
+            else if (t === "mage" || t === "ghost" || t === "succubus") { ctx.fillStyle = t==="ghost"?"rgba(200,255,255,0.7)":t==="succubus"?"#f0f":"#408"; ctx.beginPath(); ctx.moveTo(0, -8); ctx.lineTo(-5, 8); ctx.lineTo(5, 8); ctx.fill(); if(t==="mage") { ctx.fillStyle="#840"; ctx.fillRect(4, -8, 1, 16); ctx.fillStyle="#0ff"; ctx.fillRect(3,-10,3,3); } if(t==="succubus") { ctx.fillStyle="#000"; ctx.fillRect(-6,-4,3,3); ctx.fillRect(3,-4,3,3); } }
+            else if (t === "chest") { ctx.fillStyle = "#a60"; ctx.fillRect(-6, -4, 12, 8); ctx.fillStyle = "#fd0"; ctx.fillRect(-1, -2, 2, 3); ctx.strokeStyle = "#420"; ctx.strokeRect(-6, -4, 12, 8); }
+            else { ctx.fillStyle = e.color || "#ccc"; ctx.fillRect(-s/2, -s/2, s, s); }
         }
         
-        // Olhos do Jogador
-        if (e.id === myId) {
-            ctx.fillStyle = "white"; ctx.fillRect(-2, -4, 2, 2); ctx.fillRect(2, -4, 2, 2); 
-            let lookAngle = (!isMobile && !gamepadActive) ? getMouseAngle() : getAttackAngle();
-            let lx = Math.cos(lookAngle); let ly = Math.sin(lookAngle);
-            if (dirX === -1) lx = -lx; 
-            ctx.fillStyle = "black"; ctx.fillRect(-2 + lx, -4 + ly, 1, 1); ctx.fillRect(2 + lx, -4 + ly, 1, 1); 
-        } else {
-            ctx.fillStyle = "#000"; ctx.fillRect(-2, -4, 1, 1); ctx.fillRect(2, -4, 1, 1);
+        // Se estiver piscando no mobile, desenha um circulo branco solido por cima (efeito barato)
+        if(isFlashing && isMobile) {
+             ctx.globalCompositeOperation = "source-over"; // Reset
+             ctx.fillStyle = "rgba(255,255,255,0.7)";
+             ctx.beginPath(); ctx.arc(0,0,s/1.5,0,Math.PI*2); ctx.fill();
         }
-    }
-    
-    // --- RESOURCES ---
-    else if (e.ai === "resource") {
-        if(e.drop==="wood") { 
-            ctx.fillStyle="#532"; ctx.fillRect(-2, -2, 4, 6); // Tronco
-            ctx.fillStyle="#151"; ctx.beginPath(); ctx.moveTo(0,-16); ctx.lineTo(-10,-2); ctx.lineTo(10,-2); ctx.fill(); // Folhas
-            ctx.fillStyle="#262"; ctx.beginPath(); ctx.moveTo(0,-14); ctx.lineTo(-7,-4); ctx.lineTo(7,-4); ctx.fill(); 
-        } else { 
-            ctx.fillStyle="#555"; ctx.beginPath(); ctx.arc(0,0,6,0,Math.PI*2); ctx.fill();
-            ctx.fillStyle="#777"; ctx.beginPath(); ctx.arc(-2,-2,3,0,Math.PI*2); ctx.fill();
-        }
-    }
 
-    // --- NPCS ---
-    else if (e.npc) {
-        ctx.fillStyle = e.name==="Merchant"?"#a84":e.name==="Healer"?"#fff":"#555";
-        ctx.fillRect(-5,-8,10,14); // Corpo
-        ctx.fillStyle="#fcc"; ctx.fillRect(-3,-12,6,4); // Cabeça
-        if(e.name==="Merchant") { ctx.fillStyle="#a84"; ctx.fillRect(-4,-13,8,2); ctx.fillStyle="#0f0"; ctx.fillText("$", 0, -16); } 
-        if(e.name==="Healer") { ctx.fillStyle="#f00"; ctx.fillRect(-1,-10,2,6); ctx.fillRect(-3,-8,6,2); } 
-        if(e.name==="Blacksmith") { ctx.fillStyle="#333"; ctx.fillRect(4, -2, 4, 8); } 
-    }
-
-    // --- BOSSES ---
-    else if (e.boss) {
-        const bs = s; 
-        if (e.name.includes("Butcher")) {
-            // CORPO: Um grande retângulo largo
-            ctx.fillStyle = "#900"; ctx.fillRect(-bs/1.1, -bs/2, bs*1.8, bs);
-            // CABEÇA
-            ctx.fillStyle = "#700"; ctx.fillRect(-bs/3, -bs + 4, bs/1.5, bs/2);
-            // OLHOS
-            ctx.fillStyle = "#fff"; ctx.fillRect(-3, -bs + 8, 2, 2); ctx.fillRect(3, -bs + 8, 2, 2);
-            // AVENTAL
-            ctx.fillStyle = "#ccc"; ctx.fillRect(-bs/1.5, -bs/3, bs*1.3, bs*0.7);
-            // MANCHAS DE SANGUE
-            ctx.fillStyle = "#b00"; ctx.fillRect(-5, 0, 4, 4); ctx.fillRect(6, -5, 3, 3); ctx.fillRect(-bs/2, 5, 5, 5);
-            // O FACÃO
-            ctx.save(); ctx.translate(bs, 0); 
-            ctx.fillStyle = "#421"; ctx.fillRect(-2, 2, 4, 6);
-            ctx.fillStyle = "#667"; ctx.fillRect(-2, -14, 12, 16); 
-            ctx.fillStyle = "#aaa"; ctx.fillRect(-2, -14, 2, 16);
-            ctx.fillStyle = "#a00"; ctx.fillRect(-2, -4, 12, 6);
-            ctx.restore();
-        } 
-        else if (e.name.includes("Lich")) {
-            ctx.fillStyle = "#222"; ctx.beginPath(); ctx.moveTo(0, -bs); ctx.lineTo(-bs/2, bs/2); ctx.lineTo(bs/2, bs/2); ctx.fill(); 
-            ctx.fillStyle = "#eee"; ctx.beginPath(); ctx.arc(0, -bs/2, 6, 0, Math.PI*2); ctx.fill(); 
-            ctx.fillStyle = "#0ff"; ctx.fillRect(-2, -bs/2 - 2, 1, 1); ctx.fillRect(1, -bs/2 - 2, 1, 1); 
-            ctx.strokeStyle = "#db0"; ctx.lineWidth=2; ctx.strokeRect(-4, -bs/2-6, 8, 2); 
-        }
-        else if (e.name.includes("Broodmother")) {
-            ctx.fillStyle = "#120"; ctx.lineWidth = 2; ctx.strokeStyle = "#120";
-            for(let i=0; i<4; i++) { ctx.beginPath(); ctx.moveTo(0,0); ctx.lineTo(bs, (i*6)-10); ctx.moveTo(0,0); ctx.lineTo(-bs, (i*6)-10); ctx.stroke(); }
-            ctx.fillStyle = "#241"; ctx.beginPath(); ctx.arc(0, 0, bs/2, 0, Math.PI*2); ctx.fill(); 
-            ctx.fillStyle = "#f00"; ctx.fillRect(-2, -bs/2, 1, 1); ctx.fillRect(1, -bs/2, 1, 1); 
-        }
-        else if (e.name.includes("Fire Lord")) {
-            ctx.fillStyle = "#f80"; let wobble = Math.sin(Date.now()/100) * 2;
-            ctx.beginPath(); ctx.arc(0, wobble, bs/2, 0, Math.PI*2); ctx.fill();
-            ctx.fillStyle = "#ff0"; ctx.beginPath(); ctx.arc(0, wobble, bs/3, 0, Math.PI*2); ctx.fill();
-            ctx.fillStyle = "#f40"; ctx.fillRect(-bs, wobble - 10, 6, 6); ctx.fillRect(bs-6, wobble - 10, 6, 6);
-        }
-        else if (e.name.includes("Void")) {
-            ctx.fillStyle = "#fff"; ctx.beginPath(); ctx.arc(0, 0, bs/2, 0, Math.PI*2); ctx.fill(); 
-            ctx.fillStyle = "#909"; ctx.beginPath(); ctx.arc(0, 0, bs/3, 0, Math.PI*2); ctx.fill(); 
-            ctx.fillStyle = "#000"; ctx.beginPath(); ctx.arc(0, 0, bs/5, 0, Math.PI*2); ctx.fill(); 
-            ctx.strokeStyle = "#909"; ctx.lineWidth=2;
-            ctx.beginPath(); ctx.moveTo(0, bs/2); ctx.quadraticCurveTo(5, bs, 0, bs+5); ctx.stroke();
-            ctx.beginPath(); ctx.moveTo(-5, bs/2); ctx.quadraticCurveTo(-10, bs, -5, bs+5); ctx.stroke();
-        }
-        else if (e.name.includes("DIABLO")) {
-            const scale = 1.6; const b = bs * scale; 
-            ctx.fillStyle = "#a00"; ctx.beginPath(); ctx.moveTo(-10*scale, 10*scale); ctx.lineTo(-b/2, -b/2); ctx.lineTo(b/2, -b/2); ctx.lineTo(10*scale, 10*scale); ctx.fill();
-            ctx.fillRect(-6*scale, -b/2 - 8*scale, 12*scale, 10*scale);
-            ctx.fillStyle = "#eee";
-            ctx.beginPath(); ctx.moveTo(-6*scale, -b/2 - 6*scale); ctx.lineTo(-12*scale, -b - 5*scale); ctx.lineTo(-2*scale, -b/2 - 8*scale); ctx.fill();
-            ctx.beginPath(); ctx.moveTo(6*scale, -b/2 - 6*scale); ctx.lineTo(12*scale, -b - 5*scale); ctx.lineTo(2*scale, -b/2 - 8*scale); ctx.fill();
-            ctx.fillStyle = "#ff0"; ctx.fillRect(-3*scale, -b/2 - 4*scale, 2*scale, 2*scale); ctx.fillRect(1*scale, -b/2 - 4*scale, 2*scale, 2*scale);
-            ctx.strokeStyle = "#a00"; ctx.lineWidth = 4 * scale;
-            ctx.beginPath(); ctx.moveTo(0, 5*scale); ctx.quadraticCurveTo(-b, 5*scale, -b - 5*scale, -5*scale); ctx.stroke();
-        }
-        else { ctx.fillStyle = e.color || "#f00"; ctx.fillRect(-s/2, -s/2, s, s); }
-    }
-
-    // --- MOBS COMUNS ---
-    else {
-        const t = e.type;
-        if (t === "rat") {
-            ctx.fillStyle = "#654"; ctx.beginPath(); ctx.ellipse(0, 2, 6, 3, 0, 0, Math.PI*2); ctx.fill(); 
-            ctx.fillStyle = "#fbb"; ctx.beginPath(); ctx.moveTo(6, 2); ctx.lineTo(10, 2); ctx.stroke(); 
-        }
-        else if (t === "bat") {
-            ctx.fillStyle = "#222"; ctx.beginPath(); ctx.moveTo(0,0); ctx.lineTo(-8, -6); ctx.lineTo(-4, 2); ctx.lineTo(0,0); ctx.lineTo(4, 2); ctx.lineTo(8, -6); ctx.fill();
-        }
-        else if (t === "slime") {
-            ctx.fillStyle = e.color || "#0f0"; ctx.globalAlpha = 0.8;
-            ctx.beginPath(); ctx.arc(0, 0, 6, Math.PI, 0); ctx.lineTo(6, 4); ctx.lineTo(-6, 4); ctx.fill(); 
-            ctx.fillStyle = "#000"; ctx.fillRect(-2, -1, 1, 1); ctx.fillRect(2, -1, 1, 1); 
-            ctx.globalAlpha = 1.0;
-        }
-        else if (t === "goblin" || t === "imp") {
-            ctx.fillStyle = e.color || (t==="imp"?"#d40":"#484"); ctx.fillRect(-4, -6, 8, 10); 
-            ctx.beginPath(); ctx.moveTo(-4, -4); ctx.lineTo(-7, -8); ctx.lineTo(-4, -2); ctx.fill();
-            ctx.beginPath(); ctx.moveTo(4, -4); ctx.lineTo(7, -8); ctx.lineTo(4, -2); ctx.fill();
-            ctx.fillStyle = "#ccc"; ctx.fillRect(4, 0, 4, 1);
-        }
-        else if (t === "skeleton" || t === "archer") {
-            ctx.fillStyle = "#eee"; ctx.fillRect(-3, -7, 6, 6); ctx.fillRect(-2, 0, 4, 8); 
-            ctx.strokeStyle = "#eee"; ctx.lineWidth=1;
-            ctx.beginPath(); ctx.moveTo(-4, 2); ctx.lineTo(4, 2); ctx.moveTo(-4, 4); ctx.lineTo(4, 4); ctx.stroke(); 
-            if (t==="archer") { ctx.strokeStyle="#852"; ctx.lineWidth=1; ctx.beginPath(); ctx.arc(5, 0, 5, -1, 1); ctx.stroke(); } 
-            else { ctx.fillStyle="#aaa"; ctx.fillRect(4, -2, 2, 8); } 
-        }
-        else if (t === "orc" || t === "hellknight") {
-            ctx.fillStyle = t==="orc"?"#262":"#300"; ctx.fillRect(-6, -8, 12, 14); 
-            if(t==="orc"){ ctx.fillStyle="#fff"; ctx.fillRect(-3,-3,1,2); ctx.fillRect(2,-3,1,2); } 
-            else { ctx.fillStyle="#111"; ctx.fillRect(-2, -6, 4, 2); } 
-            ctx.fillStyle = "#555"; ctx.fillRect(6, -8, 2, 16); ctx.fillRect(4, -8, 6, 4);
-        }
-        else if (t === "mage" || t === "ghost" || t === "succubus") {
-            ctx.fillStyle = t==="ghost"?"rgba(200,255,255,0.7)":t==="succubus"?"#f0f":"#408";
-            ctx.beginPath(); ctx.moveTo(0, -8); ctx.lineTo(-5, 8); ctx.lineTo(5, 8); ctx.fill();
-            if(t==="mage") { ctx.fillStyle="#840"; ctx.fillRect(4, -8, 1, 16); ctx.fillStyle="#0ff"; ctx.fillRect(3,-10,3,3); } 
-            if(t==="succubus") { ctx.fillStyle="#000"; ctx.fillRect(-6,-4,3,3); ctx.fillRect(3,-4,3,3); } 
-        }
-        else if (t === "chest") {
-            ctx.fillStyle = "#a60"; ctx.fillRect(-6, -4, 12, 8); ctx.fillStyle = "#fd0"; ctx.fillRect(-1, -2, 2, 3); 
-            ctx.strokeStyle = "#420"; ctx.strokeRect(-6, -4, 12, 8);
-        }
-        else { ctx.fillStyle = e.color || "#ccc"; ctx.fillRect(-s/2, -s/2, s, s); }
-    }
-	
-	
-        
         if(e.input && e.input.block) { ctx.strokeStyle = "#0ff"; ctx.lineWidth=2; ctx.beginPath(); ctx.arc(0,0,14,0,Math.PI*2); ctx.stroke(); }
         ctx.restore();
 
@@ -1354,6 +1184,7 @@ function draw() {
         }
     });
 
+    // FOG OF WAR e Iluminação (Mobile usa versão simplificada)
     ctx.save();
     const sy=Math.floor(cam.y/SCALE), ey=sy+Math.ceil(canvas.height/SCALE)+1; const sx=Math.floor(cam.x/SCALE), ex=sx+Math.ceil(canvas.width/SCALE)+1;
     for(let y=sy; y<ey; y++){
@@ -1366,44 +1197,29 @@ function draw() {
             }
         }
     }
-    const innerRadius = lightRadiusPixels * 0.7; const outerRadius = lightRadiusPixels * 1.0;
-    const gradient = ctx.createRadialGradient(playerScreenX, playerScreenY, innerRadius, playerScreenX, playerScreenY, outerRadius);
-    gradient.addColorStop(0, 'rgba(0, 0, 0, 0)'); gradient.addColorStop(0.75, 'rgba(0, 0, 0, 0.2)'); gradient.addColorStop(1, 'rgba(0, 0, 0, 1)'); 
-    ctx.fillStyle = gradient; ctx.fillRect(0, 0, canvas.width, canvas.height);
+    
+    // Degradê radial é caro no mobile, usar apenas um overlay escuro se estiver longe
+    if(!isMobile) {
+        const innerRadius = lightRadiusPixels * 0.7; const outerRadius = lightRadiusPixels * 1.0;
+        const gradient = ctx.createRadialGradient(playerScreenX, playerScreenY, innerRadius, playerScreenX, playerScreenY, outerRadius);
+        gradient.addColorStop(0, 'rgba(0, 0, 0, 0)'); gradient.addColorStop(0.75, 'rgba(0, 0, 0, 0.2)'); gradient.addColorStop(1, 'rgba(0, 0, 0, 1)'); 
+        ctx.fillStyle = gradient; ctx.fillRect(0, 0, canvas.width, canvas.height);
+    }
     ctx.restore(); 
     
-    // --- NAVIGATION HINT ARROW ---
     if(state.hint && me) {
-        const hintDx = state.hint.x - me.x;
-        const hintDy = state.hint.y - me.y;
-        const dist = Math.hypot(hintDx, hintDy);
-        
+        const hintDx = state.hint.x - me.x; const hintDy = state.hint.y - me.y; const dist = Math.hypot(hintDx, hintDy);
         if(dist > 8) {
             const angle = Math.atan2(hintDy, hintDx);
             const radius = 40; 
             const ax = ox + me.x*SCALE + SCALE/2 + Math.cos(angle)*radius;
             const ay = oy + me.y*SCALE + SCALE/2 + Math.sin(angle)*radius;
-            
-            ctx.save();
-            ctx.translate(ax, ay);
-            ctx.rotate(angle);
-            
-            const scale = 1 + Math.sin(Date.now() / 200) * 0.2;
-            ctx.scale(scale, scale);
-            
+            ctx.save(); ctx.translate(ax, ay); ctx.rotate(angle); 
+            const scale = 1 + Math.sin(Date.now() / 200) * 0.2; ctx.scale(scale, scale);
             ctx.fillStyle = state.hint.type === "exit" ? "#0f0" : "#f00";
-            ctx.shadowBlur = 10;
-            ctx.shadowColor = ctx.fillStyle;
-            
-            ctx.beginPath();
-            ctx.moveTo(6, 0);
-            ctx.lineTo(-6, -6);
-            ctx.lineTo(-6, 6);
-            ctx.closePath();
-            ctx.fill();
-            
-            ctx.restore();
-            ctx.shadowBlur = 0;
+            if(!isMobile){ ctx.shadowBlur = 10; ctx.shadowColor = ctx.fillStyle; }
+            ctx.beginPath(); ctx.moveTo(6, 0); ctx.lineTo(-6, -6); ctx.lineTo(-6, 6); ctx.closePath(); ctx.fill();
+            ctx.restore(); ctx.shadowBlur = 0;
         }
     }
 
@@ -1413,18 +1229,11 @@ function draw() {
     drawOffscreenPlayerIndicators(); 
     
     for(let i=texts.length-1; i>=0; i--){ 
-        let t=texts[i]; 
-        t.y += t.vy;
-        t.life--; 
+        let t=texts[i]; t.y += t.vy; t.life--; 
         ctx.globalAlpha = Math.min(1.0, Math.max(0, t.life / 50)); 
-        ctx.fillStyle = t.color; 
-        ctx.font = t.size || "10px Courier New"; 
-        ctx.textAlign = "center"; 
-        ctx.strokeStyle = "#000";
-        ctx.lineWidth = 3;
-        ctx.strokeText(t.val, ox+t.x*SCALE, oy+t.y*SCALE);
-        ctx.fillText(t.val, ox+t.x*SCALE, oy+t.y*SCALE); 
-        ctx.globalAlpha = 1.0; 
+        ctx.fillStyle = t.color; ctx.font = t.size || "10px Courier New"; ctx.textAlign = "center"; 
+        if(!isMobile) { ctx.strokeStyle = "#000"; ctx.lineWidth = 3; ctx.strokeText(t.val, ox+t.x*SCALE, oy+t.y*SCALE); }
+        ctx.fillText(t.val, ox+t.x*SCALE, oy+t.y*SCALE); ctx.globalAlpha = 1.0; 
         if(t.life<=0) texts.splice(i,1); 
     }
 }
@@ -1435,6 +1244,5 @@ window.addStat = (s) => socket.emit("add_stat", s);
 window.buy = (idx) => socket.emit("buy", shopItems[idx]);
 window.sell = () => { if(!me || !uiState.shop || focusArea !== 'inventory' || me.inventory.length === 0) return; socket.emit("sell", focusIndex); updateUI(); };
 window.closeShop = closeAllMenus;
-
 
 draw();
