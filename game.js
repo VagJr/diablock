@@ -1139,245 +1139,195 @@ function draw() {
         }
         ctx.scale(dirX, 1);
 
-        // Se estiver tomando dano, desenha silhueta branca
-        if (blink) {
-            ctx.fillStyle = "#fff";
-            if (e.boss) { ctx.beginPath(); ctx.arc(0, -s/2, s, 0, Math.PI*2); ctx.fill(); } 
-            else { ctx.fillRect(-s/2, -s, s, s); }
-        } else {
-            // ===============================================
-            //  DESENHO DOS MOBS E BOSSES (VISUAL NOVO)
-            // ===============================================
-            
-            // --- JOGADORES (CLASSES) ---
-            if (e.class) {
-                let c = e.class; 
-                // Corpo
-                ctx.fillStyle = (c==="knight"?"#668":c==="hunter"?"#464":"#448"); 
-                ctx.fillRect(-4, -6, 8, 12);
-                
-                // Equipamentos Visuais
-                if(e.equipment && e.equipment.head) { ctx.fillStyle=e.equipment.head.color; ctx.fillRect(-4,-9,8,5); }
-                if(e.equipment && e.equipment.body) { ctx.fillStyle=e.equipment.body.color; ctx.fillRect(-3,-4,6,8); }
-                
-                // Arma
-                if(e.equipment && e.equipment.hand) {
-                    let k = e.equipment.hand.key;
-                    if(k.includes("sword")||k.includes("axe")||k.includes("dagger")) { 
-                        ctx.fillStyle="#ccc"; ctx.fillRect(4, -8, 2, 14); // Lamina
-                        ctx.fillStyle="#840"; ctx.fillRect(3, 2, 4, 2); // Cabo
-                    }
-                    if(k.includes("bow")) { 
-                        ctx.strokeStyle="#a84"; ctx.lineWidth=2; ctx.beginPath(); ctx.arc(4, 0, 7, -1.5, 1.5); ctx.stroke(); 
-                        ctx.beginPath(); ctx.moveTo(4, -7); ctx.lineTo(4, 7); ctx.strokeStyle="#fff"; ctx.lineWidth=0.5; ctx.stroke(); 
-                    }
-                    if(k.includes("staff")) { 
-                        ctx.fillStyle="#630"; ctx.fillRect(5, -10, 2, 18); 
-                        ctx.fillStyle=e.equipment.hand.color; ctx.beginPath(); ctx.arc(6, -12, 3, 0, Math.PI*2); ctx.fill();
-                    }
-                }
-                
-                // Olhos do Jogador
-                if (e.id === myId) {
-                    ctx.fillStyle = "white"; ctx.fillRect(-2, -4, 2, 2); ctx.fillRect(2, -4, 2, 2); 
-                    let lookAngle = (!isMobile && !gamepadActive) ? getMouseAngle() : getAttackAngle();
-                    let lx = Math.cos(lookAngle); let ly = Math.sin(lookAngle);
-                    if (dirX === -1) lx = -lx; 
-                    ctx.fillStyle = "black"; ctx.fillRect(-2 + lx, -4 + ly, 1, 1); ctx.fillRect(2 + lx, -4 + ly, 1, 1); 
-                } else {
-                    ctx.fillStyle = "#000"; ctx.fillRect(-2, -4, 1, 1); ctx.fillRect(2, -4, 1, 1);
-                }
+        // ===============================================
+// HIT FLASH — pisca o PRÓPRIO CORPO em branco usando filtro
+    // ===============================================
+    
+    // Configura o filtro se estiver piscando (2 frames sim, 2 não = piscar rápido)
+    const isFlashing = blink && (e.hitFlash % 4 < 2);
+    
+    if (isFlashing) {
+        // Aumenta o brilho para 1000% (vira branco) e remove cor
+        ctx.filter = "brightness(1000%) grayscale(100%)"; 
+    }
+
+    // ===============================================
+    //  DESENHO DOS MOBS E BOSSES (VISUAL NOVO)
+    // ===============================================
+    
+    // --- JOGADORES (CLASSES) ---
+    if (e.class) {
+        let c = e.class; 
+        // Corpo
+        ctx.fillStyle = (c==="knight"?"#668":c==="hunter"?"#464":"#448"); 
+        ctx.fillRect(-4, -6, 8, 12);
+        
+        // Equipamentos Visuais
+        if(e.equipment && e.equipment.head) { ctx.fillStyle=e.equipment.head.color; ctx.fillRect(-4,-9,8,5); }
+        if(e.equipment && e.equipment.body) { ctx.fillStyle=e.equipment.body.color; ctx.fillRect(-3,-4,6,8); }
+        
+        // Arma
+        if(e.equipment && e.equipment.hand) {
+            let k = e.equipment.hand.key;
+            if(k.includes("sword")||k.includes("axe")||k.includes("dagger")) { 
+                ctx.fillStyle="#ccc"; ctx.fillRect(4, -8, 2, 14); // Lamina
+                ctx.fillStyle="#840"; ctx.fillRect(3, 2, 4, 2); // Cabo
             }
-            
-            // --- RESOURCES ---
-            else if (e.ai === "resource") {
-                if(e.drop==="wood") { 
-                    ctx.fillStyle="#532"; ctx.fillRect(-2, -2, 4, 6); // Tronco
-                    ctx.fillStyle="#151"; ctx.beginPath(); ctx.moveTo(0,-16); ctx.lineTo(-10,-2); ctx.lineTo(10,-2); ctx.fill(); // Folhas
-                    ctx.fillStyle="#262"; ctx.beginPath(); ctx.moveTo(0,-14); ctx.lineTo(-7,-4); ctx.lineTo(7,-4); ctx.fill(); 
-                } else { 
-                    ctx.fillStyle="#555"; ctx.beginPath(); ctx.arc(0,0,6,0,Math.PI*2); ctx.fill();
-                    ctx.fillStyle="#777"; ctx.beginPath(); ctx.arc(-2,-2,3,0,Math.PI*2); ctx.fill();
-                }
+            if(k.includes("bow")) { 
+                ctx.strokeStyle="#a84"; ctx.lineWidth=2; ctx.beginPath(); ctx.arc(4, 0, 7, -1.5, 1.5); ctx.stroke(); 
+                ctx.beginPath(); ctx.moveTo(4, -7); ctx.lineTo(4, 7); ctx.strokeStyle="#fff"; ctx.lineWidth=0.5; ctx.stroke(); 
             }
-
-            // --- NPCS ---
-            else if (e.npc) {
-                ctx.fillStyle = e.name==="Merchant"?"#a84":e.name==="Healer"?"#fff":"#555";
-                ctx.fillRect(-5,-8,10,14); // Corpo
-                ctx.fillStyle="#fcc"; ctx.fillRect(-3,-12,6,4); // Cabeça
-                if(e.name==="Merchant") { ctx.fillStyle="#a84"; ctx.fillRect(-4,-13,8,2); ctx.fillStyle="#0f0"; ctx.fillText("$", 0, -16); } 
-                if(e.name==="Healer") { ctx.fillStyle="#f00"; ctx.fillRect(-1,-10,2,6); ctx.fillRect(-3,-8,6,2); } 
-                if(e.name==="Blacksmith") { ctx.fillStyle="#333"; ctx.fillRect(4, -2, 4, 8); } 
-            }
-
-            // --- BOSSES ---
-            else if (e.boss) {
-                const bs = s; 
-                if (e.name.includes("Butcher")) {
-                    // CORPO: Um grande retângulo largo (Gordo e pixelado)
-                    ctx.fillStyle = "#900"; // Vermelho sangue escuro
-                    // Desenha o corpo mais largo que alto
-                    ctx.fillRect(-bs/1.1, -bs/2, bs*1.8, bs);
-
-                    // CABEÇA: Um quadrado "enterrado" nos ombros
-                    ctx.fillStyle = "#700"; 
-                    ctx.fillRect(-bs/3, -bs + 4, bs/1.5, bs/2);
-                    
-                    // OLHOS: Pixels brancos puros (sem anti-aliasing visual)
-                    ctx.fillStyle = "#fff";
-                    ctx.fillRect(-3, -bs + 8, 2, 2);
-                    ctx.fillRect(3, -bs + 8, 2, 2);
-
-                    // AVENTAL: Retângulo cinza cobrindo o peito/barriga
-                    ctx.fillStyle = "#ccc"; 
-                    ctx.fillRect(-bs/1.5, -bs/3, bs*1.3, bs*0.7);
-                    
-                    // MANCHAS DE SANGUE: Quadrados perfeitos espalhados (Pixel Art style)
-                    ctx.fillStyle = "#b00"; 
-                    ctx.fillRect(-5, 0, 4, 4);
-                    ctx.fillRect(6, -5, 3, 3);
-                    ctx.fillRect(-bs/2, 5, 5, 5);
-
-                    // O FACÃO (CLEAVER): Geometria bruta e reta
-                    ctx.save();
-                    ctx.translate(bs, 0); // Na mão direita
-                    
-                    // Cabo (Marrom escuro)
-                    ctx.fillStyle = "#421"; 
-                    ctx.fillRect(-2, 2, 4, 6);
-                    
-                    // Lâmina (Retângulo cinza maciço)
-                    ctx.fillStyle = "#667"; 
-                    ctx.fillRect(-2, -14, 12, 16); 
-                    
-                    // Fio de corte (Linha clara na borda)
-                    ctx.fillStyle = "#aaa";
-                    ctx.fillRect(-2, -14, 2, 16);
-
-                    // Ponta com sangue (Quadrado vermelho na ponta)
-                    ctx.fillStyle = "#a00";
-                    ctx.fillRect(-2, -4, 12, 6);
-                    
-                    ctx.restore();
-                }
-                else if (e.name.includes("Lich")) {
-                    ctx.fillStyle = "#222"; ctx.beginPath(); ctx.moveTo(0, -bs); ctx.lineTo(-bs/2, bs/2); ctx.lineTo(bs/2, bs/2); ctx.fill(); 
-                    ctx.fillStyle = "#eee"; ctx.beginPath(); ctx.arc(0, -bs/2, 6, 0, Math.PI*2); ctx.fill(); 
-                    ctx.fillStyle = "#0ff"; ctx.fillRect(-2, -bs/2 - 2, 1, 1); ctx.fillRect(1, -bs/2 - 2, 1, 1); 
-                    ctx.strokeStyle = "#db0"; ctx.lineWidth=2; ctx.strokeRect(-4, -bs/2-6, 8, 2); 
-                }
-                else if (e.name.includes("Broodmother")) {
-                    ctx.fillStyle = "#120"; ctx.lineWidth = 2; ctx.strokeStyle = "#120";
-                    for(let i=0; i<4; i++) { ctx.beginPath(); ctx.moveTo(0,0); ctx.lineTo(bs, (i*6)-10); ctx.moveTo(0,0); ctx.lineTo(-bs, (i*6)-10); ctx.stroke(); }
-                    ctx.fillStyle = "#241"; ctx.beginPath(); ctx.arc(0, 0, bs/2, 0, Math.PI*2); ctx.fill(); 
-                    ctx.fillStyle = "#f00"; ctx.fillRect(-2, -bs/2, 1, 1); ctx.fillRect(1, -bs/2, 1, 1); 
-                }
-                else if (e.name.includes("Fire Lord")) {
-                    ctx.fillStyle = "#f80"; let wobble = Math.sin(Date.now()/100) * 2;
-                    ctx.beginPath(); ctx.arc(0, wobble, bs/2, 0, Math.PI*2); ctx.fill();
-                    ctx.fillStyle = "#ff0"; ctx.beginPath(); ctx.arc(0, wobble, bs/3, 0, Math.PI*2); ctx.fill();
-                    ctx.fillStyle = "#f40"; ctx.fillRect(-bs, wobble - 10, 6, 6); ctx.fillRect(bs-6, wobble - 10, 6, 6);
-                }
-                else if (e.name.includes("Void")) {
-                    ctx.fillStyle = "#fff"; ctx.beginPath(); ctx.arc(0, 0, bs/2, 0, Math.PI*2); ctx.fill(); 
-                    ctx.fillStyle = "#909"; ctx.beginPath(); ctx.arc(0, 0, bs/3, 0, Math.PI*2); ctx.fill(); 
-                    ctx.fillStyle = "#000"; ctx.beginPath(); ctx.arc(0, 0, bs/5, 0, Math.PI*2); ctx.fill(); 
-                    ctx.strokeStyle = "#909"; ctx.lineWidth=2;
-                    ctx.beginPath(); ctx.moveTo(0, bs/2); ctx.quadraticCurveTo(5, bs, 0, bs+5); ctx.stroke();
-                    ctx.beginPath(); ctx.moveTo(-5, bs/2); ctx.quadraticCurveTo(-10, bs, -5, bs+5); ctx.stroke();
-                }
-                else if (e.name.includes("DIABLO")) {
-
-    const scale = 1.6;          // 👈 AUMENTA O TAMANHO DO DIABLO
-    const b = bs * scale;       // bs escalado
-
-    ctx.fillStyle = "#a00";
-    ctx.beginPath();
-    ctx.moveTo(-10*scale, 10*scale);
-    ctx.lineTo(-b/2, -b/2);
-    ctx.lineTo(b/2, -b/2);
-    ctx.lineTo(10*scale, 10*scale);
-    ctx.fill();
-
-    ctx.fillRect(-6*scale, -b/2 - 8*scale, 12*scale, 10*scale);
-
-    ctx.fillStyle = "#eee";
-    ctx.beginPath();
-    ctx.moveTo(-6*scale, -b/2 - 6*scale);
-    ctx.lineTo(-12*scale, -b - 5*scale);
-    ctx.lineTo(-2*scale, -b/2 - 8*scale);
-    ctx.fill();
-
-    ctx.beginPath();
-    ctx.moveTo(6*scale, -b/2 - 6*scale);
-    ctx.lineTo(12*scale, -b - 5*scale);
-    ctx.lineTo(2*scale, -b/2 - 8*scale);
-    ctx.fill();
-
-    ctx.fillStyle = "#ff0";
-    ctx.fillRect(-3*scale, -b/2 - 4*scale, 2*scale, 2*scale);
-    ctx.fillRect(1*scale, -b/2 - 4*scale, 2*scale, 2*scale);
-
-    ctx.strokeStyle = "#a00";
-    ctx.lineWidth = 4 * scale;
-    ctx.beginPath();
-    ctx.moveTo(0, 5*scale);
-    ctx.quadraticCurveTo(-b, 5*scale, -b - 5*scale, -5*scale);
-    ctx.stroke();
-}
-
-                else { ctx.fillStyle = e.color || "#f00"; ctx.fillRect(-s/2, -s/2, s, s); }
-            }
-
-            // --- MOBS COMUNS ---
-            else {
-                const t = e.type;
-                if (t === "rat") {
-                    ctx.fillStyle = "#654"; ctx.beginPath(); ctx.ellipse(0, 2, 6, 3, 0, 0, Math.PI*2); ctx.fill(); 
-                    ctx.fillStyle = "#fbb"; ctx.beginPath(); ctx.moveTo(6, 2); ctx.lineTo(10, 2); ctx.stroke(); 
-                }
-                else if (t === "bat") {
-                    ctx.fillStyle = "#222"; ctx.beginPath(); ctx.moveTo(0,0); ctx.lineTo(-8, -6); ctx.lineTo(-4, 2); ctx.lineTo(0,0); ctx.lineTo(4, 2); ctx.lineTo(8, -6); ctx.fill();
-                }
-                else if (t === "slime") {
-                    ctx.fillStyle = e.color || "#0f0"; ctx.globalAlpha = 0.8;
-                    ctx.beginPath(); ctx.arc(0, 0, 6, Math.PI, 0); ctx.lineTo(6, 4); ctx.lineTo(-6, 4); ctx.fill(); 
-                    ctx.fillStyle = "#000"; ctx.fillRect(-2, -1, 1, 1); ctx.fillRect(2, -1, 1, 1); 
-                    ctx.globalAlpha = 1.0;
-                }
-                else if (t === "goblin" || t === "imp") {
-                    ctx.fillStyle = e.color || (t==="imp"?"#d40":"#484"); ctx.fillRect(-4, -6, 8, 10); 
-                    ctx.beginPath(); ctx.moveTo(-4, -4); ctx.lineTo(-7, -8); ctx.lineTo(-4, -2); ctx.fill();
-                    ctx.beginPath(); ctx.moveTo(4, -4); ctx.lineTo(7, -8); ctx.lineTo(4, -2); ctx.fill();
-                    ctx.fillStyle = "#ccc"; ctx.fillRect(4, 0, 4, 1);
-                }
-                else if (t === "skeleton" || t === "archer") {
-                    ctx.fillStyle = "#eee"; ctx.fillRect(-3, -7, 6, 6); ctx.fillRect(-2, 0, 4, 8); 
-                    ctx.strokeStyle = "#eee"; ctx.lineWidth=1;
-                    ctx.beginPath(); ctx.moveTo(-4, 2); ctx.lineTo(4, 2); ctx.moveTo(-4, 4); ctx.lineTo(4, 4); ctx.stroke(); 
-                    if (t==="archer") { ctx.strokeStyle="#852"; ctx.lineWidth=1; ctx.beginPath(); ctx.arc(5, 0, 5, -1, 1); ctx.stroke(); } 
-                    else { ctx.fillStyle="#aaa"; ctx.fillRect(4, -2, 2, 8); } 
-                }
-                else if (t === "orc" || t === "hellknight") {
-                    ctx.fillStyle = t==="orc"?"#262":"#300"; ctx.fillRect(-6, -8, 12, 14); 
-                    if(t==="orc"){ ctx.fillStyle="#fff"; ctx.fillRect(-3,-3,1,2); ctx.fillRect(2,-3,1,2); } 
-                    else { ctx.fillStyle="#111"; ctx.fillRect(-2, -6, 4, 2); } 
-                    ctx.fillStyle = "#555"; ctx.fillRect(6, -8, 2, 16); ctx.fillRect(4, -8, 6, 4);
-                }
-                else if (t === "mage" || t === "ghost" || t === "succubus") {
-                    ctx.fillStyle = t==="ghost"?"rgba(200,255,255,0.7)":t==="succubus"?"#f0f":"#408";
-                    ctx.beginPath(); ctx.moveTo(0, -8); ctx.lineTo(-5, 8); ctx.lineTo(5, 8); ctx.fill();
-                    if(t==="mage") { ctx.fillStyle="#840"; ctx.fillRect(4, -8, 1, 16); ctx.fillStyle="#0ff"; ctx.fillRect(3,-10,3,3); } 
-                    if(t==="succubus") { ctx.fillStyle="#000"; ctx.fillRect(-6,-4,3,3); ctx.fillRect(3,-4,3,3); } 
-                }
-                else if (t === "chest") {
-                    ctx.fillStyle = "#a60"; ctx.fillRect(-6, -4, 12, 8); ctx.fillStyle = "#fd0"; ctx.fillRect(-1, -2, 2, 3); 
-                    ctx.strokeStyle = "#420"; ctx.strokeRect(-6, -4, 12, 8);
-                }
-                else { ctx.fillStyle = e.color || "#ccc"; ctx.fillRect(-s/2, -s/2, s, s); }
+            if(k.includes("staff")) { 
+                ctx.fillStyle="#630"; ctx.fillRect(5, -10, 2, 18); 
+                ctx.fillStyle=e.equipment.hand.color; ctx.beginPath(); ctx.arc(6, -12, 3, 0, Math.PI*2); ctx.fill();
             }
         }
+        
+        // Olhos do Jogador
+        if (e.id === myId) {
+            ctx.fillStyle = "white"; ctx.fillRect(-2, -4, 2, 2); ctx.fillRect(2, -4, 2, 2); 
+            let lookAngle = (!isMobile && !gamepadActive) ? getMouseAngle() : getAttackAngle();
+            let lx = Math.cos(lookAngle); let ly = Math.sin(lookAngle);
+            if (dirX === -1) lx = -lx; 
+            ctx.fillStyle = "black"; ctx.fillRect(-2 + lx, -4 + ly, 1, 1); ctx.fillRect(2 + lx, -4 + ly, 1, 1); 
+        } else {
+            ctx.fillStyle = "#000"; ctx.fillRect(-2, -4, 1, 1); ctx.fillRect(2, -4, 1, 1);
+        }
+    }
+    
+    // --- RESOURCES ---
+    else if (e.ai === "resource") {
+        if(e.drop==="wood") { 
+            ctx.fillStyle="#532"; ctx.fillRect(-2, -2, 4, 6); // Tronco
+            ctx.fillStyle="#151"; ctx.beginPath(); ctx.moveTo(0,-16); ctx.lineTo(-10,-2); ctx.lineTo(10,-2); ctx.fill(); // Folhas
+            ctx.fillStyle="#262"; ctx.beginPath(); ctx.moveTo(0,-14); ctx.lineTo(-7,-4); ctx.lineTo(7,-4); ctx.fill(); 
+        } else { 
+            ctx.fillStyle="#555"; ctx.beginPath(); ctx.arc(0,0,6,0,Math.PI*2); ctx.fill();
+            ctx.fillStyle="#777"; ctx.beginPath(); ctx.arc(-2,-2,3,0,Math.PI*2); ctx.fill();
+        }
+    }
+
+    // --- NPCS ---
+    else if (e.npc) {
+        ctx.fillStyle = e.name==="Merchant"?"#a84":e.name==="Healer"?"#fff":"#555";
+        ctx.fillRect(-5,-8,10,14); // Corpo
+        ctx.fillStyle="#fcc"; ctx.fillRect(-3,-12,6,4); // Cabeça
+        if(e.name==="Merchant") { ctx.fillStyle="#a84"; ctx.fillRect(-4,-13,8,2); ctx.fillStyle="#0f0"; ctx.fillText("$", 0, -16); } 
+        if(e.name==="Healer") { ctx.fillStyle="#f00"; ctx.fillRect(-1,-10,2,6); ctx.fillRect(-3,-8,6,2); } 
+        if(e.name==="Blacksmith") { ctx.fillStyle="#333"; ctx.fillRect(4, -2, 4, 8); } 
+    }
+
+    // --- BOSSES ---
+    else if (e.boss) {
+        const bs = s; 
+        if (e.name.includes("Butcher")) {
+            // CORPO: Um grande retângulo largo
+            ctx.fillStyle = "#900"; ctx.fillRect(-bs/1.1, -bs/2, bs*1.8, bs);
+            // CABEÇA
+            ctx.fillStyle = "#700"; ctx.fillRect(-bs/3, -bs + 4, bs/1.5, bs/2);
+            // OLHOS
+            ctx.fillStyle = "#fff"; ctx.fillRect(-3, -bs + 8, 2, 2); ctx.fillRect(3, -bs + 8, 2, 2);
+            // AVENTAL
+            ctx.fillStyle = "#ccc"; ctx.fillRect(-bs/1.5, -bs/3, bs*1.3, bs*0.7);
+            // MANCHAS DE SANGUE
+            ctx.fillStyle = "#b00"; ctx.fillRect(-5, 0, 4, 4); ctx.fillRect(6, -5, 3, 3); ctx.fillRect(-bs/2, 5, 5, 5);
+            // O FACÃO
+            ctx.save(); ctx.translate(bs, 0); 
+            ctx.fillStyle = "#421"; ctx.fillRect(-2, 2, 4, 6);
+            ctx.fillStyle = "#667"; ctx.fillRect(-2, -14, 12, 16); 
+            ctx.fillStyle = "#aaa"; ctx.fillRect(-2, -14, 2, 16);
+            ctx.fillStyle = "#a00"; ctx.fillRect(-2, -4, 12, 6);
+            ctx.restore();
+        } 
+        else if (e.name.includes("Lich")) {
+            ctx.fillStyle = "#222"; ctx.beginPath(); ctx.moveTo(0, -bs); ctx.lineTo(-bs/2, bs/2); ctx.lineTo(bs/2, bs/2); ctx.fill(); 
+            ctx.fillStyle = "#eee"; ctx.beginPath(); ctx.arc(0, -bs/2, 6, 0, Math.PI*2); ctx.fill(); 
+            ctx.fillStyle = "#0ff"; ctx.fillRect(-2, -bs/2 - 2, 1, 1); ctx.fillRect(1, -bs/2 - 2, 1, 1); 
+            ctx.strokeStyle = "#db0"; ctx.lineWidth=2; ctx.strokeRect(-4, -bs/2-6, 8, 2); 
+        }
+        else if (e.name.includes("Broodmother")) {
+            ctx.fillStyle = "#120"; ctx.lineWidth = 2; ctx.strokeStyle = "#120";
+            for(let i=0; i<4; i++) { ctx.beginPath(); ctx.moveTo(0,0); ctx.lineTo(bs, (i*6)-10); ctx.moveTo(0,0); ctx.lineTo(-bs, (i*6)-10); ctx.stroke(); }
+            ctx.fillStyle = "#241"; ctx.beginPath(); ctx.arc(0, 0, bs/2, 0, Math.PI*2); ctx.fill(); 
+            ctx.fillStyle = "#f00"; ctx.fillRect(-2, -bs/2, 1, 1); ctx.fillRect(1, -bs/2, 1, 1); 
+        }
+        else if (e.name.includes("Fire Lord")) {
+            ctx.fillStyle = "#f80"; let wobble = Math.sin(Date.now()/100) * 2;
+            ctx.beginPath(); ctx.arc(0, wobble, bs/2, 0, Math.PI*2); ctx.fill();
+            ctx.fillStyle = "#ff0"; ctx.beginPath(); ctx.arc(0, wobble, bs/3, 0, Math.PI*2); ctx.fill();
+            ctx.fillStyle = "#f40"; ctx.fillRect(-bs, wobble - 10, 6, 6); ctx.fillRect(bs-6, wobble - 10, 6, 6);
+        }
+        else if (e.name.includes("Void")) {
+            ctx.fillStyle = "#fff"; ctx.beginPath(); ctx.arc(0, 0, bs/2, 0, Math.PI*2); ctx.fill(); 
+            ctx.fillStyle = "#909"; ctx.beginPath(); ctx.arc(0, 0, bs/3, 0, Math.PI*2); ctx.fill(); 
+            ctx.fillStyle = "#000"; ctx.beginPath(); ctx.arc(0, 0, bs/5, 0, Math.PI*2); ctx.fill(); 
+            ctx.strokeStyle = "#909"; ctx.lineWidth=2;
+            ctx.beginPath(); ctx.moveTo(0, bs/2); ctx.quadraticCurveTo(5, bs, 0, bs+5); ctx.stroke();
+            ctx.beginPath(); ctx.moveTo(-5, bs/2); ctx.quadraticCurveTo(-10, bs, -5, bs+5); ctx.stroke();
+        }
+        else if (e.name.includes("DIABLO")) {
+            const scale = 1.6; const b = bs * scale; 
+            ctx.fillStyle = "#a00"; ctx.beginPath(); ctx.moveTo(-10*scale, 10*scale); ctx.lineTo(-b/2, -b/2); ctx.lineTo(b/2, -b/2); ctx.lineTo(10*scale, 10*scale); ctx.fill();
+            ctx.fillRect(-6*scale, -b/2 - 8*scale, 12*scale, 10*scale);
+            ctx.fillStyle = "#eee";
+            ctx.beginPath(); ctx.moveTo(-6*scale, -b/2 - 6*scale); ctx.lineTo(-12*scale, -b - 5*scale); ctx.lineTo(-2*scale, -b/2 - 8*scale); ctx.fill();
+            ctx.beginPath(); ctx.moveTo(6*scale, -b/2 - 6*scale); ctx.lineTo(12*scale, -b - 5*scale); ctx.lineTo(2*scale, -b/2 - 8*scale); ctx.fill();
+            ctx.fillStyle = "#ff0"; ctx.fillRect(-3*scale, -b/2 - 4*scale, 2*scale, 2*scale); ctx.fillRect(1*scale, -b/2 - 4*scale, 2*scale, 2*scale);
+            ctx.strokeStyle = "#a00"; ctx.lineWidth = 4 * scale;
+            ctx.beginPath(); ctx.moveTo(0, 5*scale); ctx.quadraticCurveTo(-b, 5*scale, -b - 5*scale, -5*scale); ctx.stroke();
+        }
+        else { ctx.fillStyle = e.color || "#f00"; ctx.fillRect(-s/2, -s/2, s, s); }
+    }
+
+    // --- MOBS COMUNS ---
+    else {
+        const t = e.type;
+        if (t === "rat") {
+            ctx.fillStyle = "#654"; ctx.beginPath(); ctx.ellipse(0, 2, 6, 3, 0, 0, Math.PI*2); ctx.fill(); 
+            ctx.fillStyle = "#fbb"; ctx.beginPath(); ctx.moveTo(6, 2); ctx.lineTo(10, 2); ctx.stroke(); 
+        }
+        else if (t === "bat") {
+            ctx.fillStyle = "#222"; ctx.beginPath(); ctx.moveTo(0,0); ctx.lineTo(-8, -6); ctx.lineTo(-4, 2); ctx.lineTo(0,0); ctx.lineTo(4, 2); ctx.lineTo(8, -6); ctx.fill();
+        }
+        else if (t === "slime") {
+            ctx.fillStyle = e.color || "#0f0"; ctx.globalAlpha = 0.8;
+            ctx.beginPath(); ctx.arc(0, 0, 6, Math.PI, 0); ctx.lineTo(6, 4); ctx.lineTo(-6, 4); ctx.fill(); 
+            ctx.fillStyle = "#000"; ctx.fillRect(-2, -1, 1, 1); ctx.fillRect(2, -1, 1, 1); 
+            ctx.globalAlpha = 1.0;
+        }
+        else if (t === "goblin" || t === "imp") {
+            ctx.fillStyle = e.color || (t==="imp"?"#d40":"#484"); ctx.fillRect(-4, -6, 8, 10); 
+            ctx.beginPath(); ctx.moveTo(-4, -4); ctx.lineTo(-7, -8); ctx.lineTo(-4, -2); ctx.fill();
+            ctx.beginPath(); ctx.moveTo(4, -4); ctx.lineTo(7, -8); ctx.lineTo(4, -2); ctx.fill();
+            ctx.fillStyle = "#ccc"; ctx.fillRect(4, 0, 4, 1);
+        }
+        else if (t === "skeleton" || t === "archer") {
+            ctx.fillStyle = "#eee"; ctx.fillRect(-3, -7, 6, 6); ctx.fillRect(-2, 0, 4, 8); 
+            ctx.strokeStyle = "#eee"; ctx.lineWidth=1;
+            ctx.beginPath(); ctx.moveTo(-4, 2); ctx.lineTo(4, 2); ctx.moveTo(-4, 4); ctx.lineTo(4, 4); ctx.stroke(); 
+            if (t==="archer") { ctx.strokeStyle="#852"; ctx.lineWidth=1; ctx.beginPath(); ctx.arc(5, 0, 5, -1, 1); ctx.stroke(); } 
+            else { ctx.fillStyle="#aaa"; ctx.fillRect(4, -2, 2, 8); } 
+        }
+        else if (t === "orc" || t === "hellknight") {
+            ctx.fillStyle = t==="orc"?"#262":"#300"; ctx.fillRect(-6, -8, 12, 14); 
+            if(t==="orc"){ ctx.fillStyle="#fff"; ctx.fillRect(-3,-3,1,2); ctx.fillRect(2,-3,1,2); } 
+            else { ctx.fillStyle="#111"; ctx.fillRect(-2, -6, 4, 2); } 
+            ctx.fillStyle = "#555"; ctx.fillRect(6, -8, 2, 16); ctx.fillRect(4, -8, 6, 4);
+        }
+        else if (t === "mage" || t === "ghost" || t === "succubus") {
+            ctx.fillStyle = t==="ghost"?"rgba(200,255,255,0.7)":t==="succubus"?"#f0f":"#408";
+            ctx.beginPath(); ctx.moveTo(0, -8); ctx.lineTo(-5, 8); ctx.lineTo(5, 8); ctx.fill();
+            if(t==="mage") { ctx.fillStyle="#840"; ctx.fillRect(4, -8, 1, 16); ctx.fillStyle="#0ff"; ctx.fillRect(3,-10,3,3); } 
+            if(t==="succubus") { ctx.fillStyle="#000"; ctx.fillRect(-6,-4,3,3); ctx.fillRect(3,-4,3,3); } 
+        }
+        else if (t === "chest") {
+            ctx.fillStyle = "#a60"; ctx.fillRect(-6, -4, 12, 8); ctx.fillStyle = "#fd0"; ctx.fillRect(-1, -2, 2, 3); 
+            ctx.strokeStyle = "#420"; ctx.strokeRect(-6, -4, 12, 8);
+        }
+        else { ctx.fillStyle = e.color || "#ccc"; ctx.fillRect(-s/2, -s/2, s, s); }
+    }
+	
+	
         
         if(e.input && e.input.block) { ctx.strokeStyle = "#0ff"; ctx.lineWidth=2; ctx.beginPath(); ctx.arc(0,0,14,0,Math.PI*2); ctx.stroke(); }
         ctx.restore();
@@ -1485,5 +1435,6 @@ window.addStat = (s) => socket.emit("add_stat", s);
 window.buy = (idx) => socket.emit("buy", shopItems[idx]);
 window.sell = () => { if(!me || !uiState.shop || focusArea !== 'inventory' || me.inventory.length === 0) return; socket.emit("sell", focusIndex); updateUI(); };
 window.closeShop = closeAllMenus;
+
 
 draw();
