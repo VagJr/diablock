@@ -483,7 +483,17 @@ function generateDungeon(inst) {
 function spawnMob(inst, x, y, type, mult) {
     const data = MOB_DATA[type];
     const mid = "m"+(++inst.mobId);
-    inst.mobs[mid] = { id: mid, type, x, y, vx:0, vy:0, hp: Math.floor(data.hp * mult), maxHp: Math.floor(data.hp * mult), dmg: Math.floor(data.dmg * mult), xp: Math.floor(data.xp * mult), gold: Math.floor(data.gold*mult), spd: data.spd, ai: data.ai, size: data.size, range: data.range, poise: data.poise, npc:data.npc, boss:data.boss, drop: data.drop, proj: data.proj, state: "idle", timer: 0, hitFlash: 0, name: data.name || type.toUpperCase(), color: data.color || null };
+    inst.mobs[mid] = { 
+        id: mid, type, x, y, vx:0, vy:0, 
+        hp: Math.floor(data.hp * mult), maxHp: Math.floor(data.hp * mult), 
+        dmg: Math.floor(data.dmg * mult), xp: Math.floor(data.xp * mult), 
+        gold: Math.floor(data.gold*mult), spd: data.spd, ai: data.ai, 
+        size: data.size, range: data.range, poise: data.poise, 
+        npc:data.npc, boss:data.boss, drop: data.drop, proj: data.proj, 
+        state: "idle", timer: 0, hitFlash: 0, 
+        name: data.name || type.toUpperCase(), color: data.color || null,
+        stun: 0 // NOVO: Timer de atordoamento para o recuo fluído
+    };
     if(data.npc) {
         let shopItems = [];
         if (type === "merchant") {
@@ -703,7 +713,8 @@ io.on("connection", socket => {
         let damage = p.stats.dmg; let isCrit = Math.random() < p.stats.crit; if (isCrit) damage = Math.floor(damage * 1.5);
         if(type === "melee") {
             io.to(inst.id).emit("fx", { type: "slash", x: p.x, y: p.y, angle: ang });
-            hitArea(inst, p, p.x, p.y, 2.0, ang, 1.5, damage, 20, isCrit);
+            // kbForce: Normal = 15, Crítico = 35 (define se pula 1, 2 ou 3 tiles no damageMob)
+            hitArea(inst, p, p.x, p.y, 2.0, ang, 1.5, damage, isCrit ? 35 : 15, isCrit);
         } else {
             if(type==="magic" && p.mp < 2) return; if(type==="magic") p.mp -= 2;
             const spawnX = p.x + Math.cos(ang) * 0.5; const spawnY = p.y + Math.sin(ang) * 0.5;
@@ -813,7 +824,21 @@ function damageMob(inst, m, dmg, owner, kx, ky, kbForce=10, isCrit=false) {
         return;
     }
     
-    if(kbForce > m.poise) { const dist = Math.hypot(kx, ky) || 1; let nvx = (kx/dist)*0.25, nvy = (ky/dist)*0.25; if(!isWall(inst, m.x+nvx, m.y)) m.vx += nvx; if(!isWall(inst, m.x, m.y+nvy)) m.vy += nvy; }
+    // --- NOVO: RECUO SUAVE E FLUÍDO (KNOCKBACK) ---
+    if (kbForce > m.poise) {
+        const dist = Math.hypot(kx, ky) || 1;
+        const dirX = kx / dist;
+        const dirY = ky / dist;
+
+        // Escalonamento: Normal (~15kb) dá impulso de 0.4. Crítico (~35kb) dá impulso de ~1.2.
+        // Fricção de 0.7 faz 0.4 de impulso percorrer ~1 tile, e 1.2 percorrer ~3 tiles.
+        const power = Math.max(0.3, (kbForce / 25) + (isCrit ? 0.3 : 0));
+        
+        m.vx = dirX * power;
+        m.vy = dirY * power;
+        m.stun = 6; // Trava a IA por 300ms (6 ticks) para o efeito ser visível
+    }
+
     io.to(inst.id).emit("txt", {x:m.x, y:m.y-1, val:Math.floor(dmg), color: isCrit?"#f0f":"#f33", isCrit});
     
     if(m.hp <= 0) {
@@ -930,7 +955,6 @@ setInterval(() => {
                 
                 if (pr.type === "stairs" && dist < 1.0) {
                     if (!pr.locked) {
-                        // Logic moved to a choice event for city stairs
                         if (inst.level !== 0) changeLevel(io.sockets.sockets.get(p.id), p, inst.level + 1);
                         return;
                     } else {
@@ -953,21 +977,39 @@ setInterval(() => {
         
         Object.values(inst.mobs).forEach(m => {
             if(m.npc || m.ai === "static" || m.ai === "resource") return;
-            let t = null; let minDistSq = Infinity;
-            Object.values(inst.players).forEach(p => {
-                if(p.hp <= 0) return;
-                const dx = p.x - m.x; const dy = p.y - m.y; const distSq = dx*dx + dy*dy;
-                if(distSq < 225 && distSq < minDistSq) { minDistSq = distSq; t = p; }
-            });
-            if(!t) return;
-            const dist = Math.sqrt(minDistSq);
-            if(dist < 10) { 
-                let dx = Math.sign(t.x - m.x), dy = Math.sign(t.y - m.y); 
-                if(!isWall(inst, m.x + dx * m.spd, m.y)) m.x += dx * m.spd; 
-                if(!isWall(inst, m.x, m.y + dy * m.spd)) m.y += dy * m.spd; 
-                if(dist < 1 && Math.random() < 0.05) damagePlayer(t, m.dmg, m.x, m.y); 
+
+            // --- IA DO MOB E RECUO ---
+            if (m.stun > 0) {
+                m.stun--; // Se estiver em stun, ele não persegue o jogador, apenas sofre a inércia
+            } else {
+                let t = null; let minDistSq = Infinity;
+                Object.values(inst.players).forEach(p => {
+                    if(p.hp <= 0) return;
+                    const dx = p.x - m.x; const dy = p.y - m.y; const distSq = dx*dx + dy*dy;
+                    if(distSq < 225 && distSq < minDistSq) { minDistSq = distSq; t = p; }
+                });
+
+                if(t) {
+                    const dist = Math.sqrt(minDistSq);
+                    if(dist < 10) { 
+                        let dx = Math.sign(t.x - m.x), dy = Math.sign(t.y - m.y); 
+                        if(!isWall(inst, m.x + dx * m.spd, m.y)) m.x += dx * m.spd; 
+                        if(!isWall(inst, m.x, m.y + dy * m.spd)) m.y += dy * m.spd; 
+                        if(dist < 1 && Math.random() < 0.05) damagePlayer(t, m.dmg, m.x, m.y); 
+                    }
+                }
             }
-            resolveCollisions(inst, m, 0.5); m.x += m.vx; m.y += m.vy; m.vx *= 0.8; m.vy *= 0.8;
+
+            // --- FÍSICA SUAVE (APLICA vx/vy COM FRICÇÃO) ---
+            resolveCollisions(inst, m, 0.5);
+            m.x += m.vx;
+            m.y += m.vy;
+            
+            // Fricção de 0.7: O mob desacelera rapidamente, criando o deslize suave.
+            m.vx *= 0.7;
+            m.vy *= 0.7;
+
+            if (m.hitFlash > 0) m.hitFlash--;
         });
         
         for(let i = inst.projectiles.length - 1; i >= 0; i--) {
@@ -980,6 +1022,7 @@ setInterval(() => {
                 for(let k in inst.mobs) { 
                     let m = inst.mobs[k]; 
                     if(!m.npc && Math.hypot(m.x - pr.x, m.y - pr.y) < 1) { 
+                        // Projéteis aplicam knockback baseado na velocidade deles
                         damageMob(inst, m, pr.dmg, inst.players[pr.owner], pr.vx, pr.vy, 10, pr.isCrit); 
                         inst.projectiles.splice(i, 1); break; 
                     } 
