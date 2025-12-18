@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="utf-8"/>
-<title>DIABLOCK V30 - CITY & DUNGEON</title>
+<title>DIABLOCK V32 - ELITE AI</title>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Courier+New&display=swap');
@@ -50,24 +50,26 @@ h1 { text-shadow: 2px 2px #f00; color: #d00; }
 /* CHAT INPUT */
 #chat-container { position: absolute; bottom: 100px; left: 50%; transform: translateX(-50%); width: 300px; display: none; pointer-events: auto; }
 #chat-input { width: 100%; background: rgba(0,0,0,0.8); border: 1px solid #0f0; color: #fff; padding: 5px; font-family: inherit; }
-/* NOVO: GAME LOG */
+
+/* NOVO: GAME LOG (Atualizado para PC) */
 #game-log-container {
     position: absolute;
     top: 10px;
     right: 10px;
-    width: 250px;
-    height: 150px;
-    background: rgba(0, 0, 0, 0.7);
+    width: 280px;
+    height: 180px;
+    background: rgba(0, 0, 0, 0.85); /* Fundo mais escuro para visibilidade */
     border: 1px solid #0f0;
-    padding: 5px;
+    padding: 8px;
     pointer-events: none; 
     overflow-y: hidden;
-    font-size: 10px;
+    font-size: 11px; /* Fonte levemente maior */
+    z-index: 20;
 }
 #game-log {
     display: flex;
     flex-direction: column-reverse; 
-    gap: 3px;
+    gap: 4px;
     height: 100%;
     overflow-y: scroll;
 }
@@ -127,7 +129,7 @@ h1 { text-shadow: 2px 2px #f00; color: #d00; }
     transition: transform 0.05s ease-out;
 }
 
-/* ACTION BUTTONS (Right Side) - ESPACAMENTO CORRIGIDO E DEFESA ADICIONADA */
+/* ACTION BUTTONS (Right Side) */
 #action-container { 
     right: 15px; 
     width: 160px; 
@@ -245,10 +247,23 @@ h1 { text-shadow: 2px 2px #f00; color: #d00; }
 
 /* MEDIA QUERIES PARA RESPONSIVIDADE */
 
-/* Mobile (Qualquer Orientação) - CORRIGIDO: Esconde HUD de PC */
+/* Mobile (Qualquer Orientação) */
 @media (max-width: 1024px) { 
     .hud-bottom { display: none !important; } 
     #hud-gold { display: none !important; } 
+    
+    /* LOG ADAPTADO PARA MOBILE */
+    #game-log-container {
+        display: block !important;
+        top: 25px; /* Logo abaixo da barra de HUD mobile */
+        left: 50%;
+        transform: translateX(-50%);
+        width: 250px;
+        height: 80px;
+        background: rgba(0,0,0,0.5); /* Mais transparente */
+        border: none;
+        right: auto;
+    }
 }
 
 /* Mobile Horizontal (Landscape) */
