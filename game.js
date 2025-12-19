@@ -11,35 +11,206 @@ function ensureBGM() {
     bgm = new Audio("assets/bgm.mp3");
     bgm.loop = true;
     bgm.volume = 0.4;
-    bgm.addEventListener('error', function() { console.log("BGM file not found."); });
+    bgm.addEventListener('error', () => console.log("BGM file not found."));
     const p = bgm.play();
-    if (p && p.catch) { p.catch(err => { bgmStarted = false; }); }
+    if (p && p.catch) p.catch(() => bgmStarted = false);
 }
 /* ========================= */
 
-const socket = io({transports: ['websocket'], upgrade: false}); // Força Websocket para menos latência
+const socket = io({ transports: ['websocket'], upgrade: false });
 const canvas = document.getElementById("c");
-const ctx = canvas.getContext("2d", { alpha: false }); // Otimização de Canvas
+const ctx = canvas.getContext("2d", { alpha: false });
 const SCALE = 16;
+
 let myId = null, me = null;
-let state = { pl:{}, mb:{}, it:{}, pr:[], props:[], map:[], explored: [], lightRadius: 15, hint: null }; 
+let state = { pl:{}, mb:{}, it:{}, pr:[], props:[], map:[], explored: [], lightRadius: 15, hint: null };
 let recipes = [];
 let cam = { x:0, y:0 }, mouse = { x:0, y:0 };
 let texts = [], effects = [];
-let uiState = { inv: false, char: false, shop: false, craft: false, chat: false };
-let inputState = { x:0, y:0, block: false };
+let uiState = { inv:false, char:false, shop:false, craft:false, chat:false };
+let inputState = { x:0, y:0, block:false };
 let shopItems = [];
 const tooltip = document.getElementById("tooltip");
 let dragItem = null;
 
-// Detecção Mobile
 let isMobile = /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent);
 let gamepad = null;
-let gamepadActive = false; 
+let gamepadActive = false;
 let focusIndex = 0;
-let focusArea = 'equipment'; 
+let focusArea = 'equipment';
 
 const gameLog = document.getElementById("game-log");
+
+/* =========================================================
+   JOYSTICK — DECLARADO ANTES DO sendInput (FIX CRÍTICO)
+   ========================================================= */
+let joystick = {
+    active: false,
+    id: null,
+    startX: 0,
+    startY: 0,
+    normX: 0,
+    normY: 0,
+    radius: 50,
+    knob: document.getElementById('joystick-knob')
+};
+
+const keys = { w:false, a:false, s:false, d:false, q:false, game_x: 0, game_y: 0 };
+let lastInputTime = 0;
+
+function sendInput(force=false) {
+    const now = Date.now();
+    const RATE = isMobile ? 30 : 50;
+
+    let dx = (keys.d ? 1 : 0) - (keys.a ? 1 : 0);
+    let dy = (keys.s ? 1 : 0) - (keys.w ? 1 : 0);
+
+    if (gamepadActive && (Math.abs(keys.game_x) > 0.1 || Math.abs(keys.game_y) > 0.1)) {
+        dx = keys.game_x;
+        dy = keys.game_y;
+    }
+
+    if (joystick.active) {
+        dx = joystick.normX;
+        dy = joystick.normY;
+    }
+
+    if (uiState.chat) { dx = 0; dy = 0; }
+
+    // BUG DE LAG FIX: Se estivermos parando de andar, enviamos sem esperar o throttle
+    const isStopping = (dx === 0 && dy === 0 && (inputState.x !== 0 || inputState.y !== 0));
+    
+    if (!force && !isStopping && now - lastInputTime < RATE) return;
+
+    inputState = { x: dx, y: dy, block: keys.q };
+    socket.emit("input", inputState);
+    lastInputTime = now;
+}
+
+/* =========================
+   INPUT – KEYBOARD & SYSTEM
+   ========================= */
+const pressedKeys = new Set();
+
+window.addEventListener("keydown", e => {
+    if (document.getElementById("menu").style.display !== "none") return;
+    const k = e.key.toLowerCase();
+	
+    // ENTER abre o chat
+    if (k === "enter" && !uiState.chat) {
+        uiState.chat = true;
+        const container = document.getElementById("chat-container");
+        container.style.display = "block";
+        setTimeout(() => chatInput.focus(), 50);
+        playSfx("chat");
+        return;
+    }
+
+    if (pressedKeys.has(k)) return;
+    pressedKeys.add(k);
+
+    if (uiState.chat && k !== "escape") return;
+
+    if (keys.hasOwnProperty(k)) {
+        keys[k] = true;
+        sendInput(true);
+    }
+
+    if (k === "i") toggleMenu("inv");
+    if (k === "c") toggleMenu("char");
+    if (k === "k") toggleMenu("craft");
+    if (k === "escape") closeAllMenus();
+    if (k === " ") socket.emit("dash", getDashAngle());
+    if (k === "e") socket.emit("potion");
+
+    updateUI();
+});
+
+window.addEventListener("keyup", e => {
+    const k = e.key.toLowerCase();
+    pressedKeys.delete(k);
+    if (keys.hasOwnProperty(k)) {
+        keys[k] = false;
+        sendInput(true);
+    }
+});
+
+function toggleMenu(menu) {
+    const wasOpen = uiState[menu];
+    uiState.inv = uiState.char = uiState.shop = uiState.craft = false;
+    uiState[menu] = !wasOpen;
+}
+
+/* =========================
+   INPUT – TOUCH (MOBILE)
+   ========================= */
+const JOYSTICK_AREA_EL = document.getElementById('joystick-area');
+
+const handleTouchStart = (e) => {
+    if (gamepadActive) return;
+    if (AudioCtrl.ctx.state === 'suspended') AudioCtrl.ctx.resume();
+    AudioCtrl.init();
+    if (uiState.chat || document.getElementById("menu").style.display !== "none") return;
+
+    const r = JOYSTICK_AREA_EL.getBoundingClientRect();
+
+    for (const t of e.touches) {
+        if (!joystick.active &&
+            t.clientX >= r.left && t.clientX <= r.right &&
+            t.clientY >= r.top && t.clientY <= r.bottom) {
+
+            joystick.active = true;
+            joystick.id = t.identifier;
+            joystick.startX = t.clientX;
+            joystick.startY = t.clientY;
+            joystick.knob.style.display = 'block';
+            joystick.knob.style.transform = 'translate(0,0)';
+        }
+    }
+};
+
+const handleTouchMove = (e) => {
+    if (!joystick.active) return;
+    for (const t of e.touches) {
+        if (t.identifier === joystick.id) {
+            let dx = t.clientX - joystick.startX;
+            let dy = t.clientY - joystick.startY;
+            let dist = Math.hypot(dx, dy);
+
+            if (dist > joystick.radius) {
+                dx = dx / dist * joystick.radius;
+                dy = dy / dist * joystick.radius;
+            }
+
+            const deadzone = joystick.radius * 0.1;
+            joystick.normX = Math.abs(dx) < deadzone ? 0 : dx / joystick.radius;
+            joystick.normY = Math.abs(dy) < deadzone ? 0 : dy / joystick.radius;
+
+            joystick.knob.style.transform = `translate(${dx}px, ${dy}px)`;
+            sendInput(true);
+        }
+    }
+    e.preventDefault();
+};
+
+const handleTouchEnd = (e) => {
+    for (const t of e.changedTouches) {
+        if (t.identifier === joystick.id) {
+            joystick.active = false;
+            joystick.id = null;
+            joystick.normX = 0;
+            joystick.normY = 0;
+            joystick.knob.style.display = 'none';
+            joystick.knob.style.transform = 'translate(0,0)';
+            sendInput(true);
+        }
+    }
+};
+
+document.addEventListener('touchstart', handleTouchStart, { passive: false });
+document.addEventListener('touchmove', handleTouchMove, { passive: false });
+document.addEventListener('touchend', handleTouchEnd);
+document.addEventListener('touchcancel', handleTouchEnd);
 
 window.addEventListener("gamepadconnected", (e) => { 
     gamepad = e.gamepad; 
@@ -86,12 +257,12 @@ const AudioCtrl = {
 };
 
 function playSfx(name) {
-    if(isMobile && Math.random() > 0.5) return; // Reduz chamadas de audio no mobile
+    if(isMobile && Math.random() > 0.5) return; 
     switch(name) {
         case "atk": AudioCtrl.playNoise(0.1, 0.1); break;
         case "hit": AudioCtrl.playTone(150, "square", 0.1, 0.15); break;
         case "dash": AudioCtrl.playTone(300, "sawtooth", 0.2, 0.1); break;
-        case "gold": AudioCtrl.playTone(1200, "sine", 0.3, 0.1); break; // Simplificado
+        case "gold": AudioCtrl.playTone(1200, "sine", 0.3, 0.1); break;
         case "craft": AudioCtrl.playTone(400, "triangle", 0.5, 0.2); break;
         case "levelup": [440, 554, 659, 880].forEach((f,i) => setTimeout(()=>AudioCtrl.playTone(f,"square",0.4,0.2), i*100)); break;
         case "chat": AudioCtrl.playTone(800, "sine", 0.1, 0.05); break;
@@ -155,13 +326,11 @@ socket.on("u", d => {
             }
         }
     }
-
     if(me) updateUI(); 
 });
 
-// Otimização: Reutiliza objetos de texto para evitar GC
 function preventTextOverlap(newText) {
-    if(texts.length > 15) texts.shift(); // Limita textos na tela
+    if(texts.length > 15) texts.shift(); 
     let attempts = 0;
     while(attempts < 3) {
         let collision = false;
@@ -177,23 +346,20 @@ function preventTextOverlap(newText) {
 
 socket.on("txt", d => {
     const valStr = String(d.val);
-    let vy = -0.05; let life = 80; // Vida reduzida para performance
+    let vy = -0.05; let life = 80; 
     let startX = d.x + (Math.random() - 0.5) * 0.5;
     let startY = d.y + (Math.random() - 0.5) * 0.5;
-
     if(valStr.includes("LEVEL UP!")) { vy = -0.02; life = 150; d.size="16px bold Courier New"; d.color="#fb0"; }
     else if(valStr.includes("CRIT!")) { vy = -0.08; life = 100; d.color="#f0f"; d.size="14px bold Courier New"; }
-    
     const newText = { val: valStr, x: startX, y: startY, color: d.color || "#fff", life: life, vy: vy, size: d.size || "10px Courier New" };
     preventTextOverlap(newText);
     texts.push(newText);
-    
     if(valStr.includes("CRAFT")) playSfx("craft");
     if(valStr.includes("LEVEL")) playSfx("levelup");
 });
 
 socket.on("fx", d => {
-    if(effects.length > 20) effects.shift(); // Limite de efeitos
+    if(effects.length > 20) effects.shift(); 
     if (d.type === "slash") { effects.push({ type: "slash", x: d.x, y: d.y, angle: d.angle, life: 8 }); playSfx("atk"); }
     else if (d.type === "spin") { effects.push({ type: "spin", x: d.x, y: d.y, angle: d.angle || 0, life: 15 }); playSfx("atk"); }
     else if (d.type === "nova") effects.push({ type: "nova", x: d.x, y: d.y, life: d.life || 15 });
@@ -216,34 +382,13 @@ socket.on("chat", d => {
 socket.on("open_shop", items => { uiState.shop = true; shopItems = items; updateUI(); });
 socket.on("log", d => addLog(d.msg, d.color));
 
-const keys = { w:false, a:false, s:false, d:false, q:false, game_x: 0, game_y: 0 };
-
-// --- OTIMIZAÇÃO: THROTTLE DE INPUT ---
-let lastInputTime = 0;
-function sendInput() {
-    const now = Date.now();
-    if (now - lastInputTime < 50) return; // Limita a 20 inputs por segundo (igual ao server)
-    
-    let dx = keys.a?-1:keys.d?1:0, dy = keys.w?-1:keys.s?1:0;
-    if (gamepadActive && (Math.abs(keys.game_x) > 0.1 || Math.abs(keys.game_y) > 0.1)) { dx = keys.game_x; dy = keys.game_y; }
-    if (joystick.active) { dx = joystick.normX; dy = joystick.normY; }
-    if(uiState.chat) { dx = 0; dy = 0; }
-    
-    // Só envia se houve mudança ou se passou tempo
-    if(dx!==inputState.x || dy!==inputState.y || keys.q !== inputState.block){ 
-        inputState={x:dx,y:dy,block:keys.q}; 
-        socket.emit("input", inputState); 
-        lastInputTime = now;
-    }
-}
-
 function getMouseAngle() { return Math.atan2((mouse.y - canvas.height/2), (mouse.x - canvas.width/2)); }
 
 function getDirectionalInput() {
     if (joystick.active) return { dx: joystick.normX, dy: joystick.normY };
     const game_dx = keys.game_x, game_dy = keys.game_y;
     if (Math.abs(game_dx) > 0.1 || Math.abs(game_dy) > 0.1) return { dx: game_dx, dy: game_dy };
-    const key_dx = keys.d - keys.a, key_dy = keys.s - keys.w;
+    const key_dx = (keys.d?1:0) - (keys.a?1:0), key_dy = (keys.s?1:0) - (keys.w?1:0);
     if (Math.abs(key_dx) > 0.1 || Math.abs(key_dy) > 0.1) return { dx: key_dx, dy: key_dy };
     return { dx: 0, dy: 0 };
 }
@@ -310,50 +455,6 @@ function closeChat() {
 
 chatInput.onblur = () => { if (uiState.chat) closeChat(); };
 
-window.onkeydown = e => {
-    if (document.getElementById("menu").style.display !== "none") return;
-    let k=e.key.toLowerCase();
-    
-    if(k === "enter") {
-        if (uiState.chat) { return; } 
-        if(uiState.inv || uiState.char || uiState.shop || uiState.craft) { handleGamepadAction(); } 
-        else {
-            uiState.chat = true;
-            document.getElementById("chat-container").style.display = "block";
-            setTimeout(()=>chatInput.focus(), 10);
-            sendInput();
-        }
-        return;
-    }
-    
-    if (uiState.chat && k !== "escape") return;
-
-    if (uiState.inv || uiState.char || uiState.shop || uiState.craft) {
-        if (k === 'arrowup' || k === 'w') { handleGamepadNavigation('up'); e.preventDefault(); return; }
-        if (k === 'arrowdown' || k === 's') { handleGamepadNavigation('down'); e.preventDefault(); return; }
-        if (k === 'arrowleft' || k === 'a') { handleGamepadNavigation('left'); e.preventDefault(); return; }
-        if (k === 'arrowright' || k === 'd') { handleGamepadNavigation('right'); e.preventDefault(); return; }
-    }
-
-    if(keys.hasOwnProperty(k)){ keys[k]=true; sendInput(); }
-    if(k==="i") { uiState.inv = !uiState.inv; uiState.char=false; uiState.shop=false; uiState.craft=false; }
-    if(k==="c") { uiState.char = !uiState.char; uiState.inv=false; uiState.shop=false; uiState.craft=false; }
-    if(k==="k") { uiState.craft = !uiState.craft; uiState.inv=false; uiState.char=false; uiState.shop=false; }
-    if(k==="escape") closeAllMenus();
-    if(k===" ") socket.emit("dash", getDashAngle());
-    if(k==="e") socket.emit("potion");
-    
-    if (k === 'i' || k === 'c' || k === 'k' || k === 'escape') {
-        if (uiState.inv || uiState.char || uiState.shop || uiState.craft) {
-             focusIndex = 0;
-             focusArea = uiState.inv ? 'inventory' : uiState.char ? 'equipment' : uiState.shop ? 'shop' : 'craft';
-        } else {
-             hideTooltip();
-        }
-    }
-    updateUI();
-};
-window.onkeyup = e => { let k=e.key.toLowerCase(); if(keys.hasOwnProperty(k)){ keys[k]=false; sendInput(); } };
 window.onmousemove = e => { 
     mouse.x=e.clientX; 
     mouse.y=e.clientY; 
@@ -366,100 +467,18 @@ window.onmousemove = e => {
 window.onmousedown = (e) => {
     if (AudioCtrl.ctx.state === 'suspended') AudioCtrl.ctx.resume();
     AudioCtrl.init();
-
     if (!me || uiState.chat || gamepadActive || document.getElementById("menu").style.display !== "none") return;
-
     const isPanel = (id) => {
         const el = document.getElementById(id);
         if (!el || el.style.display !== "block") return false;
         const r = el.getBoundingClientRect();
         return (e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom);
     };
-
     if (isPanel("inventory") || isPanel("char-panel") || isPanel("shop-panel") || isPanel("craft-panel")) return;
-
     const ang = getAttackAngle();
     if (e.button === 0) socket.emit("attack", ang);
     if (e.button === 2) socket.emit("skill", { idx: 1, angle: ang });
 };
-
-// ----------------------------------------------------
-// JOYSTICK & TOUCH HANDLERS
-// ----------------------------------------------------
-let joystick = { active: false, id: null, startX: 0, startY: 0, currentX: 0, currentY: 0, normX: 0, normY: 0, radius: 50, knob: document.getElementById('joystick-knob') };
-const JOYSTICK_AREA_EL = document.getElementById('joystick-area');
-
-const handleTouchStart = (e) => {
-    if (gamepadActive) return;
-    if (AudioCtrl.ctx.state === 'suspended') AudioCtrl.ctx.resume(); AudioCtrl.init();
-    if (uiState.chat || document.getElementById("menu").style.display !== "none") return;
-    
-    const joystickRect = JOYSTICK_AREA_EL.getBoundingClientRect();
-
-    for (let i = 0; i < e.changedTouches.length; i++) {
-        const touch = e.changedTouches[i]; const target = touch.target; const id = touch.identifier; 
-        let processed = false;
-
-        if (target === JOYSTICK_AREA_EL && !joystick.active) {
-            joystick.active = true; joystick.id = id;
-            const areaCenterX = joystickRect.left + joystickRect.width / 2;
-            const areaCenterY = joystickRect.top + joystickRect.height / 2;
-            joystick.startX = areaCenterX; joystick.startY = areaCenterY;
-            joystick.knob.style.display = 'block';
-            joystick.knob.style.left = (joystickRect.width / 2 - 20) + 'px';
-            joystick.knob.style.top = (joystickRect.height / 2 - 20) + 'px';
-            handleTouchMove(e); processed = true;
-        } 
-        else if (target.closest('.action-btn')) {
-            const action = target.closest('.action-btn').dataset.action;
-            const ang = getAttackAngle(); 
-            if (action === "attack") socket.emit("attack", ang); 
-            else if (action === "skill") socket.emit("skill", {idx:1, angle:ang}); 
-            else if (action === "dash") socket.emit("dash", getDashAngle()); 
-            else if (action === "potion") socket.emit("potion");
-            else if (action === "block") keys.q = !keys.q; sendInput();
-            processed = true;
-        }
-        else if (target.closest('#btn-inv-mobile')) { uiState.inv = !uiState.inv; uiState.char = false; uiState.craft = false; updateUI(); processed = true; } 
-        else if (target.closest('#btn-char-mobile')) { uiState.char = !uiState.char; uiState.inv = false; uiState.craft = false; updateUI(); processed = true; } 
-        else if (target.closest('#btn-craft-mobile')) { uiState.craft = !uiState.craft; uiState.inv = false; uiState.char = false; updateUI(); processed = true; } 
-        
-        if (processed) e.preventDefault();
-    }
-};
-
-const handleTouchMove = (e) => {
-    if (!joystick.active) return;
-    for (let i = 0; i < e.changedTouches.length; i++) {
-        const touch = e.changedTouches[i];
-        if (touch.identifier === joystick.id) {
-            joystick.currentX = touch.clientX; joystick.currentY = touch.clientY;
-            let dx = joystick.currentX - joystick.startX; let dy = joystick.currentY - joystick.startY;
-            let dist = Math.hypot(dx, dy);
-            if (dist > joystick.radius) { dx = (dx / dist) * joystick.radius; dy = (dy / dist) * joystick.radius; dist = joystick.radius; }
-            const deadzone = joystick.radius * 0.1;
-            if (dist < deadzone) { joystick.normX = 0; joystick.normY = 0; } else { joystick.normX = dx / joystick.radius; joystick.normY = dy / joystick.radius; }
-            joystick.knob.style.transform = `translate(${dx}px, ${dy}px)`;
-            sendInput(); e.preventDefault(); return;
-        }
-    }
-};
-
-const handleTouchEnd = (e) => {
-    for (let i = 0; i < e.changedTouches.length; i++) {
-        if (e.changedTouches[i].identifier === joystick.id) {
-            joystick.active = false; joystick.id = null; joystick.normX = 0; joystick.normY = 0;
-            joystick.knob.style.display = 'none'; joystick.knob.style.transform = 'translate(0, 0)';
-            sendInput(); return;
-        }
-    }
-};
-
-document.addEventListener('touchstart', handleTouchStart, { passive: false });
-document.addEventListener('touchmove', handleTouchMove, { passive: false });
-document.addEventListener('touchend', handleTouchEnd); 
-document.addEventListener('touchcancel', handleTouchEnd);
-
 
 // ----------------------------------------------------
 // GAMEPAD & NAVIGATION
@@ -868,7 +887,7 @@ function showTooltip(it, elementRef) {
 function hideTooltip() { tooltip.style.display = "none"; }
 
 function drawAura(x, y, color, intensity) {
-    if (isMobile) return; // Otimização para mobile
+    // 🔥 FIX MOBILE: Aura agora desenha em ambos
     ctx.shadowBlur = intensity; ctx.shadowColor = color; ctx.fillStyle = color; ctx.globalAlpha = 0.2;
     ctx.beginPath(); ctx.arc(x, y, 10 + Math.sin(Date.now()/200)*2, 0, Math.PI*2); ctx.fill();
     ctx.globalAlpha = 1.0; ctx.shadowBlur = 0;
@@ -895,7 +914,8 @@ function drawOffscreenPlayerIndicators() {
         let ix = screenCenterX + Math.cos(angle) * indicatorRadius; let iy = screenCenterY + Math.sin(angle) * indicatorRadius;
         ctx.save(); ctx.translate(ix, iy); ctx.rotate(angle); 
         ctx.fillStyle = "#0ff"; 
-        if(!isMobile) { ctx.shadowBlur = 5; ctx.shadowColor = "#0ff"; }
+        // 🔥 FIX MOBILE: Sombra ativada em ambos
+        ctx.shadowBlur = 5; ctx.shadowColor = "#0ff";
         ctx.beginPath(); ctx.moveTo(indicatorSize, 0); ctx.lineTo(-indicatorSize, -indicatorSize); ctx.lineTo(-indicatorSize, indicatorSize); ctx.closePath(); ctx.fill();
         ctx.font = "8px Courier New"; ctx.textAlign = "center"; ctx.fillText(p.name, 0, -indicatorSize - 2); 
         ctx.restore(); ctx.shadowBlur = 0;
@@ -917,7 +937,7 @@ function draw() {
         if (btnChatMobile) btnChatMobile.style.display = isMobile ? "block" : "none";
         if(mobileHorizontalHud) mobileHorizontalHud.style.display = "flex"; 
         if(hudBottom) hudBottom.style.display = "none"; 
-        if(gameLogContainer) gameLogContainer.style.display = "block"; // Exibir no mobile (CSS ajusta posição)
+        if(gameLogContainer) gameLogContainer.style.display = "block"; 
         if (mobileControls) {
             if (!gamepadActive) { mobileControls.style.display = "block"; if(hudGold) hudGold.style.display = "none"; } 
             else { mobileControls.style.display = "none"; if(hudGold) hudGold.style.display = "block"; }
@@ -955,7 +975,6 @@ function draw() {
         for(let y=sy; y<ey; y++){ 
             if(!map[y]) continue; 
             for(let x=sx; x<ex; x++){ 
-                // OTIMIZAÇÃO: Desenho de Tiles sem contorno no mobile para performance
                 if(map[y][x]===0) { 
                     if (isCity) {
                         ctx.fillStyle="#333"; ctx.fillRect(ox+x*SCALE,oy+y*SCALE,SCALE,SCALE);
@@ -966,7 +985,8 @@ function draw() {
                     }
                 } else if(map[y][x]===1) { 
                     ctx.fillStyle=isCity?"#222":"#000"; ctx.fillRect(ox+x*SCALE,oy+y*SCALE,SCALE,SCALE);
-                    if(!isMobile) { ctx.strokeStyle=isCity?"#555":theme; ctx.strokeRect(ox+x*SCALE,oy+y*SCALE,SCALE,SCALE); }
+                    // 🔥 FIX MOBILE: Contornos de parede ativados
+                    ctx.strokeStyle=isCity?"#555":theme; ctx.strokeRect(ox+x*SCALE,oy+y*SCALE,SCALE,SCALE);
                 } 
             } 
         }
@@ -977,7 +997,8 @@ function draw() {
         if(p.type==="rock") { ctx.fillStyle="#333"; ctx.fillRect(px,py,4,3); } 
         else if(p.type==="bones") { ctx.fillStyle="#ccc"; ctx.fillRect(px,py,3,1); ctx.fillRect(px+2,py+1,3,1); } 
         else if(p.type==="shrine") { 
-            if(!isMobile){ ctx.shadowBlur=10; ctx.shadowColor="#0ff"; } 
+            // 🔥 FIX MOBILE: Sombra do altar ativada
+            ctx.shadowBlur=10; ctx.shadowColor="#0ff";
             ctx.fillStyle="#0ff"; ctx.fillRect(px,py-4,4,12); ctx.fillRect(px-2,py,8,2); ctx.shadowBlur=0; 
         }
         else if(p.type==="book") { ctx.fillStyle="#a52"; ctx.fillRect(px,py,6,4); ctx.fillStyle="#eee"; ctx.fillRect(px+1,py+1,4,2); }
@@ -992,17 +1013,20 @@ function draw() {
     for(let k in state.it){ 
         let i=state.it[k]; let yb = Math.sin(now/200)*2; 
         if(i.item.key === "gold") { 
-            if(!isMobile){ctx.shadowBlur=5; ctx.shadowColor="#fb0";} 
+            // 🔥 FIX MOBILE: Sombra do ouro ativada
+            ctx.shadowBlur=5; ctx.shadowColor="#fb0";
             ctx.fillStyle="#fb0"; ctx.fillRect(ox+i.x*SCALE+4, oy+i.y*SCALE+6+yb, 3, 3); ctx.shadowBlur=0; 
         } else { 
-            if(!isMobile){ctx.shadowBlur = i.item.rarity==="legendary"?10:i.item.rarity==="rare"?5:0; ctx.shadowColor=i.item.color;} 
+            // 🔥 FIX MOBILE: Raridade visual ativada
+            ctx.shadowBlur = i.item.rarity==="legendary"?10:i.item.rarity==="rare"?5:0; ctx.shadowColor=i.item.color;
             ctx.fillStyle=i.item.color; ctx.fillRect(ox+i.x*SCALE+4, oy+i.y*SCALE+4+yb, 8, 8); ctx.shadowBlur=0; 
         } 
     }
 
     if(state.pr) state.pr.forEach(p => {
         ctx.save(); ctx.translate(ox+p.x*SCALE, oy+p.y*SCALE); ctx.rotate(p.angle || 0); 
-        if(!isMobile) ctx.shadowBlur=10;
+        // 🔥 FIX MOBILE: Sombra de projéteis ativada
+        ctx.shadowBlur=10;
         
         if(p.type === "arrow") { ctx.shadowColor="#ff0"; ctx.fillStyle = "#ff0"; ctx.fillRect(-6, -1, 12, 2); } 
         else if (p.type === "fireball") { ctx.shadowColor="#f80"; ctx.fillStyle = "#f80"; ctx.beginPath(); ctx.arc(0,0, 4, 0, Math.PI*2); ctx.fill(); }
@@ -1023,7 +1047,8 @@ function draw() {
         let e = effects[i]; e.life--; if (e.life <= 0) { effects.splice(i, 1); continue; }
         const x = ox + e.x * SCALE; const y = oy + e.y * SCALE;
         
-        if(!isMobile) { ctx.shadowBlur = 10; ctx.shadowColor = "#fff"; }
+        // 🔥 FIX MOBILE: Sombra de efeitos ativada
+        ctx.shadowBlur = 10; ctx.shadowColor = "#fff";
 
         if (e.type === "slash") {
             ctx.strokeStyle = `rgba(255,255,255,${e.life/10})`; ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(x, y, 20, e.angle - 0.8, e.angle + 0.8); ctx.stroke();
@@ -1070,21 +1095,11 @@ function draw() {
 
         const isFlashing = blink && (e.hitFlash % 4 < 2);
         
-        // OTIMIZAÇÃO CRÍTICA: Não usar filter em mobile
+        // 🔥 FIX MOBILE: Filtros de renderização ativados (sem composite barato)
         if (isFlashing) {
-            if (isMobile) {
-                // Modo rápido para mobile (Superposição)
-                ctx.globalCompositeOperation = "source-atop";
-                ctx.fillStyle = "#fff";
-            } else {
-                ctx.filter = "brightness(1000%) grayscale(100%)"; 
-            }
+            ctx.filter = "brightness(1000%) grayscale(100%)"; 
         }
 
-        // ===============================================
-        //  DESENHO DOS MOBS E BOSSES (VISUAL NOVO)
-        // ===============================================
-        
         if (e.class) {
             let c = e.class; ctx.fillStyle = (c==="knight"?"#668":c==="hunter"?"#464":"#448"); ctx.fillRect(-4, -6, 8, 12);
             if(e.equipment && e.equipment.head) { ctx.fillStyle=e.equipment.head.color; ctx.fillRect(-4,-9,8,5); }
@@ -1151,16 +1166,10 @@ function draw() {
             else if (t === "chest") { ctx.fillStyle = "#a60"; ctx.fillRect(-6, -4, 12, 8); ctx.fillStyle = "#fd0"; ctx.fillRect(-1, -2, 2, 3); ctx.strokeStyle = "#420"; ctx.strokeRect(-6, -4, 12, 8); }
             else { ctx.fillStyle = e.color || "#ccc"; ctx.fillRect(-s/2, -s/2, s, s); }
         }
-        
-        // Se estiver piscando no mobile, desenha um circulo branco solido por cima (efeito barato)
-        if(isFlashing && isMobile) {
-             ctx.globalCompositeOperation = "source-over"; // Reset
-             ctx.fillStyle = "rgba(255,255,255,0.7)";
-             ctx.beginPath(); ctx.arc(0,0,s/1.5,0,Math.PI*2); ctx.fill();
-        }
 
         if(e.input && e.input.block) { ctx.strokeStyle = "#0ff"; ctx.lineWidth=2; ctx.beginPath(); ctx.arc(0,0,14,0,Math.PI*2); ctx.stroke(); }
         ctx.restore();
+        ctx.filter = "none"; // Reset filter
 
         const maxHp = e.stats ? e.stats.maxHp : e.maxHp;
         if(e.hp > 0 && e.hp < maxHp && e.ai!=="static" && !e.npc && e.ai!=="resource") { 
@@ -1184,7 +1193,7 @@ function draw() {
         }
     });
 
-    // FOG OF WAR e Iluminação (Mobile usa versão simplificada)
+    // FOG OF WAR e Iluminação (Agora habilitado para Mobile também)
     ctx.save();
     const sy=Math.floor(cam.y/SCALE), ey=sy+Math.ceil(canvas.height/SCALE)+1; const sx=Math.floor(cam.x/SCALE), ex=sx+Math.ceil(canvas.width/SCALE)+1;
     for(let y=sy; y<ey; y++){
@@ -1198,13 +1207,12 @@ function draw() {
         }
     }
     
-    // Degradê radial é caro no mobile, usar apenas um overlay escuro se estiver longe
-    if(!isMobile) {
-        const innerRadius = lightRadiusPixels * 0.7; const outerRadius = lightRadiusPixels * 1.0;
-        const gradient = ctx.createRadialGradient(playerScreenX, playerScreenY, innerRadius, playerScreenX, playerScreenY, outerRadius);
-        gradient.addColorStop(0, 'rgba(0, 0, 0, 0)'); gradient.addColorStop(0.75, 'rgba(0, 0, 0, 0.2)'); gradient.addColorStop(1, 'rgba(0, 0, 0, 1)'); 
-        ctx.fillStyle = gradient; ctx.fillRect(0, 0, canvas.width, canvas.height);
-    }
+    // 🔥 FIX MOBILE: Degradê radial habilitado para todos para manter visual idêntico ao PC
+    const innerRadius = lightRadiusPixels * 0.7; const outerRadius = lightRadiusPixels * 1.0;
+    const gradient = ctx.createRadialGradient(playerScreenX, playerScreenY, innerRadius, playerScreenX, playerScreenY, outerRadius);
+    gradient.addColorStop(0, 'rgba(0, 0, 0, 0)'); gradient.addColorStop(0.75, 'rgba(0, 0, 0, 0.2)'); gradient.addColorStop(1, 'rgba(0, 0, 0, 1)'); 
+    ctx.fillStyle = gradient; ctx.fillRect(0, 0, canvas.width, canvas.height);
+    
     ctx.restore(); 
     
     if(state.hint && me) {
@@ -1217,7 +1225,8 @@ function draw() {
             ctx.save(); ctx.translate(ax, ay); ctx.rotate(angle); 
             const scale = 1 + Math.sin(Date.now() / 200) * 0.2; ctx.scale(scale, scale);
             ctx.fillStyle = state.hint.type === "exit" ? "#0f0" : "#f00";
-            if(!isMobile){ ctx.shadowBlur = 10; ctx.shadowColor = ctx.fillStyle; }
+            // 🔥 FIX MOBILE: Sombra do indicador ativada
+            ctx.shadowBlur = 10; ctx.shadowColor = ctx.fillStyle; 
             ctx.beginPath(); ctx.moveTo(6, 0); ctx.lineTo(-6, -6); ctx.lineTo(-6, 6); ctx.closePath(); ctx.fill();
             ctx.restore(); ctx.shadowBlur = 0;
         }
@@ -1232,7 +1241,8 @@ function draw() {
         let t=texts[i]; t.y += t.vy; t.life--; 
         ctx.globalAlpha = Math.min(1.0, Math.max(0, t.life / 50)); 
         ctx.fillStyle = t.color; ctx.font = t.size || "10px Courier New"; ctx.textAlign = "center"; 
-        if(!isMobile) { ctx.strokeStyle = "#000"; ctx.lineWidth = 3; ctx.strokeText(t.val, ox+t.x*SCALE, oy+t.y*SCALE); }
+        // 🔥 FIX MOBILE: Contorno de texto ativado
+        ctx.strokeStyle = "#000"; ctx.lineWidth = 3; ctx.strokeText(t.val, ox+t.x*SCALE, oy+t.y*SCALE); 
         ctx.fillText(t.val, ox+t.x*SCALE, oy+t.y*SCALE); ctx.globalAlpha = 1.0; 
         if(t.life<=0) texts.splice(i,1); 
     }
@@ -1244,5 +1254,53 @@ window.addStat = (s) => socket.emit("add_stat", s);
 window.buy = (idx) => socket.emit("buy", shopItems[idx]);
 window.sell = () => { if(!me || !uiState.shop || focusArea !== 'inventory' || me.inventory.length === 0) return; socket.emit("sell", focusIndex); updateUI(); };
 window.closeShop = closeAllMenus;
+
+// =========================
+// MOBILE ACTION BUTTONS FIX
+// =========================
+document.querySelectorAll(".action-btn").forEach(btn => {
+    const action = btn.dataset.action;
+    const handle = (e) => {
+        e.preventDefault(); e.stopPropagation();
+        if (!me || uiState.chat) return;
+        if (AudioCtrl.ctx.state === 'suspended') AudioCtrl.ctx.resume();
+        AudioCtrl.init();
+        const ang = getAttackAngle();
+        switch (action) {
+            case "attack": socket.emit("attack", ang); break;
+            case "skill": socket.emit("skill", { idx: 1, angle: ang }); break;
+            case "dash": socket.emit("dash", getDashAngle()); break;
+            case "potion": socket.emit("potion"); break;
+            case "block": keys.q = true; sendInput(true); break;
+        }
+    };
+    const release = () => { if (action === "block") { keys.q = false; sendInput(true); } };
+    btn.addEventListener("touchstart", handle, { passive: false });
+    btn.addEventListener("touchend", release);
+    btn.addEventListener("mousedown", handle);
+    btn.addEventListener("mouseup", release);
+});
+
+// =========================
+// MOBILE MENU BUTTONS FIX
+// =========================
+document.querySelectorAll("#mobile-menu-buttons .skill-btn").forEach(btn => {
+    const action = btn.dataset.action;
+    const handle = (e) => {
+        e.preventDefault(); e.stopPropagation();
+        if (!me) return;
+        if (action === "toggle_inv") toggleMenu("inv");
+        if (action === "toggle_char") toggleMenu("char");
+        if (action === "toggle_craft") toggleMenu("craft");
+        if (action === "toggle_chat") {
+            uiState.chat = !uiState.chat;
+            document.getElementById("chat-container").style.display = uiState.chat ? "block" : "none";
+            if (uiState.chat) setTimeout(() => chatInput.focus(), 50);
+        }
+        updateUI();
+    };
+    btn.addEventListener("touchstart", handle, { passive:false });
+    btn.addEventListener("mousedown", handle);
+});
 
 draw();
