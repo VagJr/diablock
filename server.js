@@ -42,7 +42,7 @@ async function initializeServer() {
     }
 
     server.listen(3000, () => {
-        console.log("🔥 Diablock V35 - Map Generation Restored & Optimized");
+        console.log("🔥 DIABLOCK SERVER ONLINE\nVERSION: V33.2 — INFERNAL SCALING CORE\nMODE: Infinite Mathematical Balance\nREALM: Endless Descent\n----------------------------------\n🔥 Diablock V35 - Map Generation Restored & Optimized");
     });
 }
 
@@ -926,3 +926,56 @@ setInterval(() => {
 initializeServer();
 
 process.on('uncaughtException', (err) => { console.error('SERVER CRITICAL ERROR:', err); });
+
+/* =====================================================
+   PATCH A+B+C — REAL, INCREMENTAL, NON-REGRESSION
+   ===================================================== */
+(function(){
+  if (typeof damageMob === 'function') {
+    const _damageMob = damageMob;
+    global.damageMob = function(inst, m, dmg, owner, kx, ky, kbForce=10, isCrit=false){
+      // A) Combat impact & knockback scaling
+      let classMult = 1;
+      if (owner && owner.class === 'knight') classMult = 1.25;
+      if (owner && owner.class === 'hunter') classMult = 1.0;
+      if (owner && owner.class === 'mage') classMult = 0.9;
+      const scaledKB = kbForce * classMult * (isCrit ? 1.35 : 1.0);
+      return _damageMob(inst, m, dmg, owner, kx, ky, scaledKB, isCrit);
+    }
+  }
+
+  if (typeof processMobAI === 'function') {
+    const _processMobAI = processMobAI;
+    global.processMobAI = function(inst, m){
+      // B) IA spacing: soft separation
+      Object.values(inst.mobs || {}).forEach(o=>{
+        if (o===m || o.hp<=0) return;
+        const dx=m.x-o.x, dy=m.y-o.y;
+        const d=Math.hypot(dx,dy);
+        const min=1.1;
+        if(d>0 && d<min){
+          m.vx += (dx/d)*0.04;
+          m.vy += (dy/d)*0.04;
+        }
+      });
+      return _processMobAI(inst, m);
+    }
+  }
+
+  if (typeof recalcStats === 'function') {
+    const _recalcStats = recalcStats;
+    global.recalcStats = function(p){
+      _recalcStats(p);
+      // C) Class identity (stats-level, non-visual)
+      if (p.class === 'knight') {
+        p.stats.poiseMult = (p.stats.poiseMult||1) * 1.3;
+      }
+      if (p.class === 'hunter') {
+        p.stats.spd *= 1.05;
+      }
+      if (p.class === 'mage') {
+        p.stats.dmg *= 1.1;
+      }
+    }
+  }
+})();

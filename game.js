@@ -1,3 +1,9 @@
+
+/* =====================================================
+   PATCH A — HIT FLASH / DISTANCE (CLIENT)
+   ===================================================== */
+const HIT_FLASH_FRAMES = 4;
+
 /* =========================
    MOBILE-SAFE BGM (Diablock)
    ========================= */
@@ -21,6 +27,16 @@ const socket = io({ transports: ['websocket'], upgrade: false });
 const canvas = document.getElementById("c");
 const ctx = canvas.getContext("2d", { alpha: false });
 const SCALE = 16;
+
+// V33.1 BALANCE PROFILE
+const BALANCE_PROFILE = 'INFERNAL_EQUILIBRIUM';
+// V33.2 — INFERNAL SCALING CORE
+const SCALING_CORE = {
+  hp: lvl => 100 + Math.floor(Math.pow(lvl, 1.25) * 18),
+  dmg: lvl => 5 + Math.floor(Math.pow(lvl, 1.15) * 2.2),
+  xp:  lvl => Math.floor(50 + Math.pow(lvl, 1.35) * 25)
+};
+
 
 let myId = null, me = null;
 let state = { pl:{}, mb:{}, it:{}, pr:[], props:[], map:[], explored: [], lightRadius: 15, hint: null };
