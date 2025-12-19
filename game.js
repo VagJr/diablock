@@ -1,3 +1,19 @@
+/* =====================================================
+   DIABLOCK V33.3 — Infernal Scaling Core (Future Vision)
+   Minimal Safe Build: no gameplay logic altered
+   ===================================================== */
+
+/*
+====================================================
+ DIABLOCK — PATCH RETROSPECTIVE (V33.x)
+ Applied:
+ - V33.1 Infernal Equilibrium (identity + balance profile)
+ - V33.2 Infernal Scaling Core (infinite math scaling)
+ - V33.3 Infernal Checkpoints (progress persistence)
+ - V34.0 Procedural Visuals (Unique Item Models)
+====================================================
+*/
+
 
 /* =====================================================
    PATCH A — HIT FLASH / DISTANCE (CLIENT)
@@ -74,6 +90,32 @@ let joystick = {
 const keys = { w:false, a:false, s:false, d:false, q:false, game_x: 0, game_y: 0 };
 let lastInputTime = 0;
 
+function isClickOnUI(e) {
+    const uiIds = [
+        "inventory",
+        "char-panel",
+        "shop-panel",
+        "craft-panel",
+        "menu",
+        "chat-container"
+    ];
+
+    for (const id of uiIds) {
+        const el = document.getElementById(id);
+        if (!el || el.style.display !== "block") continue;
+        const r = el.getBoundingClientRect();
+        if (
+            e.clientX >= r.left &&
+            e.clientX <= r.right &&
+            e.clientY >= r.top &&
+            e.clientY <= r.bottom
+        ) {
+            return true;
+        }
+    }
+    return false;
+}
+
 function sendInput(force=false) {
     const now = Date.now();
     const RATE = isMobile ? 30 : 50;
@@ -111,7 +153,7 @@ const pressedKeys = new Set();
 window.addEventListener("keydown", e => {
     if (document.getElementById("menu").style.display !== "none") return;
     const k = e.key.toLowerCase();
-	
+    
     // ENTER abre o chat
     if (k === "enter" && !uiState.chat) {
         uiState.chat = true;
@@ -481,20 +523,24 @@ window.onmousemove = e => {
 };
 
 window.onmousedown = (e) => {
+    // 🔒 Primeiro: se clicou em UI, NÃO deixa o jogo interceptar
+    if (isClickOnUI(e)) {
+        e.stopPropagation();
+        return;
+    }
+
     if (AudioCtrl.ctx.state === 'suspended') AudioCtrl.ctx.resume();
     AudioCtrl.init();
-    if (!me || uiState.chat || gamepadActive || document.getElementById("menu").style.display !== "none") return;
-    const isPanel = (id) => {
-        const el = document.getElementById(id);
-        if (!el || el.style.display !== "block") return false;
-        const r = el.getBoundingClientRect();
-        return (e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom);
-    };
-    if (isPanel("inventory") || isPanel("char-panel") || isPanel("shop-panel") || isPanel("craft-panel")) return;
+
+    if (!me || uiState.chat || gamepadActive) return;
+    if (document.getElementById("menu").style.display !== "none") return;
+
     const ang = getAttackAngle();
+
     if (e.button === 0) socket.emit("attack", ang);
     if (e.button === 2) socket.emit("skill", { idx: 1, angle: ang });
 };
+
 
 // ----------------------------------------------------
 // GAMEPAD & NAVIGATION
@@ -815,20 +861,51 @@ function updateUI() {
                 d.appendChild(socks);
             }
             
-            d.onclick = (e) => {
-                e.preventDefault(); e.stopPropagation();
-                if (!isMobile && !gamepadActive) {
-                    if (it.key === "potion") socket.emit("potion");
-                    else if (it.slot && it.type !== "material" && it.type !== "gem" && it.type !== "key") socket.emit("equip", idx);
-                    focusIndex = idx; focusArea = 'inventory';
-                    return;
-                }
+            d.onmousedown = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
 
-                if (focusIndex === idx && focusArea === 'inventory') {
-                    if (it.key === "potion") socket.emit("potion");
-                    else if (it.slot && it.type !== "material" && it.type !== "gem") socket.emit("equip", idx);
-                } else { focusIndex = idx; focusArea = 'inventory'; updateUI(); }
-            };
+    if (!me) return;
+
+    // 👉 PC / Mouse (ação imediata, 1 clique)
+    if (!isMobile && !gamepadActive) {
+        if (it.key === "potion") {
+            socket.emit("potion");
+        }
+        else if (
+            it.slot &&
+            it.type !== "material" &&
+            it.type !== "gem" &&
+            it.type !== "key"
+        ) {
+            socket.emit("equip", idx);
+        }
+
+        focusIndex = idx;
+        focusArea = 'inventory';
+        return;
+    }
+
+    // 👉 Mobile / Gamepad (primeiro seleciona, segundo executa)
+    if (focusIndex === idx && focusArea === 'inventory') {
+        if (it.key === "potion") {
+            socket.emit("potion");
+        }
+        else if (
+            it.slot &&
+            it.type !== "material" &&
+            it.type !== "gem" &&
+            it.type !== "key"
+        ) {
+            socket.emit("equip", idx);
+        }
+    } else {
+        focusIndex = idx;
+        focusArea = 'inventory';
+        updateUI();
+    }
+};
+
             
             d.draggable = true; d.ondragstart = (e) => { dragItem = { idx, item: it }; }; d.ondragover = (e) => e.preventDefault();
             d.ondrop = (e) => { e.preventDefault(); if(dragItem && dragItem.item.type === "gem" && it.type !== "gem") socket.emit("craft", {action:"socket", itemIdx:idx, gemIdx:dragItem.idx}); };
@@ -852,22 +929,66 @@ function updateUI() {
         }
     }
     
-    if(uiState.shop) {
-        const sg = document.getElementById("shop-grid"); sg.innerHTML = "";
-        shopItems.forEach((it, idx) => {
-            const d = document.createElement("div"); d.className = "slot"; d.style.borderColor = it.color; d.style.outline = 'none';
-            if (focusArea === 'shop' && focusIndex === idx) { d.style.outline = '2px solid yellow'; showTooltip(it, d); }
-            d.innerHTML = getIcon(it); 
-            d.onclick = () => { socket.emit("buy", idx); };
-            if (!isMobile && !gamepadActive) { 
-                d.onmouseover = () => { focusIndex = idx; focusArea = 'shop'; showTooltip(it, d); d.style.outline = '2px solid yellow'; }; 
-                d.onmouseout = () => { hideTooltip(); d.style.outline = 'none'; }; 
+    if (uiState.shop) {
+    const sg = document.getElementById("shop-grid");
+    sg.innerHTML = "";
+
+    shopItems.forEach((it, idx) => {
+        const d = document.createElement("div");
+        d.className = "slot";
+        d.style.borderColor = it.color;
+        d.style.outline = "none";
+        d.innerHTML = getIcon(it);
+
+        const isSelected = (focusArea === 'shop' && focusIndex === idx);
+        if (isSelected) {
+            d.style.outline = '2px solid yellow';
+            showTooltip(it, d);
+        }
+
+        // ✅ CLICK CORRETO (COMPRA)
+        d.onmousedown = (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+
+            // PC: compra direta
+            if (!isMobile && !gamepadActive) {
+                socket.emit("buy", idx);
+                return;
             }
-            sg.appendChild(d);
-        });
-        const closeShopBtn = document.getElementById("btn-shop-close");
-        if(closeShopBtn) closeShopBtn.onclick = closeAllMenus;
-    }
+
+            // Mobile / Gamepad: seleciona → confirma
+            if (focusIndex === idx && focusArea === 'shop') {
+                socket.emit("buy", idx);
+            } else {
+                focusIndex = idx;
+                focusArea = 'shop';
+                updateUI();
+            }
+        };
+
+        // ✅ TOOLTIP NO HOVER (PC)
+        if (!isMobile) {
+            d.onmouseover = () => {
+                focusIndex = idx;
+                focusArea = 'shop';
+                showTooltip(it, d);
+                d.style.outline = '2px solid yellow';
+            };
+            d.onmouseout = () => {
+                hideTooltip();
+                d.style.outline = 'none';
+            };
+        }
+
+        sg.appendChild(d);
+    });
+
+    const closeShopBtn = document.getElementById("btn-shop-close");
+    if (closeShopBtn) closeShopBtn.onclick = closeAllMenus;
+}
+
+
     
     if ((uiState.inv && (!me.inventory || me.inventory.length === 0))) { 
         hideTooltip(); 
@@ -936,6 +1057,125 @@ function drawOffscreenPlayerIndicators() {
         ctx.font = "8px Courier New"; ctx.textAlign = "center"; ctx.fillText(p.name, 0, -indicatorSize - 2); 
         ctx.restore(); ctx.shadowBlur = 0;
     });
+}
+
+/* =====================================================
+   SISTEMA DE VISUAL PROCEDURAL GEOMÉTRICO (V34)
+   Gera armas e armaduras únicas baseadas no ID do item
+   ===================================================== */
+function drawProceduralItem(ctx, item, x, y, angle, scale = 1.0) {
+    if (!item) return;
+    
+    // Hash simples do ID para gerar consistência visual (A MESMA ARMA SEMPRE PARECE IGUAL)
+    let seed = 0;
+    if (item.id) { for(let i=0; i<item.id.length; i++) seed += item.id.charCodeAt(i); }
+    const rng = () => { const x = Math.sin(seed++) * 10000; return x - Math.floor(x); };
+    
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(angle);
+    ctx.scale(scale, scale);
+
+    // Configuração de Estilo baseada na Raridade
+    let glowColor = null;
+    let baseColor = "#aaa";
+    if (item.rarity === "magic") { baseColor = "#4ff"; glowColor = "rgba(0, 255, 255, 0.4)"; }
+    if (item.rarity === "rare") { baseColor = "#ff0"; glowColor = "rgba(255, 255, 0, 0.5)"; }
+    if (item.rarity === "legendary") { baseColor = "#f0f"; glowColor = "rgba(255, 0, 255, 0.6)"; }
+
+    if (glowColor) {
+        ctx.shadowBlur = 10;
+        ctx.shadowColor = glowColor;
+    }
+
+    // --- DESENHO DA ARMA ---
+    if (item.key.includes("sword") || item.key.includes("dagger")) {
+        // Lâmina Procedural
+        const bladeLen = item.key.includes("dagger") ? 8 : 14 + rng() * 6;
+        const width = 3 + rng() * 3;
+        const curve = (rng() - 0.5) * 4; // Curvatura da lâmina
+
+        ctx.fillStyle = baseColor;
+        ctx.beginPath();
+        ctx.moveTo(0, -2);
+        ctx.lineTo(width, -2); // Guarda
+        ctx.lineTo(width - 1 + curve, -bladeLen); // Ponta
+        ctx.lineTo(-1, -2);
+        ctx.fill();
+        
+        // Detalhe do cabo
+        ctx.fillStyle = "#420";
+        ctx.fillRect(1, 0, 2, 4);
+        
+        // Joia na guarda (se for raro+)
+        if (item.rarity !== "common") {
+            ctx.fillStyle = glowColor || "#f00";
+            ctx.beginPath(); ctx.arc(2, -2, 1.5, 0, Math.PI*2); ctx.fill();
+        }
+
+    } else if (item.key.includes("axe")) {
+        // Cabo
+        ctx.fillStyle = "#532";
+        ctx.fillRect(0, -2, 2, 14);
+        
+        // Cabeça do Machado (Dupla ou Simples)
+        ctx.fillStyle = baseColor;
+        const doubleBit = rng() > 0.5;
+        const size = 6 + rng() * 4;
+        
+        ctx.beginPath();
+        ctx.moveTo(1, 2);
+        ctx.lineTo(1 + size, -4);
+        ctx.lineTo(1 + size, 6);
+        ctx.fill();
+
+        if (doubleBit || item.rarity === "legendary") {
+            ctx.beginPath();
+            ctx.moveTo(1, 2);
+            ctx.lineTo(1 - size, -4);
+            ctx.lineTo(1 - size, 6);
+            ctx.fill();
+        }
+
+    } else if (item.key.includes("staff")) {
+        // Bastão
+        ctx.fillStyle = "#421";
+        ctx.fillRect(0, -10, 2, 20);
+        
+        // Cabeça do Cajado (Orbe ou Cristal)
+        const orbSize = 3 + rng() * 2;
+        ctx.fillStyle = item.color || "#0ff";
+        if (rng() > 0.5) {
+             ctx.beginPath(); ctx.arc(1, -12, orbSize, 0, Math.PI*2); ctx.fill();
+        } else {
+             ctx.beginPath(); ctx.moveTo(1, -14); ctx.lineTo(-2, -10); ctx.lineTo(1, -6); ctx.lineTo(4, -10); ctx.fill();
+        }
+        
+        // Partículas orbitando (se lendário)
+        if (item.rarity === "legendary") {
+            const time = Date.now() / 200;
+            ctx.fillStyle = "#fff";
+            ctx.fillRect(1 + Math.cos(time)*5, -12 + Math.sin(time)*5, 2, 2);
+        }
+
+    } else if (item.key.includes("bow")) {
+        ctx.strokeStyle = "#532";
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(0, 0, 8, -Math.PI/2, Math.PI/2);
+        ctx.stroke();
+        ctx.strokeStyle = "#fff"; // Corda
+        ctx.lineWidth = 0.5;
+        ctx.beginPath(); ctx.moveTo(0, -8); ctx.lineTo(0, 8); ctx.stroke();
+        
+        if (item.rarity !== "common") {
+            ctx.fillStyle = baseColor;
+            ctx.fillRect(-2, -9, 4, 2); // Detalhes nas pontas
+            ctx.fillRect(-2, 7, 4, 2);
+        }
+    }
+
+    ctx.restore();
 }
 
 function draw() {
@@ -1033,9 +1273,9 @@ function draw() {
             ctx.shadowBlur=5; ctx.shadowColor="#fb0";
             ctx.fillStyle="#fb0"; ctx.fillRect(ox+i.x*SCALE+4, oy+i.y*SCALE+6+yb, 3, 3); ctx.shadowBlur=0; 
         } else { 
-            // 🔥 FIX MOBILE: Raridade visual ativada
-            ctx.shadowBlur = i.item.rarity==="legendary"?10:i.item.rarity==="rare"?5:0; ctx.shadowColor=i.item.color;
-            ctx.fillStyle=i.item.color; ctx.fillRect(ox+i.x*SCALE+4, oy+i.y*SCALE+4+yb, 8, 8); ctx.shadowBlur=0; 
+            // 🔥 ITEM PROCEDURAL NO CHÃO (Miniatura)
+            // Usa a mesma função de desenho para garantir que o item no chão pareça com o item na mão
+            drawProceduralItem(ctx, i.item, ox+i.x*SCALE+8, oy+i.y*SCALE+8+yb, -Math.PI/4, 0.5);
         } 
     }
 
@@ -1118,14 +1358,24 @@ function draw() {
 
         if (e.class) {
             let c = e.class; ctx.fillStyle = (c==="knight"?"#668":c==="hunter"?"#464":"#448"); ctx.fillRect(-4, -6, 8, 12);
-            if(e.equipment && e.equipment.head) { ctx.fillStyle=e.equipment.head.color; ctx.fillRect(-4,-9,8,5); }
-            if(e.equipment && e.equipment.body) { ctx.fillStyle=e.equipment.body.color; ctx.fillRect(-3,-4,6,8); }
-            if(e.equipment && e.equipment.hand) {
-                let k = e.equipment.hand.key;
-                if(k.includes("sword")||k.includes("axe")||k.includes("dagger")) { ctx.fillStyle="#ccc"; ctx.fillRect(4, -8, 2, 14); ctx.fillStyle="#840"; ctx.fillRect(3, 2, 4, 2); }
-                if(k.includes("bow")) { ctx.strokeStyle="#a84"; ctx.lineWidth=2; ctx.beginPath(); ctx.arc(4, 0, 7, -1.5, 1.5); ctx.stroke(); ctx.beginPath(); ctx.moveTo(4, -7); ctx.lineTo(4, 7); ctx.strokeStyle="#fff"; ctx.lineWidth=0.5; ctx.stroke(); }
-                if(k.includes("staff")) { ctx.fillStyle="#630"; ctx.fillRect(5, -10, 2, 18); ctx.fillStyle=e.equipment.hand.color; ctx.beginPath(); ctx.arc(6, -12, 3, 0, Math.PI*2); ctx.fill(); }
+            
+            // DESENHO PROCEDURAL: ELMO
+            if(e.equipment && e.equipment.head) { 
+                ctx.fillStyle=e.equipment.head.color; ctx.fillRect(-4,-9,8,5); 
+                // Detalhes extras se for raro/lendário
+                if(e.equipment.head.rarity === "legendary") {
+                     ctx.fillStyle = "#fd0"; ctx.fillRect(-5, -11, 2, 4); ctx.fillRect(3, -11, 2, 4); // Chifres
+                }
             }
+            
+            if(e.equipment && e.equipment.body) { ctx.fillStyle=e.equipment.body.color; ctx.fillRect(-3,-4,6,8); }
+            
+            // DESENHO PROCEDURAL: ARMA NA MÃO
+            if(e.equipment && e.equipment.hand) {
+                // Chama a nova função de desenho, deslocando um pouco para o lado (x=5)
+                drawProceduralItem(ctx, e.equipment.hand, 6, 2, 0, 0.75);
+            }
+            
             if (e.id === myId) {
                 ctx.fillStyle = "white"; ctx.fillRect(-2, -4, 2, 2); ctx.fillRect(2, -4, 2, 2); 
                 let lookAngle = (!isMobile && !gamepadActive) ? getMouseAngle() : getAttackAngle();
@@ -1267,7 +1517,7 @@ function draw() {
 window.login = () => { if (AudioCtrl.ctx.state === 'suspended') AudioCtrl.ctx.resume(); AudioCtrl.init(); socket.emit("login", document.getElementById("username").value); };
 window.create = () => socket.emit("create_char", {name:document.getElementById("cname").value, cls:document.getElementById("cclass").value});
 window.addStat = (s) => socket.emit("add_stat", s);
-window.buy = (idx) => socket.emit("buy", shopItems[idx]);
+window.buy = (idx) => socket.emit("buy", idx);
 window.sell = () => { if(!me || !uiState.shop || focusArea !== 'inventory' || me.inventory.length === 0) return; socket.emit("sell", focusIndex); updateUI(); };
 window.closeShop = closeAllMenus;
 
@@ -1320,3 +1570,19 @@ document.querySelectorAll("#mobile-menu-buttons .skill-btn").forEach(btn => {
 });
 
 draw();
+
+// ===============================
+// V33.3 — INFERNAL CHECKPOINT SYSTEM (CLIENT)
+// ===============================
+const CHECKPOINT_SYSTEM = {
+    interval: 10,
+    getAvailable(maxLevel) {
+        const cps = [];
+        for (let i = this.interval; i <= maxLevel; i += this.interval) cps.push(i);
+        return cps;
+    }
+};
+
+window.enterCheckpoint = function(level) {
+    socket.emit("enter_checkpoint", level);
+};

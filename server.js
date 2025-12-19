@@ -42,7 +42,6 @@ async function initializeServer() {
     }
 
     server.listen(3000, () => {
-        console.log("🔥 DIABLOCK SERVER ONLINE\nVERSION: V33.2 — INFERNAL SCALING CORE\nMODE: Infinite Mathematical Balance\nREALM: Endless Descent\n----------------------------------\n🔥 Diablock V35 - Map Generation Restored & Optimized");
     });
 }
 
@@ -979,3 +978,38 @@ process.on('uncaughtException', (err) => { console.error('SERVER CRITICAL ERROR:
     }
   }
 })();
+
+
+// ===============================
+// V33.3 — INFERNAL CHECKPOINT CORE (SERVER)
+// ===============================
+
+// Extend player save safely
+function ensureProgress(player) {
+    if (player.maxDungeonLevel === undefined) player.maxDungeonLevel = 1;
+    if (!Array.isArray(player.unlockedCheckpoints)) player.unlockedCheckpoints = [];
+}
+
+// Tier calculation
+function infernalTier(level) {
+    return Math.floor(level / 10);
+}
+
+// Infinite scaling (mobs & bosses)
+function scaleStat(base, level, factor = 1) {
+    return Math.floor(base * (1 + Math.pow(level, 1.15) * 0.05 * factor));
+}
+
+io.on("connection", socket => {
+
+    socket.on("enter_checkpoint", level => {
+        if (!socket.player) return;
+        ensureProgress(socket.player);
+
+        if (level <= socket.player.maxDungeonLevel) {
+            socket.player.dungeonLevel = level;
+            sendDungeon(socket.player);
+        }
+    });
+
+});
