@@ -1,6 +1,6 @@
 /* =====================================================
-   DIABLOCK V33.3 — Infernal Scaling Core (Future Vision)
-   Minimal Safe Build: no gameplay logic altered
+   DIABLOCK V34 — INFERNAL ASCENSION (CLIENT FULL)
+   Stable + Tiamat Visuals Added
    ===================================================== */
 
 /*
@@ -497,7 +497,8 @@ if (btnChatMobile) {
 chatInput.onkeydown = (e) => {
     if (e.key === "Enter") {
         const msg = chatInput.value.trim();
-        if (msg.length > 0) socket.emit("chat", msg.substring(0, 30));
+        // Aumentei o limite para 100 para permitir comandos de GM
+        if (msg.length > 0) socket.emit("chat", msg.substring(0, 100));
         closeChat();
     }
 };
@@ -523,20 +524,12 @@ window.onmousemove = e => {
 };
 
 window.onmousedown = (e) => {
-    // 🔒 Primeiro: se clicou em UI, NÃO deixa o jogo interceptar
-    if (isClickOnUI(e)) {
-        e.stopPropagation();
-        return;
-    }
-
+    if (isClickOnUI(e)) return; // 🔒 FIX ABSOLUTO
     if (AudioCtrl.ctx.state === 'suspended') AudioCtrl.ctx.resume();
     AudioCtrl.init();
-
-    if (!me || uiState.chat || gamepadActive) return;
-    if (document.getElementById("menu").style.display !== "none") return;
+    if (!me || uiState.chat || gamepadActive || document.getElementById("menu").style.display !== "none") return;
 
     const ang = getAttackAngle();
-
     if (e.button === 0) socket.emit("attack", ang);
     if (e.button === 2) socket.emit("skill", { idx: 1, angle: ang });
 };
@@ -743,6 +736,7 @@ function updateUI() {
     else if (state.theme === "#900") diffName = "HORDE II";
     else if (state.theme === "#102") diffName = "HELL";
     else if (state.theme === "#311") diffName = "NIGHTMARE";
+    else if (state.theme === "#000") diffName = "PRIMORDIAL"; // TIAMAT ZONE
 
     const elHpBar = document.getElementById("hp-bar");
     const elMpBar = document.getElementById("mp-bar");
@@ -804,16 +798,28 @@ function updateUI() {
         if(me.equipment && me.equipment[slot]) {
             const it = me.equipment[slot];
             el.style.borderColor = it.color; el.innerHTML = getIcon(it); 
-            el.onclick = (e) => {
-                // CORREÇÃO PC: Ação direta no clique
-                if (!isMobile && !gamepadActive) { 
-                    slot === 'potion' ? socket.emit("potion") : socket.emit("unequip", slot); 
-                    return; 
-                }
-                
-                if (focusIndex === index && focusArea === 'equipment') { slot === 'potion' ? socket.emit("potion") : socket.emit("unequip", slot); }
-                else { focusIndex = index; focusArea = 'equipment'; updateUI(); }
-            };
+            el.onmousedown = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+
+    if (!isMobile && !gamepadActive) {
+        slot === 'potion'
+            ? socket.emit("potion")
+            : socket.emit("unequip", slot);
+        return;
+    }
+
+    if (focusIndex === index && focusArea === 'equipment') {
+        slot === 'potion'
+            ? socket.emit("potion")
+            : socket.emit("unequip", slot);
+    } else {
+        focusIndex = index;
+        focusArea = 'equipment';
+        updateUI();
+    }
+};
+
             if (!isMobile && !gamepadActive) { 
                 el.onmouseover = () => { showTooltip(it, el); focusIndex = index; focusArea = 'equipment'; el.style.outline = '2px solid yellow'; }; 
                 el.onmouseout = () => { hideTooltip(); el.style.outline = 'none'; }; 
@@ -865,13 +871,23 @@ function updateUI() {
     e.preventDefault();
     e.stopPropagation();
 
-    if (!me) return;
-
-    // 👉 PC / Mouse (ação imediata, 1 clique)
     if (!isMobile && !gamepadActive) {
-        if (it.key === "potion") {
-            socket.emit("potion");
+        if (it.key === "potion") socket.emit("potion");
+        else if (it.slot && it.type !== "material" && it.type !== "gem" && it.type !== "key") {
+            socket.emit("equip", idx);
         }
+        focusIndex = idx;
+        focusArea = 'inventory';
+        updateUI();
+        return;
+    }
+	
+	d.onmousedown = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+
+    if (!isMobile && !gamepadActive) {
+        if (it.key === "potion") socket.emit("potion");
         else if (
             it.slot &&
             it.type !== "material" &&
@@ -880,22 +896,18 @@ function updateUI() {
         ) {
             socket.emit("equip", idx);
         }
-
         focusIndex = idx;
         focusArea = 'inventory';
+        updateUI();
         return;
     }
 
-    // 👉 Mobile / Gamepad (primeiro seleciona, segundo executa)
     if (focusIndex === idx && focusArea === 'inventory') {
-        if (it.key === "potion") {
-            socket.emit("potion");
-        }
+        if (it.key === "potion") socket.emit("potion");
         else if (
             it.slot &&
             it.type !== "material" &&
-            it.type !== "gem" &&
-            it.type !== "key"
+            it.type !== "gem"
         ) {
             socket.emit("equip", idx);
         }
@@ -906,6 +918,13 @@ function updateUI() {
     }
 };
 
+
+
+                if (focusIndex === idx && focusArea === 'inventory') {
+                    if (it.key === "potion") socket.emit("potion");
+                    else if (it.slot && it.type !== "material" && it.type !== "gem") socket.emit("equip", idx);
+                } else { focusIndex = idx; focusArea = 'inventory'; updateUI(); }
+            };
             
             d.draggable = true; d.ondragstart = (e) => { dragItem = { idx, item: it }; }; d.ondragover = (e) => e.preventDefault();
             d.ondrop = (e) => { e.preventDefault(); if(dragItem && dragItem.item.type === "gem" && it.type !== "gem") socket.emit("craft", {action:"socket", itemIdx:idx, gemIdx:dragItem.idx}); };
@@ -929,66 +948,27 @@ function updateUI() {
         }
     }
     
-    if (uiState.shop) {
-    const sg = document.getElementById("shop-grid");
-    sg.innerHTML = "";
+    if(uiState.shop) {
+        const sg = document.getElementById("shop-grid"); sg.innerHTML = "";
+        shopItems.forEach((it, idx) => {
+            const d = document.createElement("div"); d.className = "slot"; d.style.borderColor = it.color; d.style.outline = 'none';
+            if (focusArea === 'shop' && focusIndex === idx) { d.style.outline = '2px solid yellow'; showTooltip(it, d); }
+            d.innerHTML = getIcon(it); 
+            d.onmousedown = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    socket.emit("buy", idx);
+};
 
-    shopItems.forEach((it, idx) => {
-        const d = document.createElement("div");
-        d.className = "slot";
-        d.style.borderColor = it.color;
-        d.style.outline = "none";
-        d.innerHTML = getIcon(it);
-
-        const isSelected = (focusArea === 'shop' && focusIndex === idx);
-        if (isSelected) {
-            d.style.outline = '2px solid yellow';
-            showTooltip(it, d);
-        }
-
-        // ✅ CLICK CORRETO (COMPRA)
-        d.onmousedown = (e) => {
-            e.preventDefault();
-            e.stopPropagation();
-
-            // PC: compra direta
-            if (!isMobile && !gamepadActive) {
-                socket.emit("buy", idx);
-                return;
+            if (!isMobile && !gamepadActive) { 
+                d.onmouseover = () => { focusIndex = idx; focusArea = 'shop'; showTooltip(it, d); d.style.outline = '2px solid yellow'; }; 
+                d.onmouseout = () => { hideTooltip(); d.style.outline = 'none'; }; 
             }
-
-            // Mobile / Gamepad: seleciona → confirma
-            if (focusIndex === idx && focusArea === 'shop') {
-                socket.emit("buy", idx);
-            } else {
-                focusIndex = idx;
-                focusArea = 'shop';
-                updateUI();
-            }
-        };
-
-        // ✅ TOOLTIP NO HOVER (PC)
-        if (!isMobile) {
-            d.onmouseover = () => {
-                focusIndex = idx;
-                focusArea = 'shop';
-                showTooltip(it, d);
-                d.style.outline = '2px solid yellow';
-            };
-            d.onmouseout = () => {
-                hideTooltip();
-                d.style.outline = 'none';
-            };
-        }
-
-        sg.appendChild(d);
-    });
-
-    const closeShopBtn = document.getElementById("btn-shop-close");
-    if (closeShopBtn) closeShopBtn.onclick = closeAllMenus;
-}
-
-
+            sg.appendChild(d);
+        });
+        const closeShopBtn = document.getElementById("btn-shop-close");
+        if(closeShopBtn) closeShopBtn.onclick = closeAllMenus;
+    }
     
     if ((uiState.inv && (!me.inventory || me.inventory.length === 0))) { 
         hideTooltip(); 
@@ -1059,153 +1039,42 @@ function drawOffscreenPlayerIndicators() {
     });
 }
 
-/* =====================================================
-   SISTEMA DE VISUAL PROCEDURAL GEOMÉTRICO (V34)
-   Gera armas e armaduras únicas baseadas no ID do item
-   ===================================================== */
 function drawProceduralItem(ctx, item, x, y, angle, scale = 1.0) {
     if (!item) return;
-    
-    // Hash simples do ID para gerar consistência visual (A MESMA ARMA SEMPRE PARECE IGUAL)
-    let seed = 0;
-    if (item.id) { for(let i=0; i<item.id.length; i++) seed += item.id.charCodeAt(i); }
+    let seed = 0; if (item.id) { for(let i=0; i<item.id.length; i++) seed += item.id.charCodeAt(i); }
     const rng = () => { const x = Math.sin(seed++) * 10000; return x - Math.floor(x); };
     
-    ctx.save();
-    ctx.translate(x, y);
-    ctx.rotate(angle);
-    ctx.scale(scale, scale);
-
-    // Configuração de Estilo baseada na Raridade
-    let glowColor = null;
-    let baseColor = "#aaa";
+    ctx.save(); ctx.translate(x, y); ctx.rotate(angle); ctx.scale(scale, scale);
+    let baseColor = "#aaa", glowColor = null;
     if (item.rarity === "magic") { baseColor = "#4ff"; glowColor = "rgba(0, 255, 255, 0.4)"; }
     if (item.rarity === "rare") { baseColor = "#ff0"; glowColor = "rgba(255, 255, 0, 0.5)"; }
     if (item.rarity === "legendary") { baseColor = "#f0f"; glowColor = "rgba(255, 0, 255, 0.6)"; }
+    if (glowColor) { ctx.shadowBlur = 8; ctx.shadowColor = glowColor; }
 
-    if (glowColor) {
-        ctx.shadowBlur = 10;
-        ctx.shadowColor = glowColor;
-    }
-
-    // --- DESENHO DA ARMA ---
-    if (item.key.includes("sword") || item.key.includes("dagger")) {
-        // Lâmina Procedural
-        const bladeLen = item.key.includes("dagger") ? 8 : 14 + rng() * 6;
-        const width = 3 + rng() * 3;
-        const curve = (rng() - 0.5) * 4; // Curvatura da lâmina
-
+    const key = item.key;
+    if (key.includes("sword") || key.includes("dagger")) {
+        const len = key.includes("dagger") ? 8 : 14 + rng() * 6; const width = 3 + rng() * 3; const curve = (rng() - 0.5) * 4;
         ctx.fillStyle = baseColor;
-        ctx.beginPath();
-        ctx.moveTo(0, -2);
-        ctx.lineTo(width, -2); // Guarda
-        ctx.lineTo(width - 1 + curve, -bladeLen); // Ponta
-        ctx.lineTo(-1, -2);
-        ctx.fill();
-        
-        // Detalhe do cabo
-        ctx.fillStyle = "#420";
-        ctx.fillRect(1, 0, 2, 4);
-        
-        // Joia na guarda (se for raro+)
-        if (item.rarity !== "common") {
-            ctx.fillStyle = glowColor || "#f00";
-            ctx.beginPath(); ctx.arc(2, -2, 1.5, 0, Math.PI*2); ctx.fill();
-        }
-
-    } else if (item.key.includes("axe")) {
-        // Cabo
-        ctx.fillStyle = "#532";
-        ctx.fillRect(0, -2, 2, 14);
-        
-        // Cabeça do Machado (Dupla ou Simples)
-        ctx.fillStyle = baseColor;
-        const doubleBit = rng() > 0.5;
-        const size = 6 + rng() * 4;
-        
-        ctx.beginPath();
-        ctx.moveTo(1, 2);
-        ctx.lineTo(1 + size, -4);
-        ctx.lineTo(1 + size, 6);
-        ctx.fill();
-
-        if (doubleBit || item.rarity === "legendary") {
-            ctx.beginPath();
-            ctx.moveTo(1, 2);
-            ctx.lineTo(1 - size, -4);
-            ctx.lineTo(1 - size, 6);
-            ctx.fill();
-        }
-
-    } else if (item.key.includes("staff")) {
-        // Bastão
-        ctx.fillStyle = "#421";
-        ctx.fillRect(0, -10, 2, 20);
-        
-        // Cabeça do Cajado (Orbe ou Cristal)
-        const orbSize = 3 + rng() * 2;
-        ctx.fillStyle = item.color || "#0ff";
-        if (rng() > 0.5) {
-             ctx.beginPath(); ctx.arc(1, -12, orbSize, 0, Math.PI*2); ctx.fill();
-        } else {
-             ctx.beginPath(); ctx.moveTo(1, -14); ctx.lineTo(-2, -10); ctx.lineTo(1, -6); ctx.lineTo(4, -10); ctx.fill();
-        }
-        
-        // Partículas orbitando (se lendário)
-        if (item.rarity === "legendary") {
-            const time = Date.now() / 200;
-            ctx.fillStyle = "#fff";
-            ctx.fillRect(1 + Math.cos(time)*5, -12 + Math.sin(time)*5, 2, 2);
-        }
-
-    } else if (item.key.includes("bow")) {
-        ctx.strokeStyle = "#532";
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        ctx.arc(0, 0, 8, -Math.PI/2, Math.PI/2);
-        ctx.stroke();
-        ctx.strokeStyle = "#fff"; // Corda
-        ctx.lineWidth = 0.5;
-        ctx.beginPath(); ctx.moveTo(0, -8); ctx.lineTo(0, 8); ctx.stroke();
-        
-        if (item.rarity !== "common") {
-            ctx.fillStyle = baseColor;
-            ctx.fillRect(-2, -9, 4, 2); // Detalhes nas pontas
-            ctx.fillRect(-2, 7, 4, 2);
-        }
+        ctx.beginPath(); ctx.moveTo(0, -2); ctx.lineTo(width, -2); ctx.lineTo(width - 1 + curve, -len); ctx.lineTo(-1, -2); ctx.fill();
+        ctx.fillStyle = "#420"; ctx.fillRect(1, 0, 2, 4);
+    } else if (key.includes("axe")) {
+        ctx.fillStyle = "#532"; ctx.fillRect(0, -2, 2, 14);
+        ctx.fillStyle = baseColor; const sz = 6 + rng() * 4;
+        ctx.beginPath(); ctx.moveTo(1, 2); ctx.lineTo(1+sz, -4); ctx.lineTo(1+sz, 6); ctx.fill();
+    } else if (key.includes("staff")) {
+        ctx.fillStyle = "#421"; ctx.fillRect(0, -10, 2, 20);
+        ctx.fillStyle = item.color || "#0ff"; ctx.beginPath(); ctx.arc(1, -12, 4, 0, Math.PI*2); ctx.fill();
+    } else if (key.includes("bow")) {
+        ctx.strokeStyle = "#532"; ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.arc(0, 0, 8, -Math.PI/2, Math.PI/2); ctx.stroke();
+        ctx.strokeStyle = "#fff"; ctx.lineWidth = 0.5; ctx.beginPath(); ctx.moveTo(0, -8); ctx.lineTo(0, 8); ctx.stroke();
     }
-
     ctx.restore();
 }
 
 function draw() {
     requestAnimationFrame(draw);
-    handleGamepadInput();
-    
-    const mobileControls = document.getElementById("mobile-controls"); 
-    const mobileHorizontalHud = document.getElementById("hud-horizontal-mobile");
-    const hudGold = document.getElementById("hud-gold");
-    const hudBottom = document.querySelector('.hud-bottom');
-    const gameLogContainer = document.getElementById("game-log-container");
-    
-    if(isMobile) {
-        const btnChatMobile = document.getElementById("btn-chat-mobile");
-        if (btnChatMobile) btnChatMobile.style.display = isMobile ? "block" : "none";
-        if(mobileHorizontalHud) mobileHorizontalHud.style.display = "flex"; 
-        if(hudBottom) hudBottom.style.display = "none"; 
-        if(gameLogContainer) gameLogContainer.style.display = "block"; 
-        if (mobileControls) {
-            if (!gamepadActive) { mobileControls.style.display = "block"; if(hudGold) hudGold.style.display = "none"; } 
-            else { mobileControls.style.display = "none"; if(hudGold) hudGold.style.display = "block"; }
-        }
-    } else { 
-        if(mobileControls) mobileControls.style.display = "none"; 
-        if(mobileHorizontalHud) mobileHorizontalHud.style.display = "none"; 
-        if(hudBottom) hudBottom.style.display = "flex";
-        if(hudGold) hudGold.style.display = "block"; 
-        if(gameLogContainer) gameLogContainer.style.display = "block"; 
-    }
-
+    handleGamepadInput(); // Check gamepad
     ctx.fillStyle = "#000"; ctx.fillRect(0,0,canvas.width,canvas.height);
     
     if(!me) {
@@ -1213,7 +1082,8 @@ function draw() {
         ctx.fillText("CONNECTING...", canvas.width/2, canvas.height/2); return;
     }
 
-    cam.x += (me.x*SCALE - canvas.width/2 - cam.x)*0.2; cam.y += (me.y*SCALE - canvas.height/2 - cam.y)*0.2;
+    cam.x += (me.x*SCALE - canvas.width/2 - cam.x)*0.2;
+    cam.y += (me.y*SCALE - canvas.height/2 - cam.y)*0.2;
     if (cameraShake > 0) {
         cam.x += (Math.random() - 0.5) * cameraShake; cam.y += (Math.random() - 0.5) * cameraShake;
         cameraShake *= 0.85; if (cameraShake < 0.5) cameraShake = 0;
@@ -1358,24 +1228,12 @@ function draw() {
 
         if (e.class) {
             let c = e.class; ctx.fillStyle = (c==="knight"?"#668":c==="hunter"?"#464":"#448"); ctx.fillRect(-4, -6, 8, 12);
-            
-            // DESENHO PROCEDURAL: ELMO
-            if(e.equipment && e.equipment.head) { 
-                ctx.fillStyle=e.equipment.head.color; ctx.fillRect(-4,-9,8,5); 
-                // Detalhes extras se for raro/lendário
-                if(e.equipment.head.rarity === "legendary") {
-                     ctx.fillStyle = "#fd0"; ctx.fillRect(-5, -11, 2, 4); ctx.fillRect(3, -11, 2, 4); // Chifres
-                }
-            }
-            
+            if(e.equipment && e.equipment.head) { ctx.fillStyle=e.equipment.head.color; ctx.fillRect(-4,-9,8,5); }
             if(e.equipment && e.equipment.body) { ctx.fillStyle=e.equipment.body.color; ctx.fillRect(-3,-4,6,8); }
-            
-            // DESENHO PROCEDURAL: ARMA NA MÃO
             if(e.equipment && e.equipment.hand) {
-                // Chama a nova função de desenho, deslocando um pouco para o lado (x=5)
-                drawProceduralItem(ctx, e.equipment.hand, 6, 2, 0, 0.75);
+                // Procedural weapon draw
+                drawProceduralItem(ctx, e.equipment.hand, 6, 2, 0, 0.7);
             }
-            
             if (e.id === myId) {
                 ctx.fillStyle = "white"; ctx.fillRect(-2, -4, 2, 2); ctx.fillRect(2, -4, 2, 2); 
                 let lookAngle = (!isMobile && !gamepadActive) ? getMouseAngle() : getAttackAngle();
@@ -1395,7 +1253,195 @@ function draw() {
         }
         else if (e.boss) {
             const bs = s; 
-            if (e.name.includes("Butcher")) {
+            
+            // --- OVERLORD TIAMAT — DRAGÃO PRIMORDIAL (TOP-DOWN) ---
+if (e.name && e.name.includes("TIAMAT")) {
+
+    // 🔒 Isolamento total
+    ctx.save();
+
+    const bs = s * 0.9;              // escala geral
+    const t = Date.now() * 0.002;
+
+    const pulse = Math.sin(t * 2) * bs * 0.05;
+    const wingWave = Math.sin(t * 1.5) * bs * 0.25;
+    const tailWave = Math.sin(t * 1.2) * bs * 0.3;
+
+    // ===============================
+    // AURA INFERNAL
+    // ===============================
+    ctx.shadowBlur = 30;
+    ctx.shadowColor = "#800020";
+    ctx.globalAlpha = 0.9;
+
+    // ===============================
+    // ASAS (HORIZONTAL / SIMÉTRICAS)
+    // ===============================
+    ctx.fillStyle = "rgba(20,0,12,0.85)";
+    ctx.strokeStyle = "#600020";
+    ctx.lineWidth = 2;
+
+    // Asa esquerda
+    ctx.beginPath();
+    ctx.moveTo(-bs * 0.2, 0);
+    ctx.quadraticCurveTo(
+        -bs * 1.4,
+        -bs * 0.8 + wingWave,
+        -bs * 2.0,
+        0
+    );
+    ctx.quadraticCurveTo(
+        -bs * 1.3,
+        bs * 0.8,
+        -bs * 0.3,
+        bs * 0.4
+    );
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+
+    // Asa direita
+    ctx.beginPath();
+    ctx.moveTo(bs * 0.2, 0);
+    ctx.quadraticCurveTo(
+        bs * 1.4,
+        -bs * 0.8 - wingWave,
+        bs * 2.0,
+        0
+    );
+    ctx.quadraticCurveTo(
+        bs * 1.3,
+        bs * 0.8,
+        bs * 0.3,
+        bs * 0.4
+    );
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+
+    ctx.shadowBlur = 0;
+
+    // ===============================
+    // CORPO CENTRAL (OVAL FRONTAL)
+    // ===============================
+    ctx.fillStyle = "#120008";
+    ctx.beginPath();
+    ctx.ellipse(0, 0, bs * 0.55, bs * 0.7 + pulse, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Placas dorsais
+    ctx.strokeStyle = "#500020";
+    ctx.lineWidth = 2;
+    for (let i = -2; i <= 2; i++) {
+        ctx.beginPath();
+        ctx.moveTo(i * bs * 0.18, -bs * 0.6);
+        ctx.lineTo(i * bs * 0.12, bs * 0.6);
+        ctx.stroke();
+    }
+
+    // ===============================
+    // CABEÇAS (3 — FRENTE / SUPERIOR)
+    // ===============================
+    const headColors = ["#ff3030", "#b040ff", "#ff3030"];
+
+    for (let i = -1; i <= 1; i++) {
+
+        const hx = i * bs * 0.45;
+        const hy = -bs * 0.95 + Math.sin(t + i) * bs * 0.08;
+
+        // Pescoço
+        ctx.strokeStyle = "#180008";
+        ctx.lineWidth = bs * 0.18;
+        ctx.beginPath();
+        ctx.moveTo(i * bs * 0.25, -bs * 0.55);
+        ctx.quadraticCurveTo(
+            hx * 0.8,
+            -bs * 0.8,
+            hx,
+            hy
+        );
+        ctx.stroke();
+
+        ctx.save();
+        ctx.translate(hx, hy);
+
+        // Crânio (top-down)
+        ctx.fillStyle = "#0a0005";
+        ctx.beginPath();
+        ctx.ellipse(0, 0, bs * 0.22, bs * 0.28, 0, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Mandíbula frontal
+        ctx.fillStyle = "#200010";
+        ctx.beginPath();
+        ctx.ellipse(0, bs * 0.18, bs * 0.18, bs * 0.14, 0, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Chifres
+        ctx.fillStyle = "#ddd";
+        ctx.beginPath();
+        ctx.moveTo(-bs * 0.12, -bs * 0.18);
+        ctx.lineTo(-bs * 0.28, -bs * 0.45);
+        ctx.lineTo(-bs * 0.02, -bs * 0.25);
+        ctx.fill();
+
+        ctx.beginPath();
+        ctx.moveTo(bs * 0.12, -bs * 0.18);
+        ctx.lineTo(bs * 0.28, -bs * 0.45);
+        ctx.lineTo(bs * 0.02, -bs * 0.25);
+        ctx.fill();
+
+        // Olho
+        ctx.shadowColor = headColors[i + 1];
+        ctx.shadowBlur = 12;
+        ctx.fillStyle = headColors[i + 1];
+        ctx.beginPath();
+        ctx.arc(0, -bs * 0.05, bs * 0.06, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.shadowBlur = 0;
+
+        ctx.restore();
+    }
+
+    // ===============================
+    // CAUDA (TRASEIRA, CENTRAL)
+    // ===============================
+    ctx.strokeStyle = "#1a0008";
+    ctx.lineWidth = bs * 0.22;
+    ctx.lineCap = "round";
+
+    ctx.beginPath();
+    ctx.moveTo(0, bs * 0.7);
+    ctx.bezierCurveTo(
+        tailWave,
+        bs * 1.2,
+        -tailWave,
+        bs * 1.8,
+        0,
+        bs * 2.4
+    );
+    ctx.stroke();
+
+    // Espinhos da cauda
+    ctx.fillStyle = "#700018";
+    for (let i = 1; i <= 3; i++) {
+        ctx.beginPath();
+        ctx.arc(
+            Math.sin(t + i) * bs * 0.15,
+            bs * (0.9 + i * 0.4),
+            bs * 0.07,
+            0,
+            Math.PI * 2
+        );
+        ctx.fill();
+    }
+
+    // 🔓 restaura tudo
+    ctx.restore();
+}
+
+            // --- ORIGINAL BOSSES ---
+            else if (e.name.includes("Butcher")) {
                 ctx.fillStyle = "#900"; ctx.fillRect(-bs/1.1, -bs/2, bs*1.8, bs);
                 ctx.fillStyle = "#700"; ctx.fillRect(-bs/3, -bs + 4, bs/1.5, bs/2);
                 ctx.fillStyle = "#fff"; ctx.fillRect(-3, -bs + 8, 2, 2); ctx.fillRect(3, -bs + 8, 2, 2);
