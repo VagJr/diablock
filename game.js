@@ -1,287 +1,16 @@
 /* =====================================================
-   DIABLOCK V34 — INFERNAL ASCENSION (CLIENT FULL)
-   Stable + Tiamat Visuals Added
+   DIABLOCK V35 — GOLD EDITION (CLIENT FULL)
+   Features: Durability, Repair, Polished Wizard, Tiamat
    ===================================================== */
 
-/*
-====================================================
- DIABLOCK — PATCH RETROSPECTIVE (V33.x)
- Applied:
- - V33.1 Infernal Equilibrium (identity + balance profile)
- - V33.2 Infernal Scaling Core (infinite math scaling)
- - V33.3 Infernal Checkpoints (progress persistence)
- - V34.0 Procedural Visuals (Unique Item Models)
-====================================================
-*/
-
-
-/* =====================================================
-   PATCH A — HIT FLASH / DISTANCE (CLIENT)
-   ===================================================== */
 const HIT_FLASH_FRAMES = 4;
 
 /* =========================
-   MOBILE-SAFE BGM (Diablock)
+   AUDIO SYSTEM
    ========================= */
 let bgm = null;
 let bgmStarted = false;
 let cameraShake = 0;
-
-function ensureBGM() {
-    if (bgmStarted) return;
-    bgmStarted = true;
-    bgm = new Audio("assets/bgm.mp3");
-    bgm.loop = true;
-    bgm.volume = 0.4;
-    bgm.addEventListener('error', () => console.log("BGM file not found."));
-    const p = bgm.play();
-    if (p && p.catch) p.catch(() => bgmStarted = false);
-}
-/* ========================= */
-
-const socket = io({ transports: ['websocket'], upgrade: false });
-const canvas = document.getElementById("c");
-const ctx = canvas.getContext("2d", { alpha: false });
-const SCALE = 16;
-
-// V33.1 BALANCE PROFILE
-const BALANCE_PROFILE = 'INFERNAL_EQUILIBRIUM';
-// V33.2 — INFERNAL SCALING CORE
-const SCALING_CORE = {
-  hp: lvl => 100 + Math.floor(Math.pow(lvl, 1.25) * 18),
-  dmg: lvl => 5 + Math.floor(Math.pow(lvl, 1.15) * 2.2),
-  xp:  lvl => Math.floor(50 + Math.pow(lvl, 1.35) * 25)
-};
-
-
-let myId = null, me = null;
-let state = { pl:{}, mb:{}, it:{}, pr:[], props:[], map:[], explored: [], lightRadius: 15, hint: null };
-let recipes = [];
-let cam = { x:0, y:0 }, mouse = { x:0, y:0 };
-let texts = [], effects = [];
-let uiState = { inv:false, char:false, shop:false, craft:false, chat:false };
-let inputState = { x:0, y:0, block:false };
-let shopItems = [];
-const tooltip = document.getElementById("tooltip");
-let dragItem = null;
-
-let isMobile = /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent);
-let gamepad = null;
-let gamepadActive = false;
-let focusIndex = 0;
-let focusArea = 'equipment';
-
-const gameLog = document.getElementById("game-log");
-
-/* =========================================================
-   JOYSTICK — DECLARADO ANTES DO sendInput (FIX CRÍTICO)
-   ========================================================= */
-let joystick = {
-    active: false,
-    id: null,
-    startX: 0,
-    startY: 0,
-    normX: 0,
-    normY: 0,
-    radius: 50,
-    knob: document.getElementById('joystick-knob')
-};
-
-const keys = { w:false, a:false, s:false, d:false, q:false, game_x: 0, game_y: 0 };
-let lastInputTime = 0;
-
-function isClickOnUI(e) {
-    const uiIds = [
-        "inventory",
-        "char-panel",
-        "shop-panel",
-        "craft-panel",
-        "menu",
-        "chat-container"
-    ];
-
-    for (const id of uiIds) {
-        const el = document.getElementById(id);
-        if (!el || el.style.display !== "block") continue;
-        const r = el.getBoundingClientRect();
-        if (
-            e.clientX >= r.left &&
-            e.clientX <= r.right &&
-            e.clientY >= r.top &&
-            e.clientY <= r.bottom
-        ) {
-            return true;
-        }
-    }
-    return false;
-}
-
-function sendInput(force=false) {
-    const now = Date.now();
-    const RATE = isMobile ? 30 : 50;
-
-    let dx = (keys.d ? 1 : 0) - (keys.a ? 1 : 0);
-    let dy = (keys.s ? 1 : 0) - (keys.w ? 1 : 0);
-
-    if (gamepadActive && (Math.abs(keys.game_x) > 0.1 || Math.abs(keys.game_y) > 0.1)) {
-        dx = keys.game_x;
-        dy = keys.game_y;
-    }
-
-    if (joystick.active) {
-        dx = joystick.normX;
-        dy = joystick.normY;
-    }
-
-    if (uiState.chat) { dx = 0; dy = 0; }
-
-    // BUG DE LAG FIX: Se estivermos parando de andar, enviamos sem esperar o throttle
-    const isStopping = (dx === 0 && dy === 0 && (inputState.x !== 0 || inputState.y !== 0));
-    
-    if (!force && !isStopping && now - lastInputTime < RATE) return;
-
-    inputState = { x: dx, y: dy, block: keys.q };
-    socket.emit("input", inputState);
-    lastInputTime = now;
-}
-
-/* =========================
-   INPUT – KEYBOARD & SYSTEM
-   ========================= */
-const pressedKeys = new Set();
-
-window.addEventListener("keydown", e => {
-    if (document.getElementById("menu").style.display !== "none") return;
-    const k = e.key.toLowerCase();
-    
-    // ENTER abre o chat
-    if (k === "enter" && !uiState.chat) {
-        uiState.chat = true;
-        const container = document.getElementById("chat-container");
-        container.style.display = "block";
-        setTimeout(() => chatInput.focus(), 50);
-        playSfx("chat");
-        return;
-    }
-
-    if (pressedKeys.has(k)) return;
-    pressedKeys.add(k);
-
-    if (uiState.chat && k !== "escape") return;
-
-    if (keys.hasOwnProperty(k)) {
-        keys[k] = true;
-        sendInput(true);
-    }
-
-    if (k === "i") toggleMenu("inv");
-    if (k === "c") toggleMenu("char");
-    if (k === "k") toggleMenu("craft");
-    if (k === "escape") closeAllMenus();
-    if (k === " ") socket.emit("dash", getDashAngle());
-    if (k === "e") socket.emit("potion");
-
-    updateUI();
-});
-
-window.addEventListener("keyup", e => {
-    const k = e.key.toLowerCase();
-    pressedKeys.delete(k);
-    if (keys.hasOwnProperty(k)) {
-        keys[k] = false;
-        sendInput(true);
-    }
-});
-
-function toggleMenu(menu) {
-    const wasOpen = uiState[menu];
-    uiState.inv = uiState.char = uiState.shop = uiState.craft = false;
-    uiState[menu] = !wasOpen;
-}
-
-/* =========================
-   INPUT – TOUCH (MOBILE)
-   ========================= */
-const JOYSTICK_AREA_EL = document.getElementById('joystick-area');
-
-const handleTouchStart = (e) => {
-    if (gamepadActive) return;
-    if (AudioCtrl.ctx.state === 'suspended') AudioCtrl.ctx.resume();
-    AudioCtrl.init();
-    if (uiState.chat || document.getElementById("menu").style.display !== "none") return;
-
-    const r = JOYSTICK_AREA_EL.getBoundingClientRect();
-
-    for (const t of e.touches) {
-        if (!joystick.active &&
-            t.clientX >= r.left && t.clientX <= r.right &&
-            t.clientY >= r.top && t.clientY <= r.bottom) {
-
-            joystick.active = true;
-            joystick.id = t.identifier;
-            joystick.startX = t.clientX;
-            joystick.startY = t.clientY;
-            joystick.knob.style.display = 'block';
-            joystick.knob.style.transform = 'translate(0,0)';
-        }
-    }
-};
-
-const handleTouchMove = (e) => {
-    if (!joystick.active) return;
-    for (const t of e.touches) {
-        if (t.identifier === joystick.id) {
-            let dx = t.clientX - joystick.startX;
-            let dy = t.clientY - joystick.startY;
-            let dist = Math.hypot(dx, dy);
-
-            if (dist > joystick.radius) {
-                dx = dx / dist * joystick.radius;
-                dy = dy / dist * joystick.radius;
-            }
-
-            const deadzone = joystick.radius * 0.1;
-            joystick.normX = Math.abs(dx) < deadzone ? 0 : dx / joystick.radius;
-            joystick.normY = Math.abs(dy) < deadzone ? 0 : dy / joystick.radius;
-
-            joystick.knob.style.transform = `translate(${dx}px, ${dy}px)`;
-            sendInput(true);
-        }
-    }
-    e.preventDefault();
-};
-
-const handleTouchEnd = (e) => {
-    for (const t of e.changedTouches) {
-        if (t.identifier === joystick.id) {
-            joystick.active = false;
-            joystick.id = null;
-            joystick.normX = 0;
-            joystick.normY = 0;
-            joystick.knob.style.display = 'none';
-            joystick.knob.style.transform = 'translate(0,0)';
-            sendInput(true);
-        }
-    }
-};
-
-document.addEventListener('touchstart', handleTouchStart, { passive: false });
-document.addEventListener('touchmove', handleTouchMove, { passive: false });
-document.addEventListener('touchend', handleTouchEnd);
-document.addEventListener('touchcancel', handleTouchEnd);
-
-window.addEventListener("gamepadconnected", (e) => { 
-    gamepad = e.gamepad; 
-    gamepadActive = true; 
-    document.getElementById("mobile-controls").style.display = "none"; 
-    document.getElementById("mobile-menu-buttons").style.display = "flex"; 
-    addLog("Gamepad Conectado!", "#0f0");
-});
-window.addEventListener("gamepaddisconnected", (e) => { 
-    gamepad = null; 
-    gamepadActive = false; 
-    addLog("Gamepad Desconectado.", "#f00");
-});
 
 const AudioCtrl = {
     ctx: new (window.AudioContext || window.webkitAudioContext)(),
@@ -290,8 +19,10 @@ const AudioCtrl = {
         if(!this.bgm) {
             this.bgm = new Audio("assets/bgm.mp3");
             this.bgm.loop = true; this.bgm.volume = 0.3;
-            this.bgm.play().catch(e => {}); 
+            const p = this.bgm.play();
+            if(p && p.catch) p.catch(e => {}); 
         }
+        if(this.ctx.state === 'suspended') this.ctx.resume();
     },
     playTone: function(freq, type, dur, vol=0.1) {
         if(this.muted || this.ctx.state === 'suspended') return;
@@ -314,6 +45,8 @@ const AudioCtrl = {
     }
 };
 
+function ensureBGM() { AudioCtrl.init(); }
+
 function playSfx(name) {
     if(isMobile && Math.random() > 0.5) return; 
     switch(name) {
@@ -329,10 +62,183 @@ function playSfx(name) {
     }
 }
 
+/* =========================
+   ENGINE SETUP
+   ========================= */
+const socket = io({ transports: ['websocket'], upgrade: false });
+const canvas = document.getElementById("c");
+const ctx = canvas.getContext("2d", { alpha: false });
+const SCALE = 16;
+
+let myId = null, me = null;
+let state = { pl:{}, mb:{}, it:{}, pr:[], props:[], map:[], explored: [], lightRadius: 15, hint: null };
+let recipes = [];
+let cam = { x:0, y:0 }, mouse = { x:0, y:0 };
+let texts = [], effects = [];
+let uiState = { inv:false, char:false, shop:false, craft:false, chat:false };
+let inputState = { x:0, y:0, block:false };
+let shopItems = [];
+const tooltip = document.getElementById("tooltip");
+let dragItem = null;
+
+let isMobile = /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent);
+let gamepad = null;
+let gamepadActive = false;
+let focusIndex = 0;
+let focusArea = 'equipment';
+
+const gameLog = document.getElementById("game-log");
+
+let joystick = {
+    active: false, id: null, startX: 0, startY: 0, normX: 0, normY: 0, radius: 50,
+    knob: document.getElementById('joystick-knob')
+};
+
+const keys = { w:false, a:false, s:false, d:false, q:false, game_x: 0, game_y: 0 };
+let lastInputTime = 0;
+
+function isClickOnUI(e) {
+    const uiIds = ["inventory", "char-panel", "shop-panel", "craft-panel", "menu", "chat-container"];
+    for (const id of uiIds) {
+        const el = document.getElementById(id);
+        if (!el || el.style.display !== "block") continue;
+        const r = el.getBoundingClientRect();
+        if (e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom) return true;
+    }
+    return false;
+}
+
+function sendInput(force=false) {
+    const now = Date.now();
+    const RATE = isMobile ? 30 : 50;
+    let dx = (keys.d ? 1 : 0) - (keys.a ? 1 : 0);
+    let dy = (keys.s ? 1 : 0) - (keys.w ? 1 : 0);
+
+    if (gamepadActive && (Math.abs(keys.game_x) > 0.1 || Math.abs(keys.game_y) > 0.1)) {
+        dx = keys.game_x; dy = keys.game_y;
+    }
+    if (joystick.active) { dx = joystick.normX; dy = joystick.normY; }
+    if (uiState.chat) { dx = 0; dy = 0; }
+
+    const isStopping = (dx === 0 && dy === 0 && (inputState.x !== 0 || inputState.y !== 0));
+    if (!force && !isStopping && now - lastInputTime < RATE) return;
+
+    inputState = { x: dx, y: dy, block: keys.q };
+    socket.emit("input", inputState);
+    lastInputTime = now;
+}
+
+/* =========================
+   INPUT HANDLING
+   ========================= */
+const pressedKeys = new Set();
+
+window.addEventListener("keydown", e => {
+    if (document.getElementById("menu").style.display !== "none") return;
+    const k = e.key.toLowerCase();
+    
+    if (k === "enter" && !uiState.chat) {
+        uiState.chat = true;
+        document.getElementById("chat-container").style.display = "block";
+        setTimeout(() => chatInput.focus(), 50);
+        playSfx("chat");
+        return;
+    }
+
+    if (pressedKeys.has(k)) return;
+    pressedKeys.add(k);
+
+    if (uiState.chat && k !== "escape") return;
+
+    if (keys.hasOwnProperty(k)) { keys[k] = true; sendInput(true); }
+
+    if (k === "i") toggleMenu("inv");
+    if (k === "c") toggleMenu("char");
+    if (k === "k") toggleMenu("craft");
+    if (k === "r" && uiState.shop) socket.emit("repair_all"); // Atalho Repair
+    if (k === "escape") closeAllMenus();
+    if (k === " ") socket.emit("dash", getDashAngle());
+    if (k === "e") socket.emit("potion");
+
+    updateUI();
+});
+
+window.addEventListener("keyup", e => {
+    const k = e.key.toLowerCase();
+    pressedKeys.delete(k);
+    if (keys.hasOwnProperty(k)) { keys[k] = false; sendInput(true); }
+});
+
+function toggleMenu(menu) {
+    const wasOpen = uiState[menu];
+    uiState.inv = uiState.char = uiState.shop = uiState.craft = false;
+    uiState[menu] = !wasOpen;
+}
+
+/* MOBILE TOUCH */
+const JOYSTICK_AREA_EL = document.getElementById('joystick-area');
+const handleTouchStart = (e) => {
+    if (gamepadActive) return;
+    ensureBGM();
+    if (uiState.chat || document.getElementById("menu").style.display !== "none") return;
+
+    const r = JOYSTICK_AREA_EL.getBoundingClientRect();
+    for (const t of e.touches) {
+        if (!joystick.active && t.clientX >= r.left && t.clientX <= r.right && t.clientY >= r.top && t.clientY <= r.bottom) {
+            joystick.active = true; joystick.id = t.identifier;
+            joystick.startX = t.clientX; joystick.startY = t.clientY;
+            joystick.knob.style.display = 'block'; joystick.knob.style.transform = 'translate(0,0)';
+        }
+    }
+};
+
+const handleTouchMove = (e) => {
+    if (!joystick.active) return;
+    for (const t of e.touches) {
+        if (t.identifier === joystick.id) {
+            let dx = t.clientX - joystick.startX; let dy = t.clientY - joystick.startY;
+            let dist = Math.hypot(dx, dy);
+            if (dist > joystick.radius) { dx = dx / dist * joystick.radius; dy = dy / dist * joystick.radius; }
+            const deadzone = joystick.radius * 0.1;
+            joystick.normX = Math.abs(dx) < deadzone ? 0 : dx / joystick.radius;
+            joystick.normY = Math.abs(dy) < deadzone ? 0 : dy / joystick.radius;
+            joystick.knob.style.transform = `translate(${dx}px, ${dy}px)`;
+            sendInput(true);
+        }
+    }
+    e.preventDefault();
+};
+
+const handleTouchEnd = (e) => {
+    for (const t of e.changedTouches) {
+        if (t.identifier === joystick.id) {
+            joystick.active = false; joystick.id = null;
+            joystick.normX = 0; joystick.normY = 0;
+            joystick.knob.style.display = 'none'; joystick.knob.style.transform = 'translate(0,0)';
+            sendInput(true);
+        }
+    }
+};
+
+document.addEventListener('touchstart', handleTouchStart, { passive: false });
+document.addEventListener('touchmove', handleTouchMove, { passive: false });
+document.addEventListener('touchend', handleTouchEnd);
+document.addEventListener('touchcancel', handleTouchEnd);
+
+/* GAMEPAD */
+window.addEventListener("gamepadconnected", (e) => { 
+    gamepad = e.gamepad; gamepadActive = true; 
+    document.getElementById("mobile-controls").style.display = "none"; 
+    document.getElementById("mobile-menu-buttons").style.display = "flex"; 
+    addLog("Gamepad Conectado!", "#0f0");
+});
+window.addEventListener("gamepaddisconnected", (e) => { 
+    gamepad = null; gamepadActive = false; 
+    addLog("Gamepad Desconectado.", "#f00");
+});
+
 const resize = () => { 
-    canvas.width=innerWidth; 
-    canvas.height=innerHeight; 
-    ctx.imageSmoothingEnabled=false; 
+    canvas.width=innerWidth; canvas.height=innerHeight; ctx.imageSmoothingEnabled=false; 
     isMobile = window.matchMedia("(max-width: 1024px)").matches || /Mobi|Android/i.test(navigator.userAgent); 
     updateUI(); 
 };
@@ -344,44 +250,35 @@ function addLog(msg, color="#0f0") {
     const logEntry = document.createElement("div");
     logEntry.innerHTML = `<span style="color:#666">${time}</span> <span style="color:${color}">${msg}</span>`;
     gameLog.prepend(logEntry); 
-    if (gameLog.children.length > 50) {
-        gameLog.removeChild(gameLog.lastChild);
-    }
+    if (gameLog.children.length > 50) gameLog.removeChild(gameLog.lastChild);
 }
 
+/* =========================
+   SOCKET EVENTS
+   ========================= */
 socket.on("connect", () => myId=socket.id);
 socket.on("char_list", list => {
     document.getElementById("login-form").style.display="none"; document.getElementById("char-select").style.display="block";
     const l = document.getElementById("char-list"); l.innerHTML="";
     for(let n in list){
         let d=document.createElement("div"); d.className="btn"; d.innerHTML=`${n} <small>Lvl ${list[n].level}</small>`;
-        d.onclick=()=>{ socket.emit("enter_game", n); document.getElementById("menu").style.display="none"; AudioCtrl.init(); ensureBGM(); };
+        d.onclick=()=>{ socket.emit("enter_game", n); document.getElementById("menu").style.display="none"; ensureBGM(); };
         l.appendChild(d);
     }
 });
 socket.on("game_start", d => { recipes = d.recipes; renderCrafting(); });
-
-socket.on("map_data", d => {
-    state.map = d.map;
-    state.theme = d.theme;
-    state.explored = []; 
-    addLog("Mapa Carregado.", "#0f0");
-});
+socket.on("map_data", d => { state.map = d.map; state.theme = d.theme; state.explored = []; addLog("Mapa Carregado.", "#0f0"); });
 
 socket.on("u", d => { 
     const currentMap = state.map;
     Object.assign(state, d); 
     if (!d.map && currentMap) state.map = currentMap;
-
     me = state.pl[myId];
-
     if(me && state.theme === "#444") {
         const stairs = state.props.find(p => p.type === "stairs");
         if(stairs && Math.hypot(me.x - stairs.x, me.y - stairs.y) < 1.2) {
             const modal = document.getElementById('entry-modal');
-            if(modal && modal.style.display !== 'block') {
-                modal.style.display = 'block';
-            }
+            if(modal && modal.style.display !== 'block') modal.style.display = 'block';
         }
     }
     if(me) updateUI(); 
@@ -392,13 +289,8 @@ function preventTextOverlap(newText) {
     let attempts = 0;
     while(attempts < 3) {
         let collision = false;
-        for(let t of texts) {
-            if(Math.abs(t.x - newText.x) < 2 && Math.abs(t.y - newText.y) < 2) {
-                collision = true; break;
-            }
-        }
-        if(collision) { newText.y -= 1.0; newText.x += (Math.random() - 0.5) * 2; attempts++; } 
-        else { break; }
+        for(let t of texts) { if(Math.abs(t.x - newText.x) < 2 && Math.abs(t.y - newText.y) < 2) { collision = true; break; } }
+        if(collision) { newText.y -= 1.0; newText.x += (Math.random() - 0.5) * 2; attempts++; } else { break; }
     }
 }
 
@@ -408,7 +300,7 @@ socket.on("txt", d => {
     let startX = d.x + (Math.random() - 0.5) * 0.5;
     let startY = d.y + (Math.random() - 0.5) * 0.5;
     if(valStr.includes("LEVEL UP!")) { vy = -0.02; life = 150; d.size="16px bold Courier New"; d.color="#fb0"; }
-    else if(valStr.includes("CRIT!")) { vy = -0.08; life = 100; d.color="#f0f"; d.size="14px bold Courier New"; }
+    else if(valStr.includes("CRIT!") || valStr.includes("BROKE")) { vy = -0.08; life = 100; d.size="14px bold Courier New"; }
     const newText = { val: valStr, x: startX, y: startY, color: d.color || "#fff", life: life, vy: vy, size: d.size || "10px Courier New" };
     preventTextOverlap(newText);
     texts.push(newText);
@@ -422,10 +314,7 @@ socket.on("fx", d => {
     else if (d.type === "spin") { effects.push({ type: "spin", x: d.x, y: d.y, angle: d.angle || 0, life: 15 }); playSfx("atk"); }
     else if (d.type === "nova") effects.push({ type: "nova", x: d.x, y: d.y, life: d.life || 15 });
     else if (d.type === "dash") playSfx("dash");
-    else if (d.type === "gold_txt") { 
-        const t = { val: String(d.val), x: d.x, y: d.y, color: "#fb0", life: 80, vy: -0.05, size: "10px Courier New" };
-        texts.push(t); playSfx("gold"); 
-    }
+    else if (d.type === "fireball") effects.push({ type: "nova", x: d.x, y: d.y, life: 10, color: "#f80" });
     else if (d.type === "boss_hit") { if(!isMobile) cameraShake = 8; playSfx("hit"); }
     else if (d.type === "charge") { effects.push({ type: "charge", x: d.x, y: d.y, life: 20 }); }
     else if (d.type === "hit") playSfx("hit");
@@ -433,15 +322,14 @@ socket.on("fx", d => {
     else if (d.type === "lore") playSfx("lore");
 });
 
-socket.on("chat", d => { 
-    playSfx("chat"); 
-    addLog(`${state.pl[d.id]?.name || "Unknown"}: ${d.msg}`, "#fff");
-});
+socket.on("chat", d => { playSfx("chat"); addLog(`${state.pl[d.id]?.name || "Unknown"}: ${d.msg}`, "#fff"); });
 socket.on("open_shop", items => { uiState.shop = true; shopItems = items; updateUI(); });
 socket.on("log", d => addLog(d.msg, d.color));
 
+/* =========================
+   INPUT HELPERS
+   ========================= */
 function getMouseAngle() { return Math.atan2((mouse.y - canvas.height/2), (mouse.x - canvas.width/2)); }
-
 function getDirectionalInput() {
     if (joystick.active) return { dx: joystick.normX, dy: joystick.normY };
     const game_dx = keys.game_x, game_dy = keys.game_y;
@@ -450,7 +338,6 @@ function getDirectionalInput() {
     if (Math.abs(key_dx) > 0.1 || Math.abs(key_dy) > 0.1) return { dx: key_dx, dy: key_dy };
     return { dx: 0, dy: 0 };
 }
-
 function getDashAngle() {
     if (!isMobile && !gamepadActive) return getMouseAngle();
     const { dx, dy } = getDirectionalInput();
@@ -458,7 +345,6 @@ function getDashAngle() {
     if (isMoving) return Math.atan2(dy, dx);
     return me ? Math.atan2(me.vy || 0, me.vx || 1) : 0;
 }
-
 function getClosestEnemyAngle(maxRange = 8) {
     if (!me || !state.mb) return null;
     let closestEnemy = null, minDistSq = Infinity;
@@ -469,7 +355,6 @@ function getClosestEnemyAngle(maxRange = 8) {
     });
     return closestEnemy ? Math.atan2(closestEnemy.y - me.y, closestEnemy.x - me.x) : null;
 }
-
 function getAttackAngle() {
     if (!isMobile && !gamepadActive) return getMouseAngle();
     const closestAngle = getClosestEnemyAngle(8); 
@@ -481,63 +366,54 @@ function getAttackAngle() {
     return 0; 
 }
 
+/* =========================
+   CHAT & MOUSE
+   ========================= */
 const chatInput = document.getElementById("chat-input");
 const btnChatMobile = document.getElementById("btn-chat-mobile");
 if (btnChatMobile) {
     btnChatMobile.onclick = () => {
         if (uiState.chat) return;
         uiState.chat = true;
-        const container = document.getElementById("chat-container");
-        container.style.display = "block";
+        document.getElementById("chat-container").style.display = "block";
         setTimeout(() => { chatInput.focus(); }, 100);
         sendInput();
     };
 }
-
 chatInput.onkeydown = (e) => {
     if (e.key === "Enter") {
         const msg = chatInput.value.trim();
-        // Aumentei o limite para 100 para permitir comandos de GM
         if (msg.length > 0) socket.emit("chat", msg.substring(0, 100));
         closeChat();
     }
 };
-
 function closeChat() {
-    chatInput.value = "";
-    uiState.chat = false;
+    chatInput.value = ""; uiState.chat = false;
     document.getElementById("chat-container").style.display = "none";
-    chatInput.blur();
-    document.activeElement.blur?.();
+    chatInput.blur(); document.activeElement.blur?.();
     setTimeout(() => { canvas.focus(); sendInput(); }, 50);
 }
-
 chatInput.onblur = () => { if (uiState.chat) closeChat(); };
 
 window.onmousemove = e => { 
-    mouse.x=e.clientX; 
-    mouse.y=e.clientY; 
+    mouse.x=e.clientX; mouse.y=e.clientY; 
     if (!isMobile && !gamepadActive) {
         tooltip.style.left = (mouse.x+15)+"px"; 
         tooltip.style.top = (mouse.y+15)+"px"; 
     }
 };
-
 window.onmousedown = (e) => {
-    if (isClickOnUI(e)) return; // 🔒 FIX ABSOLUTO
-    if (AudioCtrl.ctx.state === 'suspended') AudioCtrl.ctx.resume();
-    AudioCtrl.init();
+    if (isClickOnUI(e)) return; 
+    ensureBGM();
     if (!me || uiState.chat || gamepadActive || document.getElementById("menu").style.display !== "none") return;
-
     const ang = getAttackAngle();
     if (e.button === 0) socket.emit("attack", ang);
     if (e.button === 2) socket.emit("skill", { idx: 1, angle: ang });
 };
 
-
-// ----------------------------------------------------
-// GAMEPAD & NAVIGATION
-// ----------------------------------------------------
+/* =========================
+   UI & GAMEPAD NAVIGATION
+   ========================= */
 let lastNavTimestamp = 0; const NAV_DELAY = 150;
 function handleGamepadNavigation(direction) {
     if (Date.now() - lastNavTimestamp < NAV_DELAY) return;
@@ -587,8 +463,7 @@ function handleGamepadNavigation(direction) {
 
 function closeAllMenus() {
     uiState.inv=false; uiState.char=false; uiState.shop=false; uiState.craft=false;
-    hideTooltip();
-    updateUI();
+    hideTooltip(); updateUI();
 }
 
 function handleGamepadAction() {
@@ -644,9 +519,10 @@ function handleGamepadInput() {
         const button = gamepad.buttons[buttonIndex]; const isPressed = button?.pressed; const wasPressed = lastButtons[buttonIndex] || false;
         if (action === 'block') keys.q = isPressed; 
         if (isPressed && !wasPressed) {
-            if (AudioCtrl.ctx.state === 'suspended') AudioCtrl.ctx.resume();
+            ensureBGM();
             if (uiState.inv || uiState.char || uiState.shop || uiState.craft) {
                 if (action === 'attack') handleGamepadAction(); if (action === 'skill') handleGamepadSecondaryAction(); 
+                if (action === 'repair' && uiState.shop) socket.emit("repair_all");
             } else {
                 const ang = getAttackAngle(); 
                 if (action === 'attack') socket.emit("attack", ang); if (action === 'skill') socket.emit("skill", {idx:1, angle:ang});
@@ -654,15 +530,14 @@ function handleGamepadInput() {
             }
             if (action === 'inventory') { uiState.inv = !uiState.inv; uiState.char = false; uiState.shop = false; uiState.craft = false; }
             if (action === 'character') { uiState.char = !uiState.char; uiState.inv = false; uiState.shop = false; uiState.craft = false; }
-            if (action === 'craft') { uiState.craft = !uiState.craft; uiState.inv = false; uiState.char = false; uiState.shop = false; }
-            if (action === 'inventory' || action === 'character' || action === 'craft') { focusIndex = 0; focusArea = (uiState.inv ? 'inventory' : uiState.char ? 'equipment' : uiState.craft ? 'craft' : 'none'); }
+            if (action === 'inventory' || action === 'character') { focusIndex = 0; focusArea = (uiState.inv ? 'inventory' : uiState.char ? 'equipment' : 'none'); }
             updateUI();
         }
         lastButtons[buttonIndex] = isPressed;
     };
     
     processButton(0, 'attack'); processButton(1, 'skill'); processButton(2, 'block'); 
-    processButton(3, 'dash'); processButton(4, 'potion'); processButton(5, 'craft'); 
+    processButton(3, 'dash'); processButton(4, 'potion'); processButton(5, 'repair'); 
     processButton(9, 'inventory'); processButton(8, 'character'); 
     
     if (uiState.inv || uiState.char || uiState.shop || uiState.craft) {
@@ -719,13 +594,15 @@ function getIcon(it) {
     return "📦";
 }
 
+/* =========================
+   UPDATE UI
+   ========================= */
 function updateUI() {
     if(!me && state.pl && myId) me = state.pl[myId];
     if(!me || !me.stats) return;
 
     const maxHp = me.stats.maxHp || 100;
     const maxMp = me.stats.maxMp || 50;
-    
     const hpPct = (me.hp / maxHp) * 100; 
     const mpPct = (me.mp / maxMp) * 100; 
     const xpPct = (me.xp / ((me.level+1)*100)) * 100;
@@ -736,7 +613,7 @@ function updateUI() {
     else if (state.theme === "#900") diffName = "HORDE II";
     else if (state.theme === "#102") diffName = "HELL";
     else if (state.theme === "#311") diffName = "NIGHTMARE";
-    else if (state.theme === "#000") diffName = "PRIMORDIAL"; // TIAMAT ZONE
+    else if (state.theme === "#000") diffName = "PRIMORDIAL"; 
 
     const elHpBar = document.getElementById("hp-bar");
     const elMpBar = document.getElementById("mp-bar");
@@ -755,26 +632,19 @@ function updateUI() {
     const hGoldTxt = document.getElementById("h-gold-txt"); if(hGoldTxt) hGoldTxt.innerText = `${me.gold || 0}G`;
     const hHpBar = document.getElementById("h-hp-bar"); if(hHpBar) hHpBar.style.width = hpPct + "%"; 
     const hMpBar = document.getElementById("h-mp-bar"); if(hMpBar) hMpBar.style.width = mpPct + "%"; 
-    const hXpBar = document.getElementById("h-xp-bar"); if(hXpBar) hXpBar.style.width = xpPct + "%";
-
-    document.getElementById("cp-pts").innerText = me.pts || 0;
     
+    document.getElementById("cp-pts").innerText = me.pts || 0;
     const attrs = me.attrs || {str:0, dex:0, int:0};
     document.getElementById("val-str").innerText = attrs.str; 
     document.getElementById("val-dex").innerText = attrs.dex; 
     document.getElementById("val-int").innerText = attrs.int;
-    
     document.getElementById("stat-dmg").innerText = (me.stats.dmg || 0) + ` (CRIT: ${Math.floor((me.stats.crit || 0.01)*100)}%)`; 
     document.getElementById("stat-spd").innerText = Math.floor((me.stats.spd || 0)*100);
     document.getElementById("hud-gold").innerText = "GOLD: " + (me.gold || 0);
 
     const uiActionButtons = document.getElementById("ui-action-buttons");
-    if (uiState.inv || uiState.char || uiState.shop || uiState.craft) { 
-        if(uiActionButtons) uiActionButtons.style.display = 'flex'; 
-    } else { 
-        if(uiActionButtons) uiActionButtons.style.display = 'none'; 
-        hideTooltip(); 
-    }
+    if (uiState.inv || uiState.char || uiState.shop || uiState.craft) { if(uiActionButtons) uiActionButtons.style.display = 'flex'; } 
+    else { if(uiActionButtons) uiActionButtons.style.display = 'none'; hideTooltip(); }
 
     document.getElementById("inventory").style.display = uiState.inv ? "block" : "none";
     document.getElementById("char-panel").style.display = uiState.char ? "block" : "none";
@@ -785,48 +655,32 @@ function updateUI() {
     eq_slots.forEach((slot, index) => {
         const el = document.getElementById("eq-"+slot); if (!el) return; 
         el.innerHTML = ""; el.style.outline = 'none';
-        
         const isSelected = (uiState.char && focusArea === 'equipment' && focusIndex === index);
         if (isSelected) { 
             el.style.outline = '2px solid yellow'; 
             if (me.equipment && me.equipment[slot]) showTooltip(me.equipment[slot], el); 
-            else { hideTooltip(); }
+            else hideTooltip();
             const equipBtn = document.getElementById('ui-btn-equip');
             if(equipBtn) equipBtn.innerText = slot==='potion'?'USAR (A)':'DESEQUIPAR (A)';
         }
-        
         if(me.equipment && me.equipment[slot]) {
             const it = me.equipment[slot];
             el.style.borderColor = it.color; el.innerHTML = getIcon(it); 
             el.onmousedown = (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-
-    if (!isMobile && !gamepadActive) {
-        slot === 'potion'
-            ? socket.emit("potion")
-            : socket.emit("unequip", slot);
-        return;
-    }
-
-    if (focusIndex === index && focusArea === 'equipment') {
-        slot === 'potion'
-            ? socket.emit("potion")
-            : socket.emit("unequip", slot);
-    } else {
-        focusIndex = index;
-        focusArea = 'equipment';
-        updateUI();
-    }
-};
-
+                e.preventDefault(); e.stopPropagation();
+                if (!isMobile && !gamepadActive) {
+                    slot === 'potion' ? socket.emit("potion") : socket.emit("unequip", slot);
+                    return;
+                }
+                if (focusIndex === index && focusArea === 'equipment') {
+                    slot === 'potion' ? socket.emit("potion") : socket.emit("unequip", slot);
+                } else { focusIndex = index; focusArea = 'equipment'; updateUI(); }
+            };
             if (!isMobile && !gamepadActive) { 
                 el.onmouseover = () => { showTooltip(it, el); focusIndex = index; focusArea = 'equipment'; el.style.outline = '2px solid yellow'; }; 
                 el.onmouseout = () => { hideTooltip(); el.style.outline = 'none'; }; 
             }
-        } else { 
-            el.style.borderColor = "#0f0"; el.onclick=null; 
-        }
+        } else { el.style.borderColor = "#0f0"; el.onclick=null; }
     });
     
     const stat_btns = ['str', 'dex', 'int'];
@@ -848,7 +702,6 @@ function updateUI() {
         me.inventory.forEach((it, idx) => {
             if (!it) return;
             const d = document.createElement("div"); d.className = "slot"; d.style.borderColor = it.color; d.style.outline = 'none';
-            
             const isSelected = (uiState.inv && focusArea === 'inventory' && focusIndex === idx);
             if (isSelected) {
                 d.style.outline = '2px solid yellow'; showTooltip(it, d); 
@@ -859,76 +712,27 @@ function updateUI() {
                 else if (equipBtn) equipBtn.innerText = 'ITEM DE CRAFT';
                 if(dropBtn) dropBtn.innerText = 'DROPAR (B)';
             } 
-            
             d.innerHTML = getIcon(it);
             if(it.sockets && it.sockets.length > 0) {
                 const socks = document.createElement("div"); socks.style.cssText="position:absolute;bottom:0;right:0;display:flex;";
                 it.sockets.forEach((s, i) => { const dot = document.createElement("div"); dot.style.cssText=`width:4px;height:4px;background:${it.gems[i]?it.gems[i].color:"#222"};border:1px solid #555;margin-right:1px;`; socks.appendChild(dot); });
                 d.appendChild(socks);
             }
-            
             d.onmousedown = (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-
-    if (!isMobile && !gamepadActive) {
-        if (it.key === "potion") socket.emit("potion");
-        else if (it.slot && it.type !== "material" && it.type !== "gem" && it.type !== "key") {
-            socket.emit("equip", idx);
-        }
-        focusIndex = idx;
-        focusArea = 'inventory';
-        updateUI();
-        return;
-    }
-	
-	d.onmousedown = (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-
-    if (!isMobile && !gamepadActive) {
-        if (it.key === "potion") socket.emit("potion");
-        else if (
-            it.slot &&
-            it.type !== "material" &&
-            it.type !== "gem" &&
-            it.type !== "key"
-        ) {
-            socket.emit("equip", idx);
-        }
-        focusIndex = idx;
-        focusArea = 'inventory';
-        updateUI();
-        return;
-    }
-
-    if (focusIndex === idx && focusArea === 'inventory') {
-        if (it.key === "potion") socket.emit("potion");
-        else if (
-            it.slot &&
-            it.type !== "material" &&
-            it.type !== "gem"
-        ) {
-            socket.emit("equip", idx);
-        }
-    } else {
-        focusIndex = idx;
-        focusArea = 'inventory';
-        updateUI();
-    }
-};
-
-
-
+                e.preventDefault(); e.stopPropagation();
+                if (!isMobile && !gamepadActive) {
+                    if (it.key === "potion") socket.emit("potion");
+                    else if (it.slot && it.type !== "material" && it.type !== "gem" && it.type !== "key") { socket.emit("equip", idx); }
+                    focusIndex = idx; focusArea = 'inventory'; updateUI();
+                    return;
+                }
                 if (focusIndex === idx && focusArea === 'inventory') {
                     if (it.key === "potion") socket.emit("potion");
                     else if (it.slot && it.type !== "material" && it.type !== "gem") socket.emit("equip", idx);
                 } else { focusIndex = idx; focusArea = 'inventory'; updateUI(); }
             };
-            
             d.draggable = true; d.ondragstart = (e) => { dragItem = { idx, item: it }; }; d.ondragover = (e) => e.preventDefault();
             d.ondrop = (e) => { e.preventDefault(); if(dragItem && dragItem.item.type === "gem" && it.type !== "gem") socket.emit("craft", {action:"socket", itemIdx:idx, gemIdx:dragItem.idx}); };
-            
             if (!isMobile) { 
                 d.onmouseover = () => { focusIndex = idx; focusArea = 'inventory'; showTooltip(it, d); d.style.outline = '2px solid yellow'; }; 
                 d.onmouseout = () => { hideTooltip(); d.style.outline = 'none'; }; 
@@ -954,18 +758,30 @@ function updateUI() {
             const d = document.createElement("div"); d.className = "slot"; d.style.borderColor = it.color; d.style.outline = 'none';
             if (focusArea === 'shop' && focusIndex === idx) { d.style.outline = '2px solid yellow'; showTooltip(it, d); }
             d.innerHTML = getIcon(it); 
-            d.onmousedown = (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    socket.emit("buy", idx);
-};
-
+            d.onmousedown = (e) => { e.preventDefault(); e.stopPropagation(); socket.emit("buy", idx); };
             if (!isMobile && !gamepadActive) { 
                 d.onmouseover = () => { focusIndex = idx; focusArea = 'shop'; showTooltip(it, d); d.style.outline = '2px solid yellow'; }; 
                 d.onmouseout = () => { hideTooltip(); d.style.outline = 'none'; }; 
             }
             sg.appendChild(d);
         });
+
+        // REPAIR BUTTON INJECTION
+        const shopPanel = document.getElementById("shop-panel");
+        let repairBtn = document.getElementById("btn-repair-all");
+        if (!repairBtn) {
+             const btnContainer = shopPanel.querySelector('div[style*="display: flex"]'); 
+             if (btnContainer) {
+                 repairBtn = document.createElement("button");
+                 repairBtn.id = "btn-repair-all";
+                 repairBtn.className = "btn";
+                 repairBtn.style.borderColor = "#0f0";
+                 repairBtn.style.color = "#0f0";
+                 repairBtn.innerText = "REPARAR (R)";
+                 repairBtn.onclick = () => socket.emit("repair_all");
+                 btnContainer.insertBefore(repairBtn, btnContainer.firstChild); 
+             }
+        }
         const closeShopBtn = document.getElementById("btn-shop-close");
         if(closeShopBtn) closeShopBtn.onclick = closeAllMenus;
     }
@@ -980,6 +796,20 @@ function updateUI() {
 function showTooltip(it, elementRef) {
     if (!it) return;
     let html = `<b style="color:${it.color}">${it.name}</b><br><span style="color:#aaa">${(it.type || "UNKNOWN").toUpperCase()}</span>`;
+    
+    // VISUALIZAÇÃO DA DURABILIDADE (NOVO)
+    if (it.dur !== undefined && it.maxDur) {
+        const pct = (it.dur / it.maxDur) * 100;
+        let color = "#0f0";
+        if (pct < 50) color = "#fb0";
+        if (pct < 20) color = "#f00";
+        html += `<br><div style="width:100%; height:4px; background:#444; margin-top:2px; border:1px solid #777;">
+                    <div style="width:${pct}%; height:100%; background:${color};"></div>
+                 </div>`;
+        html += `<span style="font-size:9px; color:${color}">DUR: ${it.dur}/${it.maxDur}</span>`;
+        if (it.dur === 0) html += ` <b style="color:#f00">[BROKEN]</b>`;
+    }
+
     if(it.desc) html += `<br><span style="color:#ff0">${it.desc}</span>`;
     if(it.price) html += `<br>Price: ${it.price}G`;
     const isSellable = (uiState.inv || uiState.shop) && it.key !== 'gold';
@@ -1003,8 +833,10 @@ function showTooltip(it, elementRef) {
 }
 function hideTooltip() { tooltip.style.display = "none"; }
 
+/* =========================
+   DRAWING
+   ========================= */
 function drawAura(x, y, color, intensity) {
-    // 🔥 FIX MOBILE: Aura agora desenha em ambos
     ctx.shadowBlur = intensity; ctx.shadowColor = color; ctx.fillStyle = color; ctx.globalAlpha = 0.2;
     ctx.beginPath(); ctx.arc(x, y, 10 + Math.sin(Date.now()/200)*2, 0, Math.PI*2); ctx.fill();
     ctx.globalAlpha = 1.0; ctx.shadowBlur = 0;
@@ -1030,9 +862,7 @@ function drawOffscreenPlayerIndicators() {
         const angle = Math.atan2(dy, dx);
         let ix = screenCenterX + Math.cos(angle) * indicatorRadius; let iy = screenCenterY + Math.sin(angle) * indicatorRadius;
         ctx.save(); ctx.translate(ix, iy); ctx.rotate(angle); 
-        ctx.fillStyle = "#0ff"; 
-        // 🔥 FIX MOBILE: Sombra ativada em ambos
-        ctx.shadowBlur = 5; ctx.shadowColor = "#0ff";
+        ctx.fillStyle = "#0ff"; ctx.shadowBlur = 5; ctx.shadowColor = "#0ff";
         ctx.beginPath(); ctx.moveTo(indicatorSize, 0); ctx.lineTo(-indicatorSize, -indicatorSize); ctx.lineTo(-indicatorSize, indicatorSize); ctx.closePath(); ctx.fill();
         ctx.font = "8px Courier New"; ctx.textAlign = "center"; ctx.fillText(p.name, 0, -indicatorSize - 2); 
         ctx.restore(); ctx.shadowBlur = 0;
@@ -1074,7 +904,7 @@ function drawProceduralItem(ctx, item, x, y, angle, scale = 1.0) {
 
 function draw() {
     requestAnimationFrame(draw);
-    handleGamepadInput(); // Check gamepad
+    handleGamepadInput(); 
     ctx.fillStyle = "#000"; ctx.fillRect(0,0,canvas.width,canvas.height);
     
     if(!me) {
@@ -1111,7 +941,6 @@ function draw() {
                     }
                 } else if(map[y][x]===1) { 
                     ctx.fillStyle=isCity?"#222":"#000"; ctx.fillRect(ox+x*SCALE,oy+y*SCALE,SCALE,SCALE);
-                    // 🔥 FIX MOBILE: Contornos de parede ativados
                     ctx.strokeStyle=isCity?"#555":theme; ctx.strokeRect(ox+x*SCALE,oy+y*SCALE,SCALE,SCALE);
                 } 
             } 
@@ -1123,7 +952,6 @@ function draw() {
         if(p.type==="rock") { ctx.fillStyle="#333"; ctx.fillRect(px,py,4,3); } 
         else if(p.type==="bones") { ctx.fillStyle="#ccc"; ctx.fillRect(px,py,3,1); ctx.fillRect(px+2,py+1,3,1); } 
         else if(p.type==="shrine") { 
-            // 🔥 FIX MOBILE: Sombra do altar ativada
             ctx.shadowBlur=10; ctx.shadowColor="#0ff";
             ctx.fillStyle="#0ff"; ctx.fillRect(px,py-4,4,12); ctx.fillRect(px-2,py,8,2); ctx.shadowBlur=0; 
         }
@@ -1139,23 +967,19 @@ function draw() {
     for(let k in state.it){ 
         let i=state.it[k]; let yb = Math.sin(now/200)*2; 
         if(i.item.key === "gold") { 
-            // 🔥 FIX MOBILE: Sombra do ouro ativada
             ctx.shadowBlur=5; ctx.shadowColor="#fb0";
             ctx.fillStyle="#fb0"; ctx.fillRect(ox+i.x*SCALE+4, oy+i.y*SCALE+6+yb, 3, 3); ctx.shadowBlur=0; 
         } else { 
-            // 🔥 ITEM PROCEDURAL NO CHÃO (Miniatura)
-            // Usa a mesma função de desenho para garantir que o item no chão pareça com o item na mão
             drawProceduralItem(ctx, i.item, ox+i.x*SCALE+8, oy+i.y*SCALE+8+yb, -Math.PI/4, 0.5);
         } 
     }
 
     if(state.pr) state.pr.forEach(p => {
         ctx.save(); ctx.translate(ox+p.x*SCALE, oy+p.y*SCALE); ctx.rotate(p.angle || 0); 
-        // 🔥 FIX MOBILE: Sombra de projéteis ativada
         ctx.shadowBlur=10;
         
         if(p.type === "arrow") { ctx.shadowColor="#ff0"; ctx.fillStyle = "#ff0"; ctx.fillRect(-6, -1, 12, 2); } 
-        else if (p.type === "fireball") { ctx.shadowColor="#f80"; ctx.fillStyle = "#f80"; ctx.beginPath(); ctx.arc(0,0, 4, 0, Math.PI*2); ctx.fill(); }
+        else if (p.type === "fireball" || p.type === "fireball_spell") { ctx.shadowColor="#f80"; ctx.fillStyle = "#f80"; ctx.beginPath(); ctx.arc(0,0, 4, 0, Math.PI*2); ctx.fill(); }
         else if (p.type === "meteor") { ctx.shadowColor="#f00"; ctx.fillStyle = "#f00"; ctx.beginPath(); ctx.arc(0,0, 8, 0, Math.PI*2); ctx.fill(); } 
         else if (p.type === "web") { ctx.shadowColor="#fff"; ctx.strokeStyle="#fff"; ctx.lineWidth=1; ctx.beginPath(); ctx.moveTo(-4,-4); ctx.lineTo(4,4); ctx.moveTo(4,-4); ctx.lineTo(-4,4); ctx.stroke(); }
         else if (p.type === "laser") { ctx.shadowColor="#f0f"; ctx.fillStyle="#f0f"; ctx.fillRect(-10, -2, 20, 4); }
@@ -1172,9 +996,7 @@ function draw() {
     for(let i = effects.length - 1; i >= 0; i--) {
         let e = effects[i]; e.life--; if (e.life <= 0) { effects.splice(i, 1); continue; }
         const x = ox + e.x * SCALE; const y = oy + e.y * SCALE;
-        
-        // 🔥 FIX MOBILE: Sombra de efeitos ativada
-        ctx.shadowBlur = 10; ctx.shadowColor = "#fff";
+        ctx.shadowBlur = 10; ctx.shadowColor = e.color || "#fff";
 
         if (e.type === "slash") {
             ctx.strokeStyle = `rgba(255,255,255,${e.life/10})`; ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(x, y, 20, e.angle - 0.8, e.angle + 0.8); ctx.stroke();
@@ -1183,7 +1005,8 @@ function draw() {
             ctx.strokeStyle = `rgba(255,255,0,${e.life/20})`; ctx.lineWidth = 4; ctx.beginPath(); const radius = 35 - (20 - e.life) * 2; if (radius > 0) ctx.arc(x, y, radius, 0, Math.PI * 2); ctx.stroke();
         }
         else if (e.type === "nova") {
-            ctx.strokeStyle = `rgba(255,0,0,${e.life/(e.life > 15 ? 20 : 10)})`; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(x, y, 30 - e.life, 0, Math.PI * 2); ctx.stroke();
+            const col = e.color || "255,0,0";
+            ctx.strokeStyle = `rgba(${col === "#f80" ? "255,128,0" : "255,0,0"},${e.life/(e.life > 15 ? 20 : 10)})`; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(x, y, 30 - e.life, 0, Math.PI * 2); ctx.stroke();
         }
         else if (e.type === "charge") {
             ctx.strokeStyle = `rgba(255,0,0,${e.life/30})`; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(x, y, 25 + (30 - e.life), 0, Math.PI * 2); ctx.stroke();
@@ -1220,18 +1043,13 @@ function draw() {
         ctx.scale(dirX, 1);
 
         const isFlashing = blink && (e.hitFlash % 4 < 2);
-        
-        // 🔥 FIX MOBILE: Filtros de renderização ativados (sem composite barato)
-        if (isFlashing) {
-            ctx.filter = "brightness(1000%) grayscale(100%)"; 
-        }
+        if (isFlashing) ctx.filter = "brightness(1000%) grayscale(100%)"; 
 
         if (e.class) {
             let c = e.class; ctx.fillStyle = (c==="knight"?"#668":c==="hunter"?"#464":"#448"); ctx.fillRect(-4, -6, 8, 12);
             if(e.equipment && e.equipment.head) { ctx.fillStyle=e.equipment.head.color; ctx.fillRect(-4,-9,8,5); }
             if(e.equipment && e.equipment.body) { ctx.fillStyle=e.equipment.body.color; ctx.fillRect(-3,-4,6,8); }
             if(e.equipment && e.equipment.hand) {
-                // Procedural weapon draw
                 drawProceduralItem(ctx, e.equipment.hand, 6, 2, 0, 0.7);
             }
             if (e.id === myId) {
@@ -1253,194 +1071,34 @@ function draw() {
         }
         else if (e.boss) {
             const bs = s; 
-            
-            // --- OVERLORD TIAMAT — DRAGÃO PRIMORDIAL (TOP-DOWN) ---
-if (e.name && e.name.includes("TIAMAT")) {
-
-    // 🔒 Isolamento total
-    ctx.save();
-
-    const bs = s * 0.9;              // escala geral
-    const t = Date.now() * 0.002;
-
-    const pulse = Math.sin(t * 2) * bs * 0.05;
-    const wingWave = Math.sin(t * 1.5) * bs * 0.25;
-    const tailWave = Math.sin(t * 1.2) * bs * 0.3;
-
-    // ===============================
-    // AURA INFERNAL
-    // ===============================
-    ctx.shadowBlur = 30;
-    ctx.shadowColor = "#800020";
-    ctx.globalAlpha = 0.9;
-
-    // ===============================
-    // ASAS (HORIZONTAL / SIMÉTRICAS)
-    // ===============================
-    ctx.fillStyle = "rgba(20,0,12,0.85)";
-    ctx.strokeStyle = "#600020";
-    ctx.lineWidth = 2;
-
-    // Asa esquerda
-    ctx.beginPath();
-    ctx.moveTo(-bs * 0.2, 0);
-    ctx.quadraticCurveTo(
-        -bs * 1.4,
-        -bs * 0.8 + wingWave,
-        -bs * 2.0,
-        0
-    );
-    ctx.quadraticCurveTo(
-        -bs * 1.3,
-        bs * 0.8,
-        -bs * 0.3,
-        bs * 0.4
-    );
-    ctx.closePath();
-    ctx.fill();
-    ctx.stroke();
-
-    // Asa direita
-    ctx.beginPath();
-    ctx.moveTo(bs * 0.2, 0);
-    ctx.quadraticCurveTo(
-        bs * 1.4,
-        -bs * 0.8 - wingWave,
-        bs * 2.0,
-        0
-    );
-    ctx.quadraticCurveTo(
-        bs * 1.3,
-        bs * 0.8,
-        bs * 0.3,
-        bs * 0.4
-    );
-    ctx.closePath();
-    ctx.fill();
-    ctx.stroke();
-
-    ctx.shadowBlur = 0;
-
-    // ===============================
-    // CORPO CENTRAL (OVAL FRONTAL)
-    // ===============================
-    ctx.fillStyle = "#120008";
-    ctx.beginPath();
-    ctx.ellipse(0, 0, bs * 0.55, bs * 0.7 + pulse, 0, 0, Math.PI * 2);
-    ctx.fill();
-
-    // Placas dorsais
-    ctx.strokeStyle = "#500020";
-    ctx.lineWidth = 2;
-    for (let i = -2; i <= 2; i++) {
-        ctx.beginPath();
-        ctx.moveTo(i * bs * 0.18, -bs * 0.6);
-        ctx.lineTo(i * bs * 0.12, bs * 0.6);
-        ctx.stroke();
-    }
-
-    // ===============================
-    // CABEÇAS (3 — FRENTE / SUPERIOR)
-    // ===============================
-    const headColors = ["#ff3030", "#b040ff", "#ff3030"];
-
-    for (let i = -1; i <= 1; i++) {
-
-        const hx = i * bs * 0.45;
-        const hy = -bs * 0.95 + Math.sin(t + i) * bs * 0.08;
-
-        // Pescoço
-        ctx.strokeStyle = "#180008";
-        ctx.lineWidth = bs * 0.18;
-        ctx.beginPath();
-        ctx.moveTo(i * bs * 0.25, -bs * 0.55);
-        ctx.quadraticCurveTo(
-            hx * 0.8,
-            -bs * 0.8,
-            hx,
-            hy
-        );
-        ctx.stroke();
-
-        ctx.save();
-        ctx.translate(hx, hy);
-
-        // Crânio (top-down)
-        ctx.fillStyle = "#0a0005";
-        ctx.beginPath();
-        ctx.ellipse(0, 0, bs * 0.22, bs * 0.28, 0, 0, Math.PI * 2);
-        ctx.fill();
-
-        // Mandíbula frontal
-        ctx.fillStyle = "#200010";
-        ctx.beginPath();
-        ctx.ellipse(0, bs * 0.18, bs * 0.18, bs * 0.14, 0, 0, Math.PI * 2);
-        ctx.fill();
-
-        // Chifres
-        ctx.fillStyle = "#ddd";
-        ctx.beginPath();
-        ctx.moveTo(-bs * 0.12, -bs * 0.18);
-        ctx.lineTo(-bs * 0.28, -bs * 0.45);
-        ctx.lineTo(-bs * 0.02, -bs * 0.25);
-        ctx.fill();
-
-        ctx.beginPath();
-        ctx.moveTo(bs * 0.12, -bs * 0.18);
-        ctx.lineTo(bs * 0.28, -bs * 0.45);
-        ctx.lineTo(bs * 0.02, -bs * 0.25);
-        ctx.fill();
-
-        // Olho
-        ctx.shadowColor = headColors[i + 1];
-        ctx.shadowBlur = 12;
-        ctx.fillStyle = headColors[i + 1];
-        ctx.beginPath();
-        ctx.arc(0, -bs * 0.05, bs * 0.06, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.shadowBlur = 0;
-
-        ctx.restore();
-    }
-
-    // ===============================
-    // CAUDA (TRASEIRA, CENTRAL)
-    // ===============================
-    ctx.strokeStyle = "#1a0008";
-    ctx.lineWidth = bs * 0.22;
-    ctx.lineCap = "round";
-
-    ctx.beginPath();
-    ctx.moveTo(0, bs * 0.7);
-    ctx.bezierCurveTo(
-        tailWave,
-        bs * 1.2,
-        -tailWave,
-        bs * 1.8,
-        0,
-        bs * 2.4
-    );
-    ctx.stroke();
-
-    // Espinhos da cauda
-    ctx.fillStyle = "#700018";
-    for (let i = 1; i <= 3; i++) {
-        ctx.beginPath();
-        ctx.arc(
-            Math.sin(t + i) * bs * 0.15,
-            bs * (0.9 + i * 0.4),
-            bs * 0.07,
-            0,
-            Math.PI * 2
-        );
-        ctx.fill();
-    }
-
-    // 🔓 restaura tudo
-    ctx.restore();
-}
-
-            // --- ORIGINAL BOSSES ---
+            if (e.name && e.name.includes("TIAMAT")) {
+                ctx.save();
+                const t = Date.now() * 0.002;
+                const pulse = Math.sin(t * 2) * bs * 0.05;
+                const wingWave = Math.sin(t * 1.5) * bs * 0.25;
+                const tailWave = Math.sin(t * 1.2) * bs * 0.3;
+                ctx.shadowBlur = 30; ctx.shadowColor = "#800020"; ctx.globalAlpha = 0.9;
+                ctx.fillStyle = "rgba(20,0,12,0.85)"; ctx.strokeStyle = "#600020"; ctx.lineWidth = 2;
+                ctx.beginPath(); ctx.moveTo(-bs * 0.2, 0); ctx.quadraticCurveTo(-bs * 1.4, -bs * 0.8 + wingWave, -bs * 2.0, 0); ctx.quadraticCurveTo(-bs * 1.3, bs * 0.8, -bs * 0.3, bs * 0.4); ctx.closePath(); ctx.fill(); ctx.stroke();
+                ctx.beginPath(); ctx.moveTo(bs * 0.2, 0); ctx.quadraticCurveTo(bs * 1.4, -bs * 0.8 - wingWave, bs * 2.0, 0); ctx.quadraticCurveTo(bs * 1.3, bs * 0.8, bs * 0.3, bs * 0.4); ctx.closePath(); ctx.fill(); ctx.stroke();
+                ctx.shadowBlur = 0; ctx.fillStyle = "#120008"; ctx.beginPath(); ctx.ellipse(0, 0, bs * 0.55, bs * 0.7 + pulse, 0, 0, Math.PI * 2); ctx.fill();
+                ctx.strokeStyle = "#500020"; ctx.lineWidth = 2; for (let i = -2; i <= 2; i++) { ctx.beginPath(); ctx.moveTo(i * bs * 0.18, -bs * 0.6); ctx.lineTo(i * bs * 0.12, bs * 0.6); ctx.stroke(); }
+                const headColors = ["#ff3030", "#b040ff", "#ff3030"];
+                for (let i = -1; i <= 1; i++) {
+                    const hx = i * bs * 0.45; const hy = -bs * 0.95 + Math.sin(t + i) * bs * 0.08;
+                    ctx.strokeStyle = "#180008"; ctx.lineWidth = bs * 0.18; ctx.beginPath(); ctx.moveTo(i * bs * 0.25, -bs * 0.55); ctx.quadraticCurveTo(hx * 0.8, -bs * 0.8, hx, hy); ctx.stroke();
+                    ctx.save(); ctx.translate(hx, hy);
+                    ctx.fillStyle = "#0a0005"; ctx.beginPath(); ctx.ellipse(0, 0, bs * 0.22, bs * 0.28, 0, 0, Math.PI * 2); ctx.fill();
+                    ctx.fillStyle = "#200010"; ctx.beginPath(); ctx.ellipse(0, bs * 0.18, bs * 0.18, bs * 0.14, 0, 0, Math.PI * 2); ctx.fill();
+                    ctx.fillStyle = "#ddd"; ctx.beginPath(); ctx.moveTo(-bs * 0.12, -bs * 0.18); ctx.lineTo(-bs * 0.28, -bs * 0.45); ctx.lineTo(-bs * 0.02, -bs * 0.25); ctx.fill();
+                    ctx.beginPath(); ctx.moveTo(bs * 0.12, -bs * 0.18); ctx.lineTo(bs * 0.28, -bs * 0.45); ctx.lineTo(bs * 0.02, -bs * 0.25); ctx.fill();
+                    ctx.shadowColor = headColors[i + 1]; ctx.shadowBlur = 12; ctx.fillStyle = headColors[i + 1]; ctx.beginPath(); ctx.arc(0, -bs * 0.05, bs * 0.06, 0, Math.PI * 2); ctx.fill(); ctx.shadowBlur = 0;
+                    ctx.restore();
+                }
+                ctx.strokeStyle = "#1a0008"; ctx.lineWidth = bs * 0.22; ctx.lineCap = "round";
+                ctx.beginPath(); ctx.moveTo(0, bs * 0.7); ctx.bezierCurveTo(tailWave, bs * 1.2, -tailWave, bs * 1.8, 0, bs * 2.4); ctx.stroke();
+                ctx.restore();
+            }
             else if (e.name.includes("Butcher")) {
                 ctx.fillStyle = "#900"; ctx.fillRect(-bs/1.1, -bs/2, bs*1.8, bs);
                 ctx.fillStyle = "#700"; ctx.fillRect(-bs/3, -bs + 4, bs/1.5, bs/2);
@@ -1481,7 +1139,7 @@ if (e.name && e.name.includes("TIAMAT")) {
 
         if(e.input && e.input.block) { ctx.strokeStyle = "#0ff"; ctx.lineWidth=2; ctx.beginPath(); ctx.arc(0,0,14,0,Math.PI*2); ctx.stroke(); }
         ctx.restore();
-        ctx.filter = "none"; // Reset filter
+        ctx.filter = "none"; 
 
         const maxHp = e.stats ? e.stats.maxHp : e.maxHp;
         if(e.hp > 0 && e.hp < maxHp && e.ai!=="static" && !e.npc && e.ai!=="resource") { 
@@ -1505,7 +1163,6 @@ if (e.name && e.name.includes("TIAMAT")) {
         }
     });
 
-    // FOG OF WAR e Iluminação (Agora habilitado para Mobile também)
     ctx.save();
     const sy=Math.floor(cam.y/SCALE), ey=sy+Math.ceil(canvas.height/SCALE)+1; const sx=Math.floor(cam.x/SCALE), ex=sx+Math.ceil(canvas.width/SCALE)+1;
     for(let y=sy; y<ey; y++){
@@ -1519,7 +1176,6 @@ if (e.name && e.name.includes("TIAMAT")) {
         }
     }
     
-    // 🔥 FIX MOBILE: Degradê radial habilitado para todos para manter visual idêntico ao PC
     const innerRadius = lightRadiusPixels * 0.7; const outerRadius = lightRadiusPixels * 1.0;
     const gradient = ctx.createRadialGradient(playerScreenX, playerScreenY, innerRadius, playerScreenX, playerScreenY, outerRadius);
     gradient.addColorStop(0, 'rgba(0, 0, 0, 0)'); gradient.addColorStop(0.75, 'rgba(0, 0, 0, 0.2)'); gradient.addColorStop(1, 'rgba(0, 0, 0, 1)'); 
@@ -1537,7 +1193,6 @@ if (e.name && e.name.includes("TIAMAT")) {
             ctx.save(); ctx.translate(ax, ay); ctx.rotate(angle); 
             const scale = 1 + Math.sin(Date.now() / 200) * 0.2; ctx.scale(scale, scale);
             ctx.fillStyle = state.hint.type === "exit" ? "#0f0" : "#f00";
-            // 🔥 FIX MOBILE: Sombra do indicador ativada
             ctx.shadowBlur = 10; ctx.shadowColor = ctx.fillStyle; 
             ctx.beginPath(); ctx.moveTo(6, 0); ctx.lineTo(-6, -6); ctx.lineTo(-6, 6); ctx.closePath(); ctx.fill();
             ctx.restore(); ctx.shadowBlur = 0;
@@ -1553,30 +1208,26 @@ if (e.name && e.name.includes("TIAMAT")) {
         let t=texts[i]; t.y += t.vy; t.life--; 
         ctx.globalAlpha = Math.min(1.0, Math.max(0, t.life / 50)); 
         ctx.fillStyle = t.color; ctx.font = t.size || "10px Courier New"; ctx.textAlign = "center"; 
-        // 🔥 FIX MOBILE: Contorno de texto ativado
         ctx.strokeStyle = "#000"; ctx.lineWidth = 3; ctx.strokeText(t.val, ox+t.x*SCALE, oy+t.y*SCALE); 
         ctx.fillText(t.val, ox+t.x*SCALE, oy+t.y*SCALE); ctx.globalAlpha = 1.0; 
         if(t.life<=0) texts.splice(i,1); 
     }
 }
 
-window.login = () => { if (AudioCtrl.ctx.state === 'suspended') AudioCtrl.ctx.resume(); AudioCtrl.init(); socket.emit("login", document.getElementById("username").value); };
+window.login = () => { ensureBGM(); socket.emit("login", document.getElementById("username").value); };
 window.create = () => socket.emit("create_char", {name:document.getElementById("cname").value, cls:document.getElementById("cclass").value});
 window.addStat = (s) => socket.emit("add_stat", s);
 window.buy = (idx) => socket.emit("buy", idx);
 window.sell = () => { if(!me || !uiState.shop || focusArea !== 'inventory' || me.inventory.length === 0) return; socket.emit("sell", focusIndex); updateUI(); };
 window.closeShop = closeAllMenus;
 
-// =========================
-// MOBILE ACTION BUTTONS FIX
-// =========================
+/* MOBILE BUTTONS */
 document.querySelectorAll(".action-btn").forEach(btn => {
     const action = btn.dataset.action;
     const handle = (e) => {
         e.preventDefault(); e.stopPropagation();
         if (!me || uiState.chat) return;
-        if (AudioCtrl.ctx.state === 'suspended') AudioCtrl.ctx.resume();
-        AudioCtrl.init();
+        ensureBGM();
         const ang = getAttackAngle();
         switch (action) {
             case "attack": socket.emit("attack", ang); break;
@@ -1593,9 +1244,6 @@ document.querySelectorAll(".action-btn").forEach(btn => {
     btn.addEventListener("mouseup", release);
 });
 
-// =========================
-// MOBILE MENU BUTTONS FIX
-// =========================
 document.querySelectorAll("#mobile-menu-buttons .skill-btn").forEach(btn => {
     const action = btn.dataset.action;
     const handle = (e) => {
@@ -1615,20 +1263,13 @@ document.querySelectorAll("#mobile-menu-buttons .skill-btn").forEach(btn => {
     btn.addEventListener("mousedown", handle);
 });
 
-draw();
-
-// ===============================
-// V33.3 — INFERNAL CHECKPOINT SYSTEM (CLIENT)
-// ===============================
+/* CHECKPOINT SYSTEM */
 const CHECKPOINT_SYSTEM = {
     interval: 10,
     getAvailable(maxLevel) {
-        const cps = [];
-        for (let i = this.interval; i <= maxLevel; i += this.interval) cps.push(i);
-        return cps;
+        const cps = []; for (let i = this.interval; i <= maxLevel; i += this.interval) cps.push(i); return cps;
     }
 };
+window.enterCheckpoint = function(level) { socket.emit("enter_checkpoint", level); };
 
-window.enterCheckpoint = function(level) {
-    socket.emit("enter_checkpoint", level);
-};
+draw();

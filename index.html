@@ -2,157 +2,145 @@
 <html lang="pt-BR">
 <head>
 <meta charset="utf-8"/>
-<title>DIABLOCK - V34 Infernal Ascension</title>
+<title>DIABLOCK - LEGACY OF SHADOWS</title>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Courier+New&display=swap');
-html,body{ margin:0; width:100%; height:100%; background:#050000; overflow:hidden; font-family:'Courier New', monospace; user-select:none; color:#c00; touch-action: none; }
+@import url('https://fonts.googleapis.com/css2?family=VT323&display=swap'); /* Fonte mais "RPG" */
+
+html,body{ margin:0; width:100%; height:100%; background:#050000; overflow:hidden; font-family:'VT323', monospace; user-select:none; color:#c00; touch-action: none; }
 canvas{ width:100%; height:100%; image-rendering:pixelated; cursor: crosshair; display:block; touch-action: none;}
-.scanlines { position: fixed; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; background: linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.25) 50%), linear-gradient(90deg, rgba(255, 0, 0, 0.06), rgba(0, 255, 0, 0.02), rgba(0, 0, 255, 0.06)); background-size: 100% 2px, 2px 100%; z-index: 999; }
+
+/* CRT & ATMOSPHERE */
+.scanlines { position: fixed; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; background: linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.1) 50%), linear-gradient(90deg, rgba(255, 0, 0, 0.03), rgba(0, 255, 0, 0.01), rgba(0, 0, 255, 0.03)); background-size: 100% 3px, 3px 100%; z-index: 999; }
+.vignette { position: fixed; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; background: radial-gradient(circle, rgba(0,0,0,0) 60%, rgba(0,0,0,0.8) 100%); z-index: 998; }
+
 #ui-layer{ position:absolute; top:0; left:0; width:100%; height:100%; pointer-events:none; }
 
-/* BRANDING FINAL: INFERNAL THEME */
-.hud-bottom{ position:absolute; bottom:10px; left:50%; transform:translateX(-50%); display:flex; flex-direction:column; align-items:center; }
-.bar-box{ width:300px; padding:5px 10px; background:rgba(20,0,0,0.9); border:2px solid #500; margin-bottom:5px; box-shadow: 0 0 15px #500; }
-.bar-status-text{ display:flex; justify-content:space-between; font-size:12px; color:#fff; margin-bottom:2px; font-weight:bold; text-shadow: 1px 1px 0 #000; }
-.bar-container{ width:100%; height:8px; background:#111; margin-bottom:4px; border:1px solid #300; position:relative; }
-.bar-container.xp { height: 4px; }
-.fill{ height:100%; transition:width 0.1s; }
-.fill.hp{ background:#a00; box-shadow: 0 0 5px #f00; } .fill.mp{ background:#00a; } .fill.xp{ background:#fa0; }
+/* HUD PRINCIPAL */
+.hud-bottom{ position:absolute; bottom:20px; left:50%; transform:translateX(-50%); display:flex; flex-direction:column; align-items:center; }
+.bar-box{ width:320px; padding:8px; background:rgba(10,0,0,0.9); border:2px solid #500; margin-bottom:10px; box-shadow: 0 0 15px #300, inset 0 0 10px #000; border-radius: 4px; }
+.bar-status-text{ display:flex; justify-content:space-between; font-size:16px; color:#ddd; margin-bottom:2px; text-shadow: 1px 1px 0 #000; letter-spacing: 1px; }
+.bar-container{ width:100%; height:12px; background:#111; margin-bottom:6px; border:1px solid #444; position:relative; overflow: hidden; }
+.bar-container.xp { height: 6px; border-color: #530; }
+.fill{ height:100%; transition:width 0.2s; box-shadow: inset 0 0 5px rgba(0,0,0,0.5); }
+.fill.hp{ background: linear-gradient(90deg, #800, #f00); } 
+.fill.mp{ background: linear-gradient(90deg, #008, #44f); } 
+.fill.xp{ background: linear-gradient(90deg, #840, #fa0); }
 
-.skills{ display:flex; gap:5px; pointer-events:auto; align-items: flex-end; }
-.skill-btn{ width:36px; height:36px; background:#100; border:2px solid #600; color:#f00; display:flex; align-items:center; justify-content:center; font-size:10px; font-weight:bold; cursor:pointer; position: relative;}
-.skill-btn:hover { background: #300; color:#fff; border-color: #f00; }
-.key-hint { position: absolute; top:-12px; font-size: 8px; color: #aaa; }
+/* SKILLS */
+.skills{ display:flex; gap:8px; pointer-events:auto; align-items: flex-end; }
+.skill-btn{ width:42px; height:42px; background:#100; border:2px solid #500; color:#f55; display:flex; align-items:center; justify-content:center; font-size:14px; cursor:pointer; position: relative; box-shadow: 0 0 5px #300; transition: all 0.1s; border-radius: 4px; }
+.skill-btn:hover { background: #300; color:#fff; border-color: #f00; transform: translateY(-2px); }
+.skill-btn:active { transform: translateY(0); }
+.key-hint { position: absolute; top:-14px; font-size: 12px; color: #888; text-shadow: 1px 1px #000; }
 
-/* Panels */
-.panel{ display:none; position:absolute; background:#050000; border:2px solid #500; padding:10px; pointer-events:auto; color:#a00; box-shadow: 5px 5px 0px #200; }
-#inventory{ top:50%; left:65%; transform:translate(-50%, -50%); width:280px; }
-#craft-panel{ top:50%; left:35%; transform:translate(-50%, -50%); width:220px; border-color:#606; color:#a0a; box-shadow: 5px 5px 0px #303; }
-#char-panel{ top:50%; left:20%; transform:translate(-50%, -50%); width:200px; border-color: #880; color: #cc0; }
-#shop-panel{ top:40%; left:50%; transform:translate(-50%, -50%); width:300px; border-color:#088; color:#0cc; }
+/* PANELS GENERIC */
+.panel{ display:none; position:absolute; background:#080000; border:2px solid #611; padding:12px; pointer-events:auto; color:#a00; box-shadow: 10px 10px 0px rgba(0,0,0,0.5), 0 0 20px #200; border-radius: 2px; }
+.panel-header { text-align:center; border-bottom:1px solid #400; font-size:20px; padding-bottom:5px; margin-bottom: 10px; color: #f22; letter-spacing: 2px; }
 
-/* PHASE 1: CHECKPOINT PORTAL */
-#entry-modal{ top:50%; left:50%; transform:translate(-50%, -50%); width:300px; text-align:center; border-color:#f00; color:#f00; box-shadow: 0 0 20px #500; z-index: 1000; background: #100; }
-.checkpoint-list { max-height: 150px; overflow-y: auto; margin-bottom: 10px; border: 1px solid #300; background: #000; padding: 5px; }
-.checkpoint-btn { display: block; width: 100%; padding: 5px; background: #200; color: #a00; border: 1px solid #500; margin-bottom: 2px; cursor: pointer; text-align: left; }
-.checkpoint-btn:hover { background: #500; color: #fff; }
+#inventory{ top:50%; left:65%; transform:translate(-50%, -50%); width:300px; }
+#craft-panel{ top:50%; left:35%; transform:translate(-50%, -50%); width:240px; border-color:#505; color:#c0c; box-shadow: 10px 10px 0 rgba(0,0,0,0.5), 0 0 15px #303; }
+#char-panel{ top:50%; left:20%; transform:translate(-50%, -50%); width:220px; border-color: #660; color: #cc0; }
+#shop-panel{ top:45%; left:50%; transform:translate(-50%, -50%); width:320px; border-color:#055; color:#0cc; background: #000808; }
 
-.grid{ display:grid; grid-template-columns:repeat(8, 1fr); gap:4px; margin-top:10px; }
-.slot{ width:28px; height:28px; background:#100; border:1px solid #400; cursor:pointer; position:relative; }
-.slot:hover{ background:#300; border-color: #f00; }
-.stat-row{ display:flex; justify-content:space-between; margin-bottom:5px; align-items:center; }
-.plus-btn{ background:#200; border:1px solid #500; color:#f00; width:16px; height:16px; line-height:14px; text-align:center; cursor:pointer; font-size:12px; }
+/* MODALS */
+#entry-modal{ top:50%; left:50%; transform:translate(-50%, -50%); width:300px; text-align:center; border-color:#f00; z-index: 1000; background: #100; }
+.checkpoint-list { max-height: 200px; overflow-y: auto; margin-bottom: 15px; border: 1px solid #400; background: #000; padding: 5px; }
+.checkpoint-btn { display: block; width: 100%; padding: 8px; background: #200; color: #b44; border: 1px solid #400; margin-bottom: 4px; cursor: pointer; text-align: left; font-size: 16px; }
+.checkpoint-btn:hover { background: #500; color: #fff; border-color: #f00; }
+
+/* GRID & ITEMS */
+.grid{ display:grid; grid-template-columns:repeat(8, 1fr); gap:4px; margin-top:5px; }
+.slot{ width:32px; height:32px; background:#100; border:1px solid #400; cursor:pointer; position:relative; display: flex; align-items: center; justify-content: center; font-size: 18px; }
+.slot:hover{ background:#250505; border-color: #f00; box-shadow: 0 0 5px #f00; }
+
+.stat-row{ display:flex; justify-content:space-between; margin-bottom:6px; align-items:center; font-size: 18px; }
+.plus-btn{ background:#300; border:1px solid #600; color:#f00; width:18px; height:18px; line-height:16px; text-align:center; cursor:pointer; font-size:14px; border-radius: 2px; }
 .plus-btn:hover{ background:#f00; color:#000; }
-#tooltip { position: absolute; background: #100; border: 1px solid #f00; padding: 5px; z-index: 1000; display: none; pointer-events: none; font-size: 10px; color:#fff; white-space:nowrap; box-shadow: 0 0 10px #f00; }
-.equip-slots { display: flex; gap: 10px; justify-content: center; margin-bottom: 10px; flex-wrap: wrap; }
 
-#menu{ position:absolute; top:0; left:0; width:100%; height:100%; background:#050000; display:flex; flex-direction:column; align-items:center; justify-content:center; pointer-events:auto; z-index:10; }
-.btn{ padding:10px 20px; background:#200; color:#f00; border:2px solid #500; margin:5px; cursor:pointer; font-family:inherit; font-weight:bold;}
-.btn:hover{ background:#f00; color:#000; box-shadow: 0 0 10px #f00; }
-.craft-item { padding: 5px; border-bottom: 1px solid #303; cursor:pointer; }
-.craft-item:hover { background: #303; color: #fff; }
-input, select{ padding:10px; background:#100; border:2px solid #500; color:#f00; margin:5px; font-family:inherit;}
-h1 { text-shadow: 2px 2px #500; color: #f00; letter-spacing: 5px; }
-#hud-gold { position: absolute; top: 10px; left: 10px; font-size: 18px; color: #fb0; font-weight: bold; text-shadow: 1px 1px #000; }
+#tooltip { position: absolute; background: rgba(10,0,0,0.95); border: 1px solid #f00; padding: 8px; z-index: 1100; display: none; pointer-events: none; font-size: 14px; color:#fff; white-space:nowrap; box-shadow: 0 0 15px rgba(255,0,0,0.3); }
 
-#chat-container { position: absolute; bottom: 100px; left: 50%; transform: translateX(-50%); width: 300px; display: none; pointer-events: auto; }
-#chat-input { width: 100%; background: rgba(0,0,0,0.8); border: 1px solid #0f0; color: #fff; padding: 5px; font-family: inherit; }
+/* MENU PRINCIPAL */
+#menu{ position:absolute; top:0; left:0; width:100%; height:100%; background:#050000; display:flex; flex-direction:column; align-items:center; justify-content:center; pointer-events:auto; z-index:2000; }
+.btn{ padding:12px 24px; background:#200; color:#f00; border:2px solid #500; margin:8px; cursor:pointer; font-family:inherit; font-size: 20px; letter-spacing: 1px; transition: 0.2s; min-width: 150px; }
+.btn:hover{ background:#f00; color:#000; box-shadow: 0 0 20px #f00; transform: scale(1.05); }
+.craft-item { padding: 6px; border-bottom: 1px solid #303; cursor:pointer; font-size: 16px; }
+.craft-item:hover { background: #303; color: #fff; padding-left: 10px; }
+input, select{ padding:10px; background:#100; border:2px solid #500; color:#f00; margin:5px; font-family:inherit; font-size: 18px; }
+
+h1 { text-shadow: 4px 4px #500; color: #f00; letter-spacing: 8px; font-size: 80px; margin-bottom: 10px; animation: pulse 3s infinite; }
+@keyframes pulse { 0% { text-shadow: 4px 4px #500; } 50% { text-shadow: 4px 4px #900, 0 0 20px #f00; } 100% { text-shadow: 4px 4px #500; } }
 
 #game-log-container {
-    position: absolute; top: 10px; right: 10px; width: 280px; height: 180px;
-    background: rgba(10, 0, 0, 0.85); border: 1px solid #500;
-    padding: 8px; pointer-events: none; overflow-y: hidden; font-size: 11px; z-index: 20;
+    position: absolute; top: 10px; right: 10px; width: 300px; height: 200px;
+    background: linear-gradient(rgba(0,0,0,0), rgba(0,0,0,0.8)); 
+    border-left: 2px solid #500; padding: 10px; pointer-events: none; overflow: hidden; font-size: 14px; z-index: 20;
 }
-#game-log { display: flex; flex-direction: column-reverse; gap: 4px; height: 100%; overflow-y: scroll; }
-#game-log::-webkit-scrollbar { width: 4px; }
-#game-log::-webkit-scrollbar-thumb { background: #500; border-radius: 2px; }
+#game-log { display: flex; flex-direction: column-reverse; gap: 2px; height: 100%; overflow-y: scroll; text-shadow: 1px 1px #000; }
 
 /* MOBILE CONTROLS */
-#mobile-controls { display: none; position: fixed; bottom: 0; left: 0; width: 100%; height: 120px; pointer-events: none; z-index: 5; }
-#joystick-area { position: absolute; bottom: 10px; left: 15px; width: 120px; height: 120px; pointer-events: auto; border-radius: 50%; z-index: 1; }
-#joystick-base { position: absolute; left: 15px; bottom: 10px; width: 100px; height: 100px; border: 2px solid rgba(255, 0, 0, 0.5); background: rgba(20, 0, 0, 0.4); border-radius: 50%; pointer-events: none; z-index: 0; transform: translate(10px, 10px); }
-#joystick-knob { position: absolute; width: 40px; height: 40px; background: rgba(255, 0, 0, 0.7); border: 1px solid #f00; border-radius: 50%; pointer-events: none; z-index: 1; transition: transform 0.05s ease-out; }
+#mobile-controls { display: none; position: fixed; bottom: 0; left: 0; width: 100%; height: 140px; pointer-events: none; z-index: 5; }
+#joystick-area { position: absolute; bottom: 20px; left: 20px; width: 120px; height: 120px; pointer-events: auto; }
+#joystick-base { position: absolute; left: 30px; bottom: 30px; width: 100px; height: 100px; border: 2px solid rgba(255, 50, 50, 0.3); background: rgba(20, 0, 0, 0.2); border-radius: 50%; pointer-events: none; }
+#joystick-knob { position: absolute; width: 50px; height: 50px; background: rgba(255, 0, 0, 0.5); border: 2px solid #f00; border-radius: 50%; pointer-events: none; display:none; }
 
-#action-container { right: 15px; width: 160px; height: 110px; bottom: 0px; position: absolute; pointer-events: auto; }
-.action-btn { position: absolute; width: 45px; height: 45px; border-radius: 50%; background: rgba(30, 0, 0, 0.8); border: 2px solid; color: #f00; display: flex; align-items: center; justify-content: center; font-size: 14px; font-weight: bold; box-shadow: 0 0 5px rgba(255, 0, 0, 0.5); z-index: 2; }
+#action-container { right: 20px; width: 180px; height: 140px; bottom: 0px; position: absolute; pointer-events: auto; }
+.action-btn { position: absolute; border-radius: 50%; background: rgba(50, 0, 0, 0.6); border: 2px solid #500; color: #fff; display: flex; align-items: center; justify-content: center; font-size: 16px; font-weight: bold; box-shadow: 0 0 10px rgba(0,0,0,0.5); }
+.action-btn:active { background: #f00; color: #000; transform: scale(0.95); }
 
-#btn-atk { width: 55px; height: 55px; font-size: 16px; bottom: 0px; right: 0px; border-color: #f00; color: #f00; } 
-#btn-skill { width: 45px; height: 45px; font-size: 12px; border-color: #0ff; color: #0ff; bottom: 55px; right: 55px; } 
-#btn-dash { width: 45px; height: 45px; font-size: 12px; border-color: #fff; color: #fff; bottom: 0px; right: 60px; } 
-#btn-potion { width: 45px; height: 45px; font-size: 10px; border-color: #f33; color: #f33; bottom: 60px; right: 0px; }
-#btn-block { width: 45px; height: 45px; font-size: 12px; border-color: #0f0; color: #0f0; bottom: 60px; right: 110px; }
+#btn-atk { width: 70px; height: 70px; bottom: 10px; right: 10px; border-color: #f00; color: #fcc; font-size: 20px; } 
+#btn-skill { width: 55px; height: 55px; bottom: 85px; right: 20px; border-color: #0ff; color: #aff; } 
+#btn-dash { width: 55px; height: 55px; bottom: 10px; right: 90px; border-color: #fff; } 
+#btn-potion { width: 45px; height: 45px; bottom: 90px; right: 85px; border-color: #f33; font-size: 12px; }
 
-#mobile-menu-buttons { position: absolute; bottom: 115px; right: 5px; display: flex; gap: 5px; pointer-events: auto; z-index: 10; }
-#mobile-menu-buttons .skill-btn { width: 38px; height: 38px; background: rgba(30,0,0,0.8); font-size: 10px; border-radius: 5px; border-color: #500; color: #f00; }
-
-#hud-horizontal-mobile { position: absolute; top: 0px; left: 0px; width: 100%; height: 20px; background: rgba(10, 0, 0, 0.9); border-bottom: 1px solid #500; pointer-events: none; display: none; justify-content: space-between; align-items: center; padding: 0 5px; box-sizing: border-box; font-size: 9px; z-index: 5; }
-.h-bar-container { width: 60px; height: 5px; background: #111; border: 1px solid #300; position: relative; display: inline-block; vertical-align: middle; margin-right: 5px; }
+#mobile-menu-buttons { position: absolute; top: 10px; left: 50%; transform: translateX(-50%); display: flex; gap: 10px; pointer-events: auto; z-index: 10; }
+#mobile-menu-buttons .skill-btn { width: 40px; height: 40px; font-size: 12px; border-radius: 50%; }
 
 @media (max-width: 1024px) { 
     .hud-bottom { display: none !important; } 
-    #hud-gold { display: none !important; } 
-    #game-log-container { display: block !important; top: 25px; left: 50%; transform: translateX(-50%); width: 250px; height: 80px; background: rgba(0,0,0,0.5); border: none; right: auto; }
+    #mobile-controls { display: block; }
+    #game-log-container { top: 50px; height: 100px; width: 200px; font-size: 12px; border: none; background: rgba(0,0,0,0.3); }
 }
-@media (max-width: 768px) and (orientation: landscape) { #mobile-menu-buttons { top: 0; bottom: auto; right: 5px; } }
 
-.ui-action-buttons { position: absolute; bottom: 50px; left: 50%; transform: translateX(-50%); display: none; gap: 15px; pointer-events: auto; z-index: 100; }
-.ui-action-buttons .btn { padding: 8px 12px; font-size: 14px; border-radius: 5px; border: 2px solid #fff; background: rgba(50,0,0,0.8); color: #fff; cursor: pointer; }
-.ui-action-buttons .btn:hover { background: #f00; color: #000; }
+#chat-container { position: absolute; bottom: 120px; left: 50%; transform: translateX(-50%); width: 350px; display: none; pointer-events: auto; }
+#chat-input { width: 100%; background: rgba(0,0,0,0.8); border: 1px solid #0f0; color: #fff; padding: 8px; font-family: inherit; }
 
 </style>
 </head>
 <body oncontextmenu="return false">
 <canvas id="c"></canvas>
 <div class="scanlines"></div>
+<div class="vignette"></div>
 <div id="tooltip"></div>
 
 <div id="ui-layer">
-    <div id="hud-gold">GOLD: 0</div>
+    <div id="hud-gold" style="position: absolute; top: 15px; left: 15px; font-size: 24px; color: #fb0; text-shadow: 2px 2px #000; font-weight: bold;"></div>
     <div id="game-log-container"><div id="game-log"></div></div>
 
-    <div id="hud-horizontal-mobile">
-        <span id="h-lvl-txt" style="color:#f00;">NORMAL [1]</span>
-        <div style="flex-grow: 1; text-align: center;">
-            <span id="h-gold-txt" style="color:#fb0;">0G</span>
-        </div>
-        <div>
-            <span style="color:#f00; font-weight: bold;">HP</span>
-            <div class="h-bar-container"><div class="fill hp" id="h-hp-bar"></div></div>
-        </div>
-        <div>
-            <span style="color:#00f; font-weight: bold;">MP</span>
-            <div class="h-bar-container"><div class="fill mp" id="h-mp-bar"></div></div>
-        </div>
-    </div>
-    
-    <div id="chat-container"><input type="text" id="chat-input" placeholder="Say something..." maxlength="30"></div>
+    <div id="chat-container"><input type="text" id="chat-input" placeholder="Say something..." maxlength="40"></div>
     
     <div class="hud-bottom">
         <div class="bar-box">
             <div class="bar-status-text">
-                <span id="lvl-txt">NORMAL [1]</span>
-                <span id="hp-txt">HP: 100/100</span>
+                <span id="lvl-txt">LVL 1</span>
+                <span id="hp-txt">100/100</span>
             </div>
-            <div class="bar-container hp"><div class="fill hp" id="hp-bar"></div></div>
+            <div class="bar-container hp"><div class="fill hp" id="hp-bar" style="width:100%"></div></div>
             
-            <div class="bar-status-text" style="color:#0ff;">
+            <div class="bar-status-text" style="color:#aaf; font-size:14px;">
                 <span>MANA</span>
-                <span id="mp-txt">MP: 50/50</span>
+                <span id="mp-txt">50/50</span>
             </div>
-            <div class="bar-container mp"><div class="fill mp" id="mp-bar"></div></div>
+            <div class="bar-container mp"><div class="fill mp" id="mp-bar" style="width:100%"></div></div>
             
-            <div class="bar-status-text" style="color:#fb0;">
-                <span>EXP</span>
-                <span id="xp-txt">0%</span>
-            </div>
-            <div class="bar-container xp"><div class="fill xp" id="xp-bar"></div></div>
+            <div class="bar-container xp"><div class="fill xp" id="xp-bar" style="width:0%"></div></div>
         </div>
         <div class="skills">
             <div class="skill-btn" onclick="socket.emit('attack', getAttackAngle())">ATK</div>
             <div class="skill-btn" id="skill-1" onclick="socket.emit('skill', {angle: getAttackAngle()})"><span class="key-hint">E</span>SKL</div>
             <div class="skill-btn" id="skill-dash" onclick="socket.emit('dash', getDashAngle())"><span class="key-hint">SPC</span>DSH</div>
-            <div class="skill-btn" id="hud-potion" onclick="socket.emit('potion')"><span class="key-hint">E</span>POT</div>
+            <div class="skill-btn" id="hud-potion" onclick="socket.emit('potion')"><span class="key-hint">Q</span>POT</div>
+            <div style="width:10px;"></div>
             <div class="skill-btn" onclick="toggleUI('inv')"><span class="key-hint">I</span>INV</div>
             <div class="skill-btn" onclick="toggleUI('craft')"><span class="key-hint">K</span>CFT</div>
             <div class="skill-btn" onclick="toggleUI('char')"><span class="key-hint">C</span>CHR</div>
@@ -160,63 +148,54 @@ h1 { text-shadow: 2px 2px #500; color: #f00; letter-spacing: 5px; }
     </div>
     
     <div id="entry-modal" class="panel">
-        <h3 style="margin-top:0; color:#f00; text-shadow: 0 0 5px #f00;">PORTAL INFERNAL</h3>
-        <p style="font-size:11px; color:#aaa;">Selecione o nível da masmorra:</p>
-        <div id="checkpoint-list" class="checkpoint-list">
-            </div>
-        <button class="btn" onclick="dungeonAction('coop')" style="width:100%; color:#0f0; border-color:#0f0;">MODO COOP (Online)</button>
-        <br><br>
-        <button class="btn" onclick="document.getElementById('entry-modal').style.display='none'" style="font-size:10px;">CANCELAR</button>
+        <h3 style="margin-top:0; color:#f00; text-shadow: 0 0 10px #f00; font-size: 24px;">GATEWAY TO HELL</h3>
+        <div id="checkpoint-list" class="checkpoint-list"></div>
+        <button class="btn" onclick="dungeonAction('coop')" style="width:100%; color:#0f0; border-color:#0f0; font-size:16px;">JOIN CO-OP PARTY</button>
+        <button class="btn" onclick="document.getElementById('entry-modal').style.display='none'" style="width:100%; margin-top:5px; font-size:14px;">CLOSE</button>
     </div>
 
     <div id="inventory" class="panel">
-        <div style="text-align:center; border-bottom:1px dashed #f00; font-size:14px; padding-bottom:5px;">[ MOCHILA ]</div>
+        <div class="panel-header">[ BACKPACK ]</div>
         <div class="grid" id="inv-grid"></div>
     </div>
 
     <div id="craft-panel" class="panel">
-        <div style="text-align:center; border-bottom:1px dashed #f0f; font-size:14px; padding-bottom:5px;">[ FORJA ]</div>
-        <div id="craft-list" style="max-height: 200px; overflow-y: auto;"></div>
+        <div class="panel-header">[ BLACKSMITH ]</div>
+        <div id="craft-list" style="max-height: 250px; overflow-y: auto;"></div>
     </div>
 
     <div id="shop-panel" class="panel">
-        <div style="text-align:center; border-bottom:1px dashed #0ff; font-size:14px; padding-bottom:5px; margin-bottom: 10px;">[ MERCADOR ]</div>
+        <div class="panel-header">[ MERCHANT ]</div>
         <div class="grid" id="shop-grid" style="grid-template-columns:repeat(5, 1fr);"></div>
-        <div style="display: flex; justify-content: space-between; margin-top: 10px;">
-            <button class="btn" style="border-color:#0ff; color:#0ff;" onclick="closeAllMenus()" id="btn-shop-close">FECHAR</button>
-            <button class="btn" style="border-color:#f00; color:#f00;" onclick="window.sell()">VENDER INV</button>
+        <div style="display: flex; justify-content: space-between; margin-top: 15px;">
+            <button class="btn" style="border-color:#0ff; color:#0ff; font-size:16px;" onclick="closeAllMenus()" id="btn-shop-close">LEAVE</button>
+            <button class="btn" style="border-color:#f00; color:#f00; font-size:16px;" onclick="window.sell()">SELL ITEM</button>
         </div>
     </div>
     
     <div id="char-panel" class="panel">
-        <div style="text-align:center; border-bottom:1px dashed #f00; font-size:14px; margin-bottom:10px;">[ ATRIBUTOS ]</div>
-        <div class="equip-slots">
+        <div class="panel-header">[ HERO ]</div>
+        <div style="display:flex; justify-content:center; gap:10px; margin-bottom:15px;">
             <div class="slot" id="eq-head" title="Head"></div>
             <div class="slot" id="eq-body" title="Body"></div>
-            <div class="slot" id="eq-hand" title="Hand"></div>
+            <div class="slot" id="eq-hand" title="Weapon"></div>
             <div class="slot" id="eq-rune" title="Rune"></div> 
-            <div class="slot" id="eq-potion" title="Potion (E)"></div>
+            <div class="slot" id="eq-potion" title="Quick Potion"></div>
         </div>
-        <div style="text-align:center; color:#fb0; margin-bottom:10px;">PTS: <span id="cp-pts">0</span></div>
-        <div class="stat-row"><span>STR</span> <div><span id="val-str">5</span> <div class="plus-btn" id="btn-str" onclick="addStat('str')">+</div></div></div>
-        <div class="stat-row"><span>DEX</span> <div><span id="val-dex">5</span> <div class="plus-btn" id="btn-dex" onclick="addStat('dex')">+</div></div></div>
-        <div class="stat-row"><span>INT</span> <div><span id="val-int">5</span> <div class="plus-btn" id="btn-int" onclick="addStat('int')">+</div></div></div>
-        <hr style="border:0; border-top:1px dashed #500">
-        <div style="font-size:11px; color:#aaa;">DMG: <span id="stat-dmg">0</span> | SPD: <span id="stat-spd">0</span></div>
+        <div style="text-align:center; color:#fb0; margin-bottom:10px; font-size:18px;">POINTS: <span id="cp-pts">0</span></div>
+        <div class="stat-row"><span style="color:#f88">STR</span> <div><span id="val-str">5</span> <div class="plus-btn" onclick="addStat('str')">+</div></div></div>
+        <div class="stat-row"><span style="color:#8f8">DEX</span> <div><span id="val-dex">5</span> <div class="plus-btn" onclick="addStat('dex')">+</div></div></div>
+        <div class="stat-row"><span style="color:#88f">INT</span> <div><span id="val-int">5</span> <div class="plus-btn" onclick="addStat('int')">+</div></div></div>
+        <hr style="border:0; border-top:1px dashed #500; margin:10px 0;">
+        <div style="font-size:16px; color:#aaa; text-align: center;">DMG: <span id="stat-dmg" style="color:#fff">0</span> | SPD: <span id="stat-spd" style="color:#fff">0</span></div>
     </div>
-</div>
-
-<div class="ui-action-buttons" id="ui-action-buttons">
-    <button class="btn" id="ui-btn-equip" onclick="handleGamepadAction()">EQUIPAR / USAR (A)</button>
-    <button class="btn" id="ui-btn-drop" onclick="handleGamepadSecondaryAction()">DROPAR (B)</button>
 </div>
 
 <div id="mobile-controls">
     <div id="joystick-base"></div>
-    <div id="joystick-knob" style="display:none;"></div>
-    <div id="joystick-area" class="control-area"></div>
+    <div id="joystick-knob"></div>
+    <div id="joystick-area"></div>
     <div id="action-container">
-        <div id="btn-block" class="action-btn" data-action="block">BLK</div> 
         <div id="btn-potion" class="action-btn" data-action="potion">POT</div>
         <div id="btn-skill" class="action-btn" data-action="skill">SKL</div>
         <div id="btn-dash" class="action-btn" data-action="dash">DSH</div>
@@ -225,59 +204,65 @@ h1 { text-shadow: 2px 2px #500; color: #f00; letter-spacing: 5px; }
 </div>
 
 <div id="mobile-menu-buttons">
-    <div id="btn-inv-mobile" class="skill-btn" data-action="toggle_inv">INV</div>
-    <div id="btn-char-mobile" class="skill-btn" data-action="toggle_char">CHR</div>
-    <div id="btn-craft-mobile" class="skill-btn" data-action="toggle_craft">CFT</div>
-    <div id="btn-chat-mobile" class="skill-btn" data-action="toggle_chat" style="border-color: #fff; color: #fff;">CHAT</div>
+    <div class="skill-btn" data-action="toggle_inv">INV</div>
+    <div class="skill-btn" data-action="toggle_char">CHR</div>
+    <div class="skill-btn" data-action="toggle_craft">CFT</div>
+    <div class="skill-btn" data-action="toggle_chat" style="border-color:#fff; color:#fff;">MSG</div>
 </div>
 
 <div id="menu">
-    <h1 style="font-size:50px; margin-bottom:0;">DIABLOCK</h1>
-    <p style="color:#d00; margin-bottom:20px;">V34 - INFERNAL ASCENSION</p>
-    <div id="login-form"><input type="text" id="username" placeholder="USER"><button class="btn" onclick="login()">LOGIN</button></div>
+    <h1>DIABLOCK</h1>
+    <p style="color:#d00; margin-bottom:30px; font-size:24px; letter-spacing: 4px;">LEGACY OF SHADOWS</p>
+    <div id="login-form">
+        <input type="text" id="username" placeholder="USERNAME" style="text-align:center;">
+        <br>
+        <button class="btn" onclick="login()">ENTER VOID</button>
+    </div>
     <div id="char-select" style="display:none; text-align:center;">
-        <div id="char-list" style="margin-bottom:20px;"></div>
-        <input type="text" id="cname" placeholder="NAME">
-        <select id="cclass"><option value="knight">WARRIOR</option><option value="hunter">RANGER</option><option value="mage">WIZARD</option></select>
-        <button class="btn" onclick="create()">CREATE</button>
+        <div id="char-list" style="margin-bottom:20px; display:flex; flex-direction:column; gap:10px;"></div>
+        <div style="border-top: 1px solid #300; padding-top:20px;">
+            <input type="text" id="cname" placeholder="HERO NAME">
+            <select id="cclass">
+                <option value="knight">WARRIOR (Melee)</option>
+                <option value="hunter">RANGER (Bow)</option>
+                <option value="mage">WIZARD (Magic)</option>
+            </select>
+            <br>
+            <button class="btn" onclick="create()">SUMMON HERO</button>
+        </div>
     </div>
 </div>
+
 <script src="/socket.io/socket.io.js"></script>
 <script src="/game.js"></script>
 <script>
-    // PHASE 1: CHECKPOINT LOGIC (CLIENT SIDE PORTAL)
     function dungeonAction(type) {
         socket.emit("dungeon_entry_choice", type);
         document.getElementById('entry-modal').style.display = 'none';
     }
     
-    // Atualiza a lista de checkpoints quando o player interage com a escada (se estiver na cidade)
-    // A lógica de exibição do modal está no game.js (socket.on 'u'), aqui apenas preenchemos a lista
     function updateCheckpointList(maxDepth) {
         const list = document.getElementById('checkpoint-list');
         list.innerHTML = "";
         
-        // Add Safe Zone
         const btn0 = document.createElement("div");
         btn0.className = "checkpoint-btn";
-        btn0.innerText = "Level 1 (Start)";
+        btn0.innerText = "Floor 1 (Surface)";
         btn0.onclick = () => dungeonAction(1);
         list.appendChild(btn0);
 
-        // Add checkpoints every 5 levels up to maxDepth
         for (let i = 5; i <= maxDepth; i += 5) {
             const btn = document.createElement("div");
             btn.className = "checkpoint-btn";
-            btn.innerText = `Level ${i} (Checkpoint)`;
+            btn.innerText = `Floor ${i} (Checkpoint)`;
             btn.onclick = () => dungeonAction(i);
             list.appendChild(btn);
         }
         
-        // Add Max Depth
         if (maxDepth > 1 && maxDepth % 5 !== 0) {
             const btnMax = document.createElement("div");
             btnMax.className = "checkpoint-btn";
-            btnMax.innerText = `Level ${maxDepth} (Deepest)`;
+            btnMax.innerText = `Floor ${maxDepth} (Deepest)`;
             btnMax.onclick = () => dungeonAction(maxDepth);
             list.appendChild(btnMax);
         }

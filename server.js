@@ -37,7 +37,7 @@ async function initializeServer() {
             DB_MODE = 'NONE';
         }
     }
-    server.listen(3000, () => { console.log("Server running on port 3000"); });
+    server.listen(3000, () => { console.log("DIABLOCK V35 GOLD - Server running on port 3000"); });
 }
 
 // ===================================
@@ -140,12 +140,12 @@ const DIFFICULTY = {
     HELL:      { name: "HELL",      mult: 3.5,  drop: 3.0, color: "#102" }, 
     HORDE_1:   { name: "HORDE I",   mult: 5.0,  drop: 4.0, color: "#f00" }, 
     HORDE_2:   { name: "HORDE II",  mult: 7.0,  drop: 5.5, color: "#900" },
-    PRIMORDIAL:{ name: "PRIMORDIAL",mult: 12.0, drop: 10.0,color: "#000" } // NEW TIER
+    PRIMORDIAL:{ name: "PRIMORDIAL",mult: 12.0, drop: 10.0,color: "#000" }
 };
 
 function getDifficulty(lvl) {
     if(lvl === 0) return DIFFICULTY.CITY;
-    if(lvl >= 30) return DIFFICULTY.PRIMORDIAL; // TIAMAT ZONE
+    if(lvl >= 30) return DIFFICULTY.PRIMORDIAL;
     if(lvl >= 15) return DIFFICULTY.HORDE_2; 
     if(lvl >= 12) return DIFFICULTY.HORDE_1; 
     if(lvl >= 9) return DIFFICULTY.HELL;      
@@ -153,14 +153,15 @@ function getDifficulty(lvl) {
     return DIFFICULTY.NORMAL;
 }
 
+// ADICIONADO DURABILIDADE BASE
 const ITEM_BASES = {
-  sword: { slot: "hand", name: "Sword", dmg: 6, type: "melee", cd: 10, price:50 },
-  axe:   { slot: "hand", name: "Axe", dmg: 10, spd: -0.03, type: "melee", cd: 16, price:60 },
-  dagger:{ slot: "hand", name: "Dagger", dmg: 4, spd: 0.02, type: "melee", cd: 6, price:40 },
-  bow:   { slot: "hand", name: "Bow", dmg: 5, type: "ranged", proj: "arrow", cd: 12, price:70 },
-  staff: { slot: "hand", name: "Staff", dmg: 12, mp: 15, type: "magic", proj: "fireball", cd: 20, price:80 },
-  helm:  { slot: "head", name: "Helm", hp: 20, def: 1, price:40 },
-  armor: { slot: "body", name: "Armor", hp: 40, def: 3, price:100 },
+  sword: { slot: "hand", name: "Sword", dmg: 6, type: "melee", cd: 10, price:50, maxDur: 100 },
+  axe:   { slot: "hand", name: "Axe", dmg: 10, spd: -0.03, type: "melee", cd: 16, price:60, maxDur: 100 },
+  dagger:{ slot: "hand", name: "Dagger", dmg: 4, spd: 0.02, type: "melee", cd: 6, price:40, maxDur: 80 },
+  bow:   { slot: "hand", name: "Bow", dmg: 5, type: "ranged", proj: "arrow", cd: 12, price:70, maxDur: 90 },
+  staff: { slot: "hand", name: "Staff", dmg: 12, mp: 15, type: "magic", proj: "fireball", cd: 20, price:80, maxDur: 70 },
+  helm:  { slot: "head", name: "Helm", hp: 20, def: 1, price:40, maxDur: 120 },
+  armor: { slot: "body", name: "Armor", hp: 40, def: 3, price:100, maxDur: 150 },
   runa_dano: { slot: "rune", name: "Rune of Might", dmg: 5, type: "passive", price: 150, color:"#f0f" },
   runa_crit: { slot: "rune", name: "Rune of Fortune", crit: 0.02, type: "passive", price: 150, color:"#0ff" },
   potion:{ slot: "potion",name: "Hp Pot", heal: 50, type: "consumable", price:20 },
@@ -212,13 +213,18 @@ const MOB_DATA = {
 };
 
 function generateItem(level, diffMult=1, forceType=null) {
+    let item = {};
     if(forceType) {
         const base = ITEM_BASES[forceType];
         if (base.type === "material" || base.type === "consumable" || base.type === "key") {
              return { ...base, id: Math.random().toString(36).substr(2), key:forceType, rarity:"common", color:base.color||"#aaa", stats: base.stats || {} };
         }
-        return { id: Math.random().toString(36).substr(2), key:forceType, rarity:"common", color:"#aaa", slot: base.slot, type: base.type, name: base.name, price: base.price, stats:{}, sockets:[], gems:[] };
+        item = { id: Math.random().toString(36).substr(2), key:forceType, rarity:"common", color:"#aaa", slot: base.slot, type: base.type, name: base.name, price: base.price, stats:{}, sockets:[], gems:[] };
+        if(base.maxDur) { item.dur = base.maxDur; item.maxDur = base.maxDur; }
+        return item;
     }
+    
+    // Drop rate normal
     if (Math.random() < 0.03 * diffMult) return { ...ITEM_BASES.key, id: Math.random().toString(36).substr(2), key:"key", rarity:"rare", color:"#ffd700" };
     if(Math.random() < 0.20) return { ...ITEM_BASES.potion, id: Math.random().toString(36).substr(2), key:"potion", rarity:"common", color:"#f33", stats:{heal:50+level*10} };
     
@@ -232,13 +238,23 @@ function generateItem(level, diffMult=1, forceType=null) {
     const keys = Object.keys(ITEM_BASES).filter(k=>!["potion","wood","stone","runa_dano","runa_crit","ruby","sapphire","emerald","diamond","topaz","amethyst","key"].includes(k));
     const key = keys[Math.floor(Math.random()*keys.length)];
     const base = ITEM_BASES[key];
+    
     let r = Math.random(), rarity;
     if (level <= 3) rarity = r > 0.95 * diffMult ? "magic" : "common";
     else rarity = r > 0.97?"legendary":r>0.85?"rare":r>0.6?"magic":"common";
     const meta = { common: {c:"#aaa", m:1, s:0}, magic: {c:"#4ff", m:1.3, s:1}, rare: {c:"#ff0", m:1.8, s:1}, legendary:{c:"#f0f", m:3.0, s:2} };
+    
     const power = (level * meta[rarity].m) * diffMult;
     const itemName = generateRandomName(base.name, rarity);
-    const item = { id: Math.random().toString(36).substr(2), key, rarity, color: meta[rarity].c, slot: base.slot, type: base.type, proj: base.proj, cd: base.cd, name: itemName, price: Math.floor(base.price * meta[rarity].m), stats: {}, sockets: [], gems: [] };
+    
+    item = { id: Math.random().toString(36).substr(2), key, rarity, color: meta[rarity].c, slot: base.slot, type: base.type, proj: base.proj, cd: base.cd, name: itemName, price: Math.floor(base.price * meta[rarity].m), stats: {}, sockets: [], gems: [] };
+    
+    // GERAÇÃO DE DURABILIDADE
+    if (base.maxDur) {
+        item.maxDur = Math.floor(base.maxDur * meta[rarity].m);
+        item.dur = item.maxDur;
+    }
+
     const maxSockets = meta[rarity].s;
     if(Math.random() < 0.5 || maxSockets > 0) { for(let i=0; i<maxSockets; i++) item.sockets.push(null); }
     if(base.dmg) { const dmgMod = 0.5 + Math.random() * 0.5; item.stats.dmg = Math.floor(base.dmg + power * dmgMod); }
@@ -265,9 +281,13 @@ function recalcStats(p) {
     
     let addHp=0, addMp=0, addDmg=0, addDef=0, addSpd=0, critChance=0.01 + (dex * 0.002), cdRed=0;
     let baseLightRadius = p.level === 0 ? 30 : 22; 
+    
     ["hand", "head", "body", "rune"].forEach(s => { 
         if(p.equipment[s]){ 
             const it = p.equipment[s];
+            // LÓGICA DE ITEM QUEBRADO
+            if (it.dur !== undefined && it.dur <= 0) return; 
+
             addHp+=it.stats?.hp||0; addMp+=it.stats?.mp||0; addDmg+=it.stats?.dmg||0; addDef+=it.stats?.def||0;
             critChance+=it.stats?.crit||0; cdRed+=it.stats?.cd_red||0; addSpd+=it.stats?.spd||0;
             if(it.gems) it.gems.forEach(g => {
@@ -286,8 +306,14 @@ function recalcStats(p) {
     p.stats.lightRadius = Math.ceil(baseLightRadius); 
     const wep = p.equipment.hand;
     let baseDmg = addDmg;
-    if(wep) { if(wep.type === "melee") baseDmg += str * 0.6; if(wep.type === "ranged") baseDmg += dex * 0.6; if(wep.type === "magic") baseDmg += int * 0.6; } 
-    else { baseDmg += str * 0.3; }
+    // Verifica arma quebrada
+    if(wep && (!wep.dur || wep.dur > 0)) { 
+        if(wep.type === "melee") baseDmg += str * 0.6; 
+        if(wep.type === "ranged") baseDmg += dex * 0.6; 
+        if(wep.type === "magic") baseDmg += int * 0.6; 
+    } 
+    else { baseDmg += str * 0.3; } // Dano desarmado ou arma quebrada
+    
     if (p.buffs.dmg) baseDmg *= 1.5; if (p.buffs.spd) p.stats.spd *= 1.5; 
     p.stats.dmg = Math.floor(baseDmg); p.stats.cd_mult = (1 - cdRed); 
     if(p.hp > p.stats.maxHp) p.hp = p.stats.maxHp;
@@ -389,8 +415,120 @@ io.on("connection", socket => {
     socket.on("add_stat", s => { const p = instances[socket.instId]?.players[socket.id]; if(p && p.pts>0){ p.attrs[s]++; p.pts--; recalcStats(p); } });
     socket.on("dash", angle => { const p = instances[socket.instId]?.players[socket.id]; if(!p || p.cd.dash > 0 || p.input.block || p.mp < 10) return; const isCity = instances[p.instId].level === 0; if(!isCity) p.mp -= 10; p.cd.dash = Math.floor(30 * (p.stats.cd_mult || 1)); p.vx = Math.cos(angle) * 0.7; p.vy = Math.sin(angle) * 0.7; p.dashTime = 5; io.to(instances[socket.instId].id).emit("fx", { type: "dash", x: p.x, y: p.y }); });
     socket.on("potion", () => { const p = instances[socket.instId]?.players[socket.id]; if(!p) return; let pot = p.equipment.potion; let invIdx = -1; if (!pot) { invIdx = p.inventory.findIndex(i => i.key === "potion"); if (invIdx !== -1) pot = p.inventory[invIdx]; } if(!pot) return; p.hp = Math.min(p.stats.maxHp, p.hp + (pot.stats?.heal || 50)); io.to(instances[socket.instId].id).emit("fx", { type: "nova", x: p.x, y: p.y }); if (p.equipment.potion) p.equipment.potion = null; else if (invIdx !== -1) p.inventory.splice(invIdx, 1); recalcStats(p); });
-    socket.on("attack", ang => { const inst = instances[socket.instId]; const p = inst?.players[socket.id]; if(!p || p.cd.atk > 0 || p.input.block) return; let clickedNPC = false; Object.values(inst.mobs).forEach(m => { if(m.npc && Math.hypot(m.x-p.x, m.y-p.y) < 3) { socket.emit("open_shop", m.shop); clickedNPC = true; } }); if(clickedNPC || inst.level === 0) return; const wep = p.equipment.hand; const type = wep ? wep.type : "melee"; p.cd.atk = Math.floor((wep ? wep.cd : 10) * (p.stats.cd_mult || 1)); let damage = p.stats.dmg; let isCrit = Math.random() < p.stats.crit; if (isCrit) damage = Math.floor(damage * 1.5); if(type === "melee") { io.to(inst.id).emit("fx", { type: "slash", x: p.x, y: p.y, angle: ang }); hitArea(inst, p, p.x, p.y, 2.0, ang, 1.5, damage, isCrit ? 35 : 15, isCrit); } else { if(type==="magic" && p.mp < 2) return; if(type==="magic") p.mp -= 2; const spawnX = p.x + Math.cos(ang) * 0.5; const spawnY = p.y + Math.sin(ang) * 0.5; inst.projectiles.push({ x:spawnX, y:spawnY, vx:Math.cos(ang)*0.4, vy:Math.sin(ang)*0.4, life: 60, dmg: damage, owner: p.id, type: wep ? wep.proj : "arrow", angle: ang, isCrit: isCrit }); } });
-    socket.on("skill", ({angle}) => { const inst = instances[socket.instId]; const p = inst?.players[socket.id]; if(!p || p.cd.skill > 0 || p.input.block || inst.level === 0) return; const ang = angle || 0; let base_cd = 0; let damage = p.stats.dmg; let isCrit = Math.random() < p.stats.crit; if (isCrit) damage = Math.floor(damage * 1.5); if(p.class === "knight") { if(p.mp < 15) return; p.mp -= 15; base_cd = 60; io.to(inst.id).emit("fx", { type: "spin", x: p.x, y: p.y, life: 20 }); hitArea(inst, p, p.x, p.y, 3.5, null, 0, damage * 2, 40, isCrit); } else if(p.class === "hunter") { if(p.mp < 15) return; p.mp -= 15; base_cd = 50; [-0.3, 0, 0.3].forEach(off => { inst.projectiles.push({ x:p.x, y:p.y, vx:Math.cos(ang+off)*0.5, vy:Math.sin(ang+off)*0.5, life: 35, dmg: damage, owner: p.id, type: "arrow", angle: ang+off, isCrit: isCrit }); }); } else if(p.class === "mage") { if(p.mp < 25) return; p.mp -= 25; base_cd = 80; inst.projectiles.push({ x:p.x, y:p.y, vx:Math.cos(ang)*0.2, vy:Math.sin(ang)*0.2, life: 80, dmg: damage * 3, owner: p.id, type: "meteor", angle: ang, isCrit: isCrit }); } p.cd.skill = Math.floor(base_cd * (p.stats.cd_mult || 1)); });
+    
+    // ATTACK HANDLER COM DURABILIDADE
+    socket.on("attack", ang => { 
+        const inst = instances[socket.instId]; const p = inst?.players[socket.id]; 
+        if(!p || p.cd.atk > 0 || p.input.block) return; 
+        
+        let clickedNPC = false; 
+        Object.values(inst.mobs).forEach(m => { 
+            if(m.npc && Math.hypot(m.x-p.x, m.y-p.y) < 3) { socket.emit("open_shop", m.shop); clickedNPC = true; } 
+        }); 
+        if(clickedNPC || inst.level === 0) return; 
+        
+        const wep = p.equipment.hand;
+        
+        // CHECK WEAPON BROKEN
+        if (wep && wep.dur !== undefined && wep.dur <= 0) {
+            io.to(p.id).emit("txt", {x:p.x, y:p.y-2, val:"BROKEN!", color:"#f00"});
+            return;
+        }
+
+        const type = wep ? wep.type : "melee"; 
+        p.cd.atk = Math.floor((wep ? wep.cd : 10) * (p.stats.cd_mult || 1)); 
+        let damage = p.stats.dmg; 
+        let isCrit = Math.random() < p.stats.crit; 
+        if (isCrit) damage = Math.floor(damage * 1.5); 
+        
+        // REDUCE DURABILITY
+        if (wep && wep.dur > 0) {
+            wep.dur = Math.max(0, wep.dur - 1);
+            if(wep.dur === 0) {
+                recalcStats(p);
+                io.to(p.id).emit("txt", {x:p.x, y:p.y-2, val:"WEAPON BROKE!", color:"#f00"});
+            }
+        }
+
+        if(type === "melee") { 
+            io.to(inst.id).emit("fx", { type: "slash", x: p.x, y: p.y, angle: ang }); 
+            hitArea(inst, p, p.x, p.y, 2.0, ang, 1.5, damage, isCrit ? 35 : 15, isCrit); 
+        } else { 
+            if(type==="magic" && p.mp < 2) return; 
+            if(type==="magic") p.mp -= 2; 
+            const spawnX = p.x + Math.cos(ang) * 0.5; 
+            const spawnY = p.y + Math.sin(ang) * 0.5; 
+            inst.projectiles.push({ x:spawnX, y:spawnY, vx:Math.cos(ang)*0.4, vy:Math.sin(ang)*0.4, life: 60, dmg: damage, owner: p.id, type: wep ? wep.proj : "arrow", angle: ang, isCrit: isCrit }); 
+        } 
+    });
+
+    // SKILL HANDLER (FIXED WIZARD)
+    socket.on("skill", ({angle}) => { 
+        const inst = instances[socket.instId]; const p = inst?.players[socket.id]; 
+        if(!p || p.cd.skill > 0 || p.input.block || inst.level === 0) return; 
+        
+        const ang = angle || 0; 
+        let base_cd = 0; 
+        let damage = p.stats.dmg; 
+        let isCrit = Math.random() < p.stats.crit; 
+        if (isCrit) damage = Math.floor(damage * 1.5); 
+        
+        if(p.class === "knight") { 
+            if(p.mp < 15) return; p.mp -= 15; base_cd = 60; 
+            io.to(inst.id).emit("fx", { type: "spin", x: p.x, y: p.y, life: 20 }); 
+            hitArea(inst, p, p.x, p.y, 3.5, null, 0, damage * 2, 40, isCrit); 
+        } 
+        else if(p.class === "hunter") { 
+            if(p.mp < 15) return; p.mp -= 15; base_cd = 50; 
+            [-0.3, 0, 0.3].forEach(off => { 
+                inst.projectiles.push({ x:p.x, y:p.y, vx:Math.cos(ang+off)*0.5, vy:Math.sin(ang+off)*0.5, life: 35, dmg: damage, owner: p.id, type: "arrow", angle: ang+off, isCrit: isCrit }); 
+            }); 
+        } 
+        else if(p.class === "mage") { 
+            if(p.mp < 20) return; 
+            p.mp -= 20; 
+            base_cd = 60; 
+            // CORREÇÃO: Dispara projétil 'fireball_spell'
+            inst.projectiles.push({ 
+                x:p.x, y:p.y, 
+                vx:Math.cos(ang)*0.35, vy:Math.sin(ang)*0.35, 
+                life: 60, dmg: damage * 2.5, 
+                owner: p.id, type: "fireball_spell", // Novo tipo
+                angle: ang, isCrit: isCrit 
+            }); 
+        } 
+        p.cd.skill = Math.floor(base_cd * (p.stats.cd_mult || 1)); 
+    });
+    
+    // REPAIR SYSTEM
+    socket.on("repair_all", () => {
+        const inst = instances[socket.instId]; const p = inst?.players[socket.id];
+        if(!p || inst.level !== 0) return; // Só na cidade
+        
+        let cost = 0;
+        const slots = ["hand", "head", "body"];
+        slots.forEach(s => {
+            if(p.equipment[s] && p.equipment[s].dur < p.equipment[s].maxDur) {
+                const missing = p.equipment[s].maxDur - p.equipment[s].dur;
+                cost += missing * 2; // 2 Gold por ponto de durabilidade
+            }
+        });
+
+        if(cost === 0) { sendLog(inst.id, "Nada para reparar.", "#fff"); return; }
+
+        if(p.gold >= cost) {
+            p.gold -= cost;
+            slots.forEach(s => {
+                if(p.equipment[s]) p.equipment[s].dur = p.equipment[s].maxDur;
+            });
+            recalcStats(p);
+            sendLog(inst.id, `Reparado por ${cost}G!`, "#0f0");
+            io.to(p.id).emit("txt", {x:p.x, y:p.y, val:"REPAIRED", color:"#0f0"});
+        } else {
+            sendLog(inst.id, `Precisa de ${cost}G para reparar.`, "#f00");
+        }
+    });
+
     socket.on("craft", ({action, recipeIdx, itemIdx, gemIdx}) => { const inst = instances[socket.instId]; const p = inst?.players[socket.id]; if(!p) return; if(action === "create") { const recipe = RECIPES[recipeIdx]; if(!recipe) return; const woodCount = p.inventory.filter(i=>i.key==="wood").length; const stoneCount = p.inventory.filter(i=>i.key==="stone").length; if(woodCount >= recipe.req.wood && stoneCount >= recipe.req.stone && p.inventory.length < 20) { for(let k=0; k<recipe.req.wood; k++) { const i=p.inventory.findIndex(x=>x.key==="wood"); if(i>-1) p.inventory.splice(i,1); } for(let k=0; k<recipe.req.stone; k++) { const i=p.inventory.findIndex(x=>x.key==="stone"); if(i>-1) p.inventory.splice(i,1); } const craftedItem = generateItem(p.level, 1, recipe.res); if(craftedItem.key === "potion") craftedItem.stats = { heal: 50 + p.level * 5 }; p.inventory.push(craftedItem); io.to(inst.id).emit("txt", {x:p.x, y:p.y, val:"CRAFT!", color:"#0f0"}); sendLog(inst.id, `${p.name} craftou ${craftedItem.name}`, "#d0d"); } } else if(action === "socket") { const item = p.inventory[itemIdx]; const gem = p.inventory[gemIdx]; if(item && gem && item.sockets && item.gems.length < item.sockets.length && gem.type === "gem") { item.gems.push(gem); p.inventory.splice(gemIdx, 1); recalcStats(p); io.to(inst.id).emit("txt", {x:p.x, y:p.y, val:"SOCKETED!", color:"#0ff"}); } } });
     socket.on("equip", idx => { const p = instances[socket.instId]?.players[socket.id]; if(!p || !p.inventory[idx]) return; const it = p.inventory[idx]; if(it.key === "potion") { socket.emit("potion"); return; } if(it.type === "material" || it.type === "gem" || it.type === "key") return; const old = p.equipment[it.slot]; p.equipment[it.slot] = it; p.inventory.splice(idx, 1); if(old) p.inventory.push(old); recalcStats(p); });
     socket.on("unequip", slot => { const p = instances[socket.instId]?.players[socket.id]; if(!p) return; if (slot === "potion") { socket.emit("potion"); return; } if(p.equipment[slot] && p.inventory.length < 20) { p.inventory.push(p.equipment[slot]); p.equipment[slot] = null; recalcStats(p); } });
@@ -441,6 +579,16 @@ function damageMob(inst, m, dmg, owner, kx, ky, kbForce=10, isCrit=false) {
 
 function damagePlayer(p, dmg, sourceX=p.x, sourceY=p.y) {
     if (p.god) return; if (p.hp <= 0) return;
+    
+    // ARMOR DURABILITY
+    if(p.equipment.body && p.equipment.body.dur > 0 && Math.random() < 0.5) {
+        p.equipment.body.dur = Math.max(0, p.equipment.body.dur - 1);
+        if(p.equipment.body.dur === 0) {
+             recalcStats(p);
+             io.to(p.id).emit("txt", {x:p.x, y:p.y-1, val:"ARMOR BROKE", color:"#f00"});
+        }
+    }
+
     let finalDmg = Math.max(1, dmg - (p.stats.def||0));
     if(p.input.block && p.mp >= 5) { finalDmg = Math.ceil(finalDmg * 0.3); p.mp -= 5; const dx = p.x-sourceX, dy = p.y-sourceY, dist = Math.hypot(dx,dy)||1; p.vx+=(dx/dist)*0.4; p.vy+=(dy/dist)*0.4; io.to(p.instId).emit("txt", {x:p.x, y:p.y-1, val:"BLOCK", color:"#0ff"}); }
     p.hp -= finalDmg; io.to(p.instId).emit("txt", {x:p.x, y:p.y, val:Math.floor(finalDmg), color:"#f00"});
@@ -524,12 +672,10 @@ function generateDungeon(inst) {
         }
         spawnMob(inst, bossRoom.cx, bossRoom.cy, "tiamat", inst.level);
         inst.tiamatSpawned = true;
-        // Exit/Loot
         inst.props.push({ type: "stairs", x: bossRoom.cx, y: bossRoom.cy + 15, locked: true, label: "DEFEAT TIAMAT" });
         return;
     }
 
-    // STANDARD GENERATION
     inst.dungeon = Array.from({length: SIZE}, () => Array(SIZE).fill(TILE_WALL));
     for(let i=0; i<35; i++){
         const w=8+Math.random()*12|0, h=8+Math.random()*12|0;
@@ -600,12 +746,17 @@ function spawnMob(inst, x, y, type, mult) {
     }
 }
 
+// ===================================
+// LOOP PRINCIPAL DE JOGO
+// ===================================
 setInterval(() => {
     Object.values(instances).forEach(inst => {
         inst.mobCount = 0; const mobsSimple = {};
         for (let k in inst.mobs) { const m = inst.mobs[k]; if (!m.npc && m.ai !== "resource") inst.mobCount++; mobsSimple[k] = { id: m.id, type: m.type, x: rnd(m.x), y: rnd(m.y), vx: rnd(m.vx), hp: m.hp, maxHp: m.maxHp, boss: m.boss, npc: m.npc, name: m.name, hitFlash: m.hitFlash, equipment: m.equipment, chatMsg: m.chatMsg, chatTimer: m.chatTimer, ai: m.ai, drop: m.drop, color: m.color, size: m.size, class: m.class, level: m.level, stats: m.stats, state: m.state }; }
         const playersSimple = {};
         for (let k in inst.players) { const pl = inst.players[k]; playersSimple[k] = { id: pl.id, name: pl.name, x: rnd(pl.x), y: rnd(pl.y), hp: pl.hp, mp: pl.mp, xp: pl.xp, gold: pl.gold, pts: pl.pts, attrs: pl.attrs, stats: pl.stats, class: pl.class, level: pl.level, inventory: pl.inventory, equipment: pl.equipment, input: pl.input, chatMsg: pl.chatMsg, chatTimer: pl.chatTimer, god: pl.god }; }
+        
+        // PLAYER LOGIC
         Object.values(inst.players).forEach(p => {
             if(p.cd.atk > 0) p.cd.atk--; if(p.cd.skill > 0) p.cd.skill--; if(p.cd.dash > 0) p.cd.dash--;
             if (p.buffs && p.buffs.timer > 0) { p.buffs.timer--; if (p.buffs.timer <= 0) { p.buffs = {}; recalcStats(p); io.to(p.id).emit("txt", {x:p.x, y:p.y, val:"BUFF ENDED", color:"#ccc"}); } }
@@ -617,8 +768,67 @@ setInterval(() => {
             for(let i = inst.props.length - 1; i >= 0; i--) { const pr = inst.props[i]; const dist = Math.hypot(p.x - pr.x, p.y - pr.y); if ((pr.type === "shrine" || pr.type === "book") && dist < 1.0) { if (pr.type === "shrine" && pr.buff !== "none") { p.buffs = { [pr.buff]: true, timer: 600 }; p.hp = p.stats.maxHp; p.mp = p.stats.maxMp; recalcStats(p); io.to(p.id).emit("txt", {x:p.x, y:p.y, val:"SHRINE POWER!", color:"#0ff"}); io.to(inst.id).emit("fx", {type:"nova", x:p.x, y:p.y}); } else if (pr.type === "book") { const msg = LORE_TEXTS[Math.floor(Math.random() * LORE_TEXTS.length)]; io.to(p.id).emit("log", {msg: msg, color: "#aaa"}); io.to(p.id).emit("fx", {type: "lore"}); } else if (pr.type === "shrine") { if (p.hp < p.stats.maxHp) { p.hp = p.stats.maxHp; p.mp = p.stats.maxMp; io.to(p.id).emit("txt", {x:p.x, y:p.y, val:"REFRESHED", color:"#0ff"}); } } if (pr.buff !== "none") inst.props.splice(i, 1); } if (pr.type === "stairs" && dist < 1.0) { if (!pr.locked) { if (inst.level !== 0) changeLevel(io.sockets.sockets.get(p.id), p, inst.level + 1); } else { const keyIdx = p.inventory.findIndex(it => it.key === "key"); if (keyIdx !== -1) { p.inventory.splice(keyIdx, 1); pr.locked = false; pr.label = "UNLOCKED"; io.to(inst.id).emit("txt", {x:pr.x, y:pr.y, val:"UNLOCKED!", color:"#ffd700"}); sendLog(inst.id, `${p.name} usou uma Chave!`, "#ffd700"); } else if (!p.lastMsg || Date.now() - p.lastMsg > 2000) { io.to(p.id).emit("txt", {x:p.x, y:p.y, val:"LOCKED", color:"#f00"}); p.lastMsg = Date.now(); } } } }
             sendPlayerUpdate(p, mobsSimple, playersSimple);
         });
+
         Object.values(inst.mobs).forEach(m => { processMobAI(inst, m); resolveCollisions(inst, m, 0.5); m.x += m.vx; m.y += m.vy; m.vx *= 0.7; m.vy *= 0.7; if (m.hitFlash > 0) m.hitFlash--; });
-        for(let i = inst.projectiles.length - 1; i >= 0; i--) { let pr = inst.projectiles[i]; pr.x += pr.vx; pr.y += pr.vy; pr.life--; if(isWall(inst, pr.x, pr.y) || pr.life <= 0) { if(pr.type === "meteor" || pr.type === "fireball") hitArea(inst, {id:pr.owner}, pr.x, pr.y, 1.5, null, 0, pr.dmg * 0.5, 10); inst.projectiles.splice(i, 1); continue; } if(pr.owner === "mob") { Object.values(inst.players).forEach(p => { if(Math.hypot(p.x - pr.x, p.y - pr.y) < 0.8) { damagePlayer(p, pr.dmg, pr.x, pr.y); if(pr.type === "hook") { p.x = pr.x - pr.vx*2; p.y = pr.y - pr.vy*2; io.to(inst.id).emit("txt", {x:p.x, y:p.y, val:"GRABBED!", color:"#f00"}); } pr.life = 0; } }); if(pr.life <= 0) { inst.projectiles.splice(i, 1); continue; } } if(pr.owner !== "mob") { for(let k in inst.mobs) { let m = inst.mobs[k]; if(!m.npc && Math.hypot(m.x - pr.x, m.y - pr.y) < 1) { damageMob(inst, m, pr.dmg, inst.players[pr.owner], pr.vx, pr.vy, 10, pr.isCrit); inst.projectiles.splice(i, 1); break; } } } }
+        
+        // PROJECTILE LOGIC - COMPLETAMENTE REESCRITO PARA O WIZARD
+        for(let i = inst.projectiles.length - 1; i >= 0; i--) {
+            let pr = inst.projectiles[i]; 
+            pr.x += pr.vx; pr.y += pr.vy; pr.life--; 
+            
+            let hitWall = isWall(inst, pr.x, pr.y);
+            let hitMob = null;
+            let hitPlayer = null;
+
+            // Colisão com Mobs (se for do player)
+            if (pr.owner !== "mob") {
+                for(let k in inst.mobs) { 
+                    let m = inst.mobs[k]; 
+                    if(!m.npc && Math.hypot(m.x - pr.x, m.y - pr.y) < (m.size/SCALE/2 + 0.5)) { 
+                        hitMob = m; break; 
+                    } 
+                }
+            }
+            // Colisão com Players (se for de mob)
+            else {
+                Object.values(inst.players).forEach(p => { 
+                    if(Math.hypot(p.x - pr.x, p.y - pr.y) < 0.8) hitPlayer = p; 
+                });
+            }
+
+            // --- LÓGICA ESPECÍFICA DO MAGE FIREBALL ---
+            if (pr.type === "fireball_spell") {
+                if (hitWall || hitMob || pr.life <= 0) {
+                    inst.projectiles.splice(i, 1);
+                    // Efeito Visual da Explosão
+                    io.to(inst.id).emit("fx", { type: "nova", x: pr.x, y: pr.y, life: 15 });
+                    io.to(inst.id).emit("fx", { type: "fireball", x: pr.x, y: pr.y }); // Particulas extras
+                    
+                    // Dano em Área
+                    hitArea(inst, {id: pr.owner}, pr.x, pr.y, 3.0, null, 0, pr.dmg, 20, pr.isCrit);
+                    continue;
+                }
+            }
+            // --- LÓGICA PADRÃO PARA OUTROS PROJÉTEIS ---
+            else {
+                if(hitWall || pr.life <= 0) { 
+                    if(pr.type === "meteor" || pr.type === "fireball") hitArea(inst, {id:pr.owner}, pr.x, pr.y, 1.5, null, 0, pr.dmg * 0.5, 10); 
+                    inst.projectiles.splice(i, 1); 
+                    continue; 
+                } 
+                
+                if(hitPlayer) { 
+                    damagePlayer(hitPlayer, pr.dmg, pr.x, pr.y); 
+                    if(pr.type === "hook") { hitPlayer.x = pr.x - pr.vx*2; hitPlayer.y = pr.y - pr.vy*2; io.to(inst.id).emit("txt", {x:hitPlayer.x, y:hitPlayer.y, val:"GRABBED!", color:"#f00"}); } 
+                    pr.life = 0; 
+                }
+                
+                if(hitMob) {
+                    damageMob(inst, hitMob, pr.dmg, inst.players[pr.owner], pr.vx, pr.vy, 10, pr.isCrit); 
+                    inst.projectiles.splice(i, 1); 
+                }
+            }
+        }
     });
 }, TICK);
 
