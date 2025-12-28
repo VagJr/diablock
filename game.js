@@ -1,1275 +1,1462 @@
 /* =====================================================
-   DIABLOCK V35 — GOLD EDITION (CLIENT FULL)
-   Features: Durability, Repair, Polished Wizard, Tiamat
+
+   DIABLOCK — FINAL STABLE EDITION
+
+   Fix: Camera Movement & Map Rendering Logic
+
+   Visual: Procedural 2D + Modern Animation
+
    ===================================================== */
 
-const HIT_FLASH_FRAMES = 4;
 
-/* =========================
-   AUDIO SYSTEM
-   ========================= */
-let bgm = null;
-let bgmStarted = false;
-let cameraShake = 0;
 
-const AudioCtrl = {
-    ctx: new (window.AudioContext || window.webkitAudioContext)(),
-    bgm: null, muted: false,
-    init: function() {
-        if(!this.bgm) {
-            this.bgm = new Audio("assets/bgm.mp3");
-            this.bgm.loop = true; this.bgm.volume = 0.3;
-            const p = this.bgm.play();
-            if(p && p.catch) p.catch(e => {}); 
-        }
-        if(this.ctx.state === 'suspended') this.ctx.resume();
-    },
-    playTone: function(freq, type, dur, vol=0.1) {
-        if(this.muted || this.ctx.state === 'suspended') return;
-        try {
-            const o = this.ctx.createOscillator(); const g = this.ctx.createGain();
-            o.type = type; o.frequency.setValueAtTime(freq, this.ctx.currentTime);
-            g.gain.setValueAtTime(vol, this.ctx.currentTime); g.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime+dur);
-            o.connect(g); g.connect(this.ctx.destination); o.start(); o.stop(this.ctx.currentTime+dur);
-        } catch(e) {}
-    },
-    playNoise: function(dur, vol=0.2) {
-        if(this.muted || this.ctx.state === 'suspended') return;
-        try {
-            const b = this.ctx.createBuffer(1, this.ctx.sampleRate*dur, this.ctx.sampleRate);
-            const d = b.getChannelData(0); for(let i=0;i<d.length;i++) d[i]=Math.random()*2-1;
-            const s = this.ctx.createBufferSource(); s.buffer=b; const g=this.ctx.createGain();
-            g.gain.setValueAtTime(vol, this.ctx.currentTime); g.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime+dur);
-            s.connect(g); g.connect(this.ctx.destination); s.start();
-        } catch(e) {}
-    }
-};
+const HIT_FLASH_FRAMES = 5;
 
-function ensureBGM() { AudioCtrl.init(); }
+const TILE_SIZE = 16;
 
-function playSfx(name) {
-    if(isMobile && Math.random() > 0.5) return; 
-    switch(name) {
-        case "atk": AudioCtrl.playNoise(0.1, 0.1); break;
-        case "hit": AudioCtrl.playTone(150, "square", 0.1, 0.15); break;
-        case "dash": AudioCtrl.playTone(300, "sawtooth", 0.2, 0.1); break;
-        case "gold": AudioCtrl.playTone(1200, "sine", 0.3, 0.1); break;
-        case "craft": AudioCtrl.playTone(400, "triangle", 0.5, 0.2); break;
-        case "levelup": [440, 554, 659, 880].forEach((f,i) => setTimeout(()=>AudioCtrl.playTone(f,"square",0.4,0.2), i*100)); break;
-        case "chat": AudioCtrl.playTone(800, "sine", 0.1, 0.05); break;
-        case "shrine": AudioCtrl.playTone(200, "sine", 0.5, 0.2); break;
-        case "lore": AudioCtrl.playTone(100, "triangle", 1.0, 0.1); break;
-    }
-}
-
-/* =========================
-   ENGINE SETUP
-   ========================= */
-const socket = io({ transports: ['websocket'], upgrade: false });
-const canvas = document.getElementById("c");
-const ctx = canvas.getContext("2d", { alpha: false });
 const SCALE = 16;
 
-let myId = null, me = null;
-let state = { pl:{}, mb:{}, it:{}, pr:[], props:[], map:[], explored: [], lightRadius: 15, hint: null };
-let recipes = [];
-let cam = { x:0, y:0 }, mouse = { x:0, y:0 };
-let texts = [], effects = [];
-let uiState = { inv:false, char:false, shop:false, craft:false, chat:false };
-let inputState = { x:0, y:0, block:false };
-let shopItems = [];
-const tooltip = document.getElementById("tooltip");
-let dragItem = null;
 
-let isMobile = /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent);
-let gamepad = null;
-let gamepadActive = false;
-let focusIndex = 0;
-let focusArea = 'equipment';
 
-const gameLog = document.getElementById("game-log");
+/* =========================
 
-let joystick = {
-    active: false, id: null, startX: 0, startY: 0, normX: 0, normY: 0, radius: 50,
-    knob: document.getElementById('joystick-knob')
+   AUDIO SYSTEM
+
+   ========================= */
+
+let bgm = null;
+
+let cameraShake = 0;
+
+
+
+const AudioCtrl = {
+
+    ctx: new (window.AudioContext || window.webkitAudioContext)(),
+
+    muted: false,
+
+    init: function() { if (this.ctx.state === 'suspended') this.ctx.resume(); },
+
+    playTone: function(freq, type, dur, vol=0.1, slide=0) {
+
+        if(this.muted || this.ctx.state === 'suspended') return;
+
+        try {
+
+            const o = this.ctx.createOscillator(); const g = this.ctx.createGain();
+
+            o.type = type; o.frequency.setValueAtTime(freq, this.ctx.currentTime);
+
+            if(slide !== 0) o.frequency.linearRampToValueAtTime(freq + slide, this.ctx.currentTime + dur);
+
+            g.gain.setValueAtTime(vol, this.ctx.currentTime); 
+
+            g.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime+dur);
+
+            o.connect(g); g.connect(this.ctx.destination); o.start(); o.stop(this.ctx.currentTime+dur);
+
+        } catch(e) {}
+
+    },
+
+    playNoise: function(dur, vol=0.2) {
+
+        if(this.muted || this.ctx.state === 'suspended') return;
+
+        try {
+
+            const b = this.ctx.createBuffer(1, this.ctx.sampleRate*dur, this.ctx.sampleRate);
+
+            const d = b.getChannelData(0); for(let i=0;i<d.length;i++) d[i]=Math.random()*2-1;
+
+            const s = this.ctx.createBufferSource(); s.buffer=b; const g=this.ctx.createGain();
+
+            g.gain.setValueAtTime(vol, this.ctx.currentTime); g.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime+dur);
+
+            const f = this.ctx.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = 800;
+
+            s.connect(f); f.connect(g); g.connect(this.ctx.destination); s.start();
+
+        } catch(e) {}
+
+    }
+
 };
 
-const keys = { w:false, a:false, s:false, d:false, q:false, game_x: 0, game_y: 0 };
-let lastInputTime = 0;
 
-function isClickOnUI(e) {
-    const uiIds = ["inventory", "char-panel", "shop-panel", "craft-panel", "menu", "chat-container"];
-    for (const id of uiIds) {
-        const el = document.getElementById(id);
-        if (!el || el.style.display !== "block") continue;
-        const r = el.getBoundingClientRect();
-        if (e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom) return true;
+
+function ensureAudio() { AudioCtrl.init(); }
+
+
+
+function playSfx(name) {
+
+    if(Math.random() > 0.9 && name === "atk") return; 
+
+    switch(name) {
+
+        case "atk": AudioCtrl.playNoise(0.1, 0.08); break;
+
+        case "hit": AudioCtrl.playTone(80, "square", 0.1, 0.2, -40); break;
+
+        case "dash": AudioCtrl.playTone(300, "sawtooth", 0.2, 0.1, -150); break;
+
+        case "door": AudioCtrl.playTone(150, "sine", 0.5, 0.2, 50); break;
+
+        case "gold": AudioCtrl.playTone(1200, "sine", 0.1, 0.1); break;
+
     }
-    return false;
+
 }
 
+
+
+/* =========================
+
+   ARTISAN RENDERER (VISUAL SYSTEM)
+
+   ========================= */
+
+const ArtisanRender = {
+
+    // 1. CHÃO PROCEDURAL CORRIGIDO
+
+    // sx, sy = Posição na Tela (Onde desenhar)
+
+    // gx, gy = Posição no Grid (Para gerar o desenho fixo)
+
+    drawFloor: function(ctx, sx, sy, gx, gy, theme) {
+
+        // Seed baseada no GRID para não "dançar" ao mover a câmera
+
+        const seed = Math.sin(gx * 12.9898 + gy * 78.233) * 43758.5453;
+
+        const type = Math.abs(seed - Math.floor(seed));
+
+        
+
+        // Fundo
+
+        ctx.fillStyle = theme === "#444" ? "#2a2a2a" : "#111"; 
+
+        ctx.fillRect(sx, sy, SCALE, SCALE);
+
+
+
+        // Detalhes
+
+        ctx.fillStyle = "rgba(0,0,0,0.3)";
+
+        ctx.strokeStyle = "rgba(255,255,255,0.05)";
+
+        
+
+        if (type > 0.90) { // Rachadura
+
+            ctx.beginPath(); 
+
+            ctx.moveTo(sx+4, sy+4); ctx.lineTo(sx+10, sy+10); ctx.lineTo(sx+12, sy+8); 
+
+            ctx.stroke();
+
+        } else if (type < 0.10) { // Pedrinhas
+
+            ctx.fillRect(sx+3, sy+10, 2, 2); 
+
+            ctx.fillRect(sx+10, sy+4, 1, 1);
+
+        } else if (type > 0.4 && type < 0.45) { // Mancha
+
+            ctx.beginPath(); ctx.arc(sx+8, sy+8, 3, 0, Math.PI*2); ctx.fill();
+
+        }
+
+        
+
+        // Grade sutil
+
+        ctx.strokeStyle = "rgba(0,0,0,0.2)"; 
+
+        ctx.strokeRect(sx, sy, SCALE, SCALE);
+
+    },
+
+
+
+    // 2. PAREDES 2.5D
+
+    drawWall: function(ctx, sx, sy, gx, gy) {
+
+        // Topo da parede
+
+        ctx.fillStyle = "#222"; 
+
+        ctx.fillRect(sx, sy, SCALE, SCALE);
+
+        ctx.fillStyle = "#333"; ctx.fillRect(sx, sy, SCALE, 1); // Highlight
+
+
+
+        // Frente (Profundidade)
+
+        ctx.fillStyle = "#0f0f0f"; 
+
+        ctx.fillRect(sx, sy + SCALE, SCALE, 10); 
+
+        
+
+        // Detalhe Tijolo
+
+        if ((gx + gy) % 2 === 0) {
+
+            ctx.fillStyle = "#1a1a1a";
+
+            ctx.fillRect(sx + 4, sy + SCALE + 2, 8, 2);
+
+        }
+
+
+
+        // Sombra Projetada no Chão
+
+        ctx.fillStyle = "rgba(0,0,0,0.5)";
+
+        ctx.fillRect(sx, sy + SCALE + 10, SCALE, 4);
+
+    },
+
+
+
+    // 3. ITENS (Pixel Art Style via Code)
+
+    drawItem: function(ctx, item, x, y, size, angleOffset = 0) {
+
+        if(!item) return;
+
+        const rng = (seed) => { let x = Math.sin(seed) * 10000; return x - Math.floor(x); };
+
+        let seed = 0; if (item.id) { for(let i=0; i<item.id.length; i++) seed += item.id.charCodeAt(i); }
+
+        
+
+        ctx.save();
+
+        ctx.translate(x, y);
+
+        const s = size / 16; 
+
+        ctx.scale(s, s);
+
+        ctx.rotate(angleOffset);
+
+
+
+        const key = item.key || "";
+
+        const color = item.color || "#aaa";
+
+
+
+        // Glow
+
+        if (item.rarity && item.rarity !== "common") {
+
+            ctx.shadowBlur = 8; ctx.shadowColor = color;
+
+        }
+
+
+
+        if (key.includes("sword") || key.includes("dagger")) {
+
+            const len = key.includes("dagger") ? 10 : 18 + rng(seed) * 6; 
+
+            const width = 3 + rng(seed) * 2; 
+
+            ctx.rotate(-Math.PI/4); 
+
+            ctx.fillStyle = "#421"; ctx.fillRect(-2, 0, 4, 5); // Cabo
+
+            ctx.fillStyle = color; ctx.beginPath(); ctx.moveTo(-6, -2); ctx.lineTo(6, -2); ctx.lineTo(0, 2); ctx.fill(); // Guarda
+
+            ctx.fillStyle = "#eee"; ctx.beginPath(); ctx.moveTo(-width/2, -2); ctx.lineTo(width/2, -2); ctx.lineTo(0, -len); ctx.fill(); // Lamina
+
+            ctx.fillStyle = item.rarity==="legendary" ? color : "rgba(0,0,0,0.2)"; ctx.fillRect(-0.5, -len+4, 1, len-6);
+
+        } 
+
+        else if (key.includes("axe")) {
+
+            ctx.rotate(-Math.PI/4);
+
+            ctx.fillStyle = "#532"; ctx.fillRect(-2, 0, 4, 18); 
+
+            ctx.fillStyle = color; 
+
+            ctx.beginPath(); ctx.moveTo(0, 2); ctx.quadraticCurveTo(14, -4, 8, 12); ctx.quadraticCurveTo(2, 8, 0, 6); ctx.fill();
+
+            ctx.fillStyle = "#fff"; ctx.globalAlpha=0.4; ctx.beginPath(); ctx.moveTo(8, 2); ctx.lineTo(8, 12); ctx.stroke(); 
+
+        } 
+
+        else if (key.includes("staff")) {
+
+            ctx.rotate(-Math.PI/4);
+
+            ctx.fillStyle = "#421"; ctx.fillRect(-1, -10, 2, 24);
+
+            ctx.shadowBlur = 15; ctx.shadowColor = item.color;
+
+            ctx.fillStyle = item.color || "#0ff"; ctx.beginPath(); ctx.arc(0, -12, 4, 0, Math.PI*2); ctx.fill();
+
+        } 
+
+        else if (key.includes("bow")) {
+
+            ctx.rotate(-Math.PI/4);
+
+            ctx.strokeStyle = "#642"; ctx.lineWidth = 2;
+
+            ctx.beginPath(); ctx.arc(0,0, 10, -Math.PI/2, Math.PI/2); ctx.stroke();
+
+            ctx.strokeStyle = "rgba(255,255,255,0.5)"; ctx.lineWidth = 0.5;
+
+            ctx.beginPath(); ctx.moveTo(0, -10); ctx.lineTo(0, 10); ctx.stroke();
+
+        }
+
+        else if (key.includes("potion")) {
+
+            const liquid = Math.sin(Date.now()/200)*2;
+
+            ctx.fillStyle = "rgba(255,255,255,0.2)"; ctx.beginPath(); ctx.arc(0,0,6,0,Math.PI*2); ctx.stroke();
+
+            ctx.fillStyle = color; ctx.beginPath(); ctx.arc(0,0,5,0,Math.PI*2); ctx.fill();
+
+            ctx.fillStyle = "#fff"; ctx.globalAlpha=0.5; ctx.beginPath(); ctx.arc(2,-2,2,0,Math.PI*2); ctx.fill();
+
+            ctx.fillStyle = "#852"; ctx.fillRect(-2, -7, 4, 3);
+
+        }
+
+        else { 
+
+            ctx.fillStyle = "#642"; ctx.fillRect(-5,-5,10,10);
+
+            ctx.fillStyle = color; ctx.fillRect(-2,-2,4,4); 
+
+            ctx.strokeStyle = "#864"; ctx.strokeRect(-5,-5,10,10);
+
+        }
+
+        ctx.restore();
+
+    },
+
+
+
+    // 4. ENTIDADES (Seus Modelos + Animação "Juicy")
+
+    drawEntity: function(ctx, e, x, y, isMe) {
+
+        const s = e.size || 12;
+
+        const color = e.color || "#ccc";
+
+        const t = Date.now() / 1000;
+
+        
+
+        // --- ANIMAÇÃO ---
+
+        const breathe = 1 + Math.sin(t * 3) * 0.02; // Respira
+
+        const isMoving = Math.abs(e.vx) > 0.01 || Math.abs(e.vy) > 0.01;
+
+        const walkBob = isMoving ? Math.sin(t * 15) * 2 : 0; // Pula
+
+        const walkTilt = isMoving ? Math.sin(t * 15) * 0.15 : 0; // Inclina
+
+        
+
+        let attackRot = 0;
+
+        let attackThrust = 0;
+
+        if (e.attackAnim > 0) {
+
+            const p = 1 - (e.attackAnim / 10); 
+
+            if(p < 0.3) attackRot = -0.5 * (p/0.3); // Puxa
+
+            else attackRot = -0.5 + (2.0 * ((p-0.3)/0.7)); // Bate
+
+            attackThrust = Math.sin(p * Math.PI) * 5; 
+
+            e.attackAnim--; 
+
+        }
+
+
+
+        ctx.save();
+
+        ctx.translate(x, y + walkBob);
+
+        
+
+        let dirX = (e.vx > 0.01) ? 1 : (e.vx < -0.01) ? -1 : 1;
+
+        if(isMe && !isMobile) dirX = (mouse.x > canvas.width/2) ? 1 : -1;
+
+        
+
+        // Pivô nos pés
+
+        ctx.translate(0, s/2); 
+
+        ctx.rotate(walkTilt * dirX);
+
+        ctx.scale(dirX, breathe);
+
+        ctx.translate(0, -s/2);
+
+        
+
+        ctx.translate(attackThrust, 0);
+
+
+
+        // --- MODELOS ---
+
+        if (e.class) { // PLAYER
+
+            // Capa
+
+            const capeSway = Math.sin(t*5 + (isMoving?t*10:0))*2;
+
+            ctx.fillStyle = (e.class==="knight"?"#900":e.class==="mage"?"#205":"#242");
+
+            ctx.beginPath(); ctx.moveTo(-4,-6); ctx.lineTo(-6+capeSway, 8); ctx.lineTo(6+capeSway, 8); ctx.lineTo(4,-6); ctx.fill();
+
+            
+
+            // Corpo & Cabeça
+
+            ctx.fillStyle = e.equipment && e.equipment.body ? e.equipment.body.color : "#ccc"; ctx.fillRect(-4, -6, 8, 10);
+
+            ctx.fillStyle = e.equipment && e.equipment.head ? e.equipment.head.color : "#fb0"; ctx.fillRect(-3, -10, 6, 4);
+
+
+
+            // Olhos
+
+            if (e.id === myId) {
+
+                ctx.fillStyle = "white"; ctx.fillRect(-2, -8, 2, 2); ctx.fillRect(2, -8, 2, 2); 
+
+                let lookAngle = (!isMobile && !gamepadActive) ? getMouseAngle() : getAttackAngle();
+
+                let lx = Math.cos(lookAngle); let ly = Math.sin(lookAngle); if (dirX === -1) lx = -lx;
+
+                ctx.fillStyle = "black"; ctx.fillRect(-1.5 + lx, -7.5 + ly, 1, 1); ctx.fillRect(2.5 + lx, -7.5 + ly, 1, 1);
+
+            } else {
+
+                ctx.fillStyle = "#000"; ctx.fillRect(-2, -8, 1, 1); ctx.fillRect(2, -8, 1, 1);
+
+            }
+
+
+
+            // ARMA
+
+            if(e.equipment && e.equipment.hand) {
+
+                ctx.save(); 
+
+                ctx.translate(5, 2); 
+
+                const idleRot = isMoving ? Math.sin(t * 15) * 0.5 : Math.sin(t * 2) * 0.1;
+
+                ctx.rotate(idleRot + attackRot * 2.5); 
+
+                ctx.scale(0.7, 0.7); 
+
+                ArtisanRender.drawItem(ctx, e.equipment.hand, 0, 0, 16, Math.PI/2); 
+
+                ctx.restore();
+
+            } else { // Soco
+
+                ctx.fillStyle = "#ecc";
+
+                ctx.save(); ctx.translate(6 + (attackRot*5), 2); ctx.beginPath(); ctx.arc(0,0,2,0,Math.PI*2); ctx.fill(); ctx.restore();
+
+            }
+
+        } 
+
+        else if (e.name && e.name.includes("TIAMAT")) {
+
+            const bs = s; const pulse = Math.sin(t * 5) * bs * 0.05;
+
+            ctx.shadowBlur = 30; ctx.shadowColor = "#f00"; ctx.fillStyle = "#100"; ctx.strokeStyle = "#602"; ctx.lineWidth = 2;
+
+            ctx.beginPath(); ctx.ellipse(0, 0, bs*0.6, bs*0.8 + pulse, 0, 0, Math.PI*2); ctx.fill(); ctx.stroke(); ctx.shadowBlur = 0;
+
+            const headColors = ["#f33", "#b0f", "#f33"];
+
+            for (let i = -1; i <= 1; i++) {
+
+                const hx = i * bs * 0.45; const hy = -bs * 0.95 + Math.sin(t * 4 + i) * 5;
+
+                ctx.strokeStyle = "#301"; ctx.lineWidth = bs * 0.15; 
+
+                ctx.beginPath(); ctx.moveTo(0, -bs*0.4); ctx.quadraticCurveTo(hx*0.5, -bs*0.7, hx, hy); ctx.stroke();
+
+                ctx.save(); ctx.translate(hx, hy); ctx.rotate(Math.sin(t*5+i)*0.2); 
+
+                ctx.fillStyle = headColors[i+1]; ctx.beginPath(); ctx.moveTo(-5, -5); ctx.lineTo(5, -5); ctx.lineTo(0, 8); ctx.fill();
+
+                ctx.fillStyle = "#ff0"; ctx.shadowBlur=10; ctx.shadowColor="#ff0"; ctx.fillRect(-2, -2, 4, 2); ctx.shadowBlur=0;
+
+                ctx.restore();
+
+            }
+
+        }
+
+        else if (e.name && e.name.includes("Butcher")) {
+
+            ctx.fillStyle = "#964"; ctx.fillRect(-s/1.5, -s, s*1.3, s*1.8);
+
+            ctx.fillStyle = "#400"; ctx.fillRect(-s/1.5, 0, s*1.3, s);
+
+            ctx.save(); ctx.translate(s/2, -s/2); ctx.rotate(attackRot*3); 
+
+            ctx.fillStyle = "#311"; ctx.fillRect(0, 0, 4, 10);
+
+            ctx.fillStyle = "#ddd"; ctx.fillRect(0, -15, 12, 20); 
+
+            ctx.restore();
+
+            ctx.fillStyle = "#000"; ctx.fillRect(-4, -s+4, 2, 2); ctx.fillRect(2, -s+4, 2, 2);
+
+        }
+
+        else if (e.type === "rat") {
+
+            ctx.fillStyle = "#654"; ctx.beginPath(); ctx.ellipse(0, 2, 6, 3, 0, 0, Math.PI*2); ctx.fill();
+
+            const tailWag = Math.sin(t * 20) * 3; ctx.strokeStyle="#fbb"; ctx.lineWidth=1; ctx.beginPath(); ctx.moveTo(6, 2); ctx.quadraticCurveTo(8, 2, 10, 2 + tailWag); ctx.stroke();
+
+            ctx.fillStyle = "#654"; ctx.beginPath(); ctx.arc(-4, -1, 2, 0, Math.PI*2); ctx.fill();
+
+        }
+
+        else { // Genérico
+
+            ctx.fillStyle = color; ctx.fillRect(-s/2, -s/2, s, s);
+
+            ctx.fillStyle = "#ff0"; ctx.fillRect(-2, -2, 1, 1); ctx.fillRect(2, -2, 1, 1);
+
+        }
+
+        ctx.restore();
+
+    }
+
+};
+
+
+
+/* =========================
+
+   ENGINE & STATE
+
+   ========================= */
+
+const socket = io({ transports: ['websocket'], upgrade: false });
+
+const canvas = document.getElementById("c");
+
+const ctx = canvas.getContext("2d", { alpha: false });
+
+
+
+let myId = null, me = null;
+
+let state = { pl:{}, mb:{}, it:{}, pr:[], props:[], map:[], explored: [], lightRadius: 15, hint: null };
+
+let recipes = [];
+
+let cam = { x:0, y:0 }, mouse = { x:0, y:0 };
+
+let texts = [], effects = [];
+
+let uiState = { inv:false, char:false, shop:false, craft:false, chat:false };
+
+let inputState = { x:0, y:0, block:false };
+
+let shopItems = [];
+
+const tooltip = document.getElementById("tooltip");
+
+
+
+let isMobile = /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent);
+
+let gamepad = null, gamepadActive = false;
+
+let focusIndex = 0;
+
+
+
+let joystick = { active: false, id: null, startX: 0, startY: 0, normX: 0, normY: 0, radius: 50, knob: document.getElementById('joystick-knob') };
+
+const keys = { w:false, a:false, s:false, d:false, q:false, game_x: 0, game_y: 0 };
+
+let lastInputTime = 0;
+
+let modalOpen = false;
+
+
+
+/* =========================
+
+   INPUT HANDLING
+
+   ========================= */
+
 function sendInput(force=false) {
+
     const now = Date.now();
-    const RATE = isMobile ? 30 : 50;
+
     let dx = (keys.d ? 1 : 0) - (keys.a ? 1 : 0);
+
     let dy = (keys.s ? 1 : 0) - (keys.w ? 1 : 0);
 
-    if (gamepadActive && (Math.abs(keys.game_x) > 0.1 || Math.abs(keys.game_y) > 0.1)) {
-        dx = keys.game_x; dy = keys.game_y;
-    }
+    if (gamepadActive && (Math.abs(keys.game_x) > 0.1 || Math.abs(keys.game_y) > 0.1)) { dx = keys.game_x; dy = keys.game_y; }
+
     if (joystick.active) { dx = joystick.normX; dy = joystick.normY; }
+
     if (uiState.chat) { dx = 0; dy = 0; }
 
     const isStopping = (dx === 0 && dy === 0 && (inputState.x !== 0 || inputState.y !== 0));
-    if (!force && !isStopping && now - lastInputTime < RATE) return;
+
+    if (!force && !isStopping && now - (window.lastInputTime||0) < 50) return;
 
     inputState = { x: dx, y: dy, block: keys.q };
+
     socket.emit("input", inputState);
-    lastInputTime = now;
+
+    window.lastInputTime = now;
+
 }
 
-/* =========================
-   INPUT HANDLING
-   ========================= */
-const pressedKeys = new Set();
+
 
 window.addEventListener("keydown", e => {
-    if (document.getElementById("menu").style.display !== "none") return;
-    const k = e.key.toLowerCase();
-    
-    if (k === "enter" && !uiState.chat) {
-        uiState.chat = true;
-        document.getElementById("chat-container").style.display = "block";
-        setTimeout(() => chatInput.focus(), 50);
-        playSfx("chat");
-        return;
-    }
 
-    if (pressedKeys.has(k)) return;
-    pressedKeys.add(k);
+    if (document.getElementById("menu").style.display !== "none") return;
+
+    const k = e.key.toLowerCase();
+
+    if (k === "enter" && !uiState.chat) {
+
+        uiState.chat = true; document.getElementById("chat-container").style.display = "block";
+
+        setTimeout(() => document.getElementById("chat-input").focus(), 50); return;
+
+    }
 
     if (uiState.chat && k !== "escape") return;
 
     if (keys.hasOwnProperty(k)) { keys[k] = true; sendInput(true); }
 
-    if (k === "i") toggleMenu("inv");
-    if (k === "c") toggleMenu("char");
-    if (k === "k") toggleMenu("craft");
-    if (k === "r" && uiState.shop) socket.emit("repair_all"); // Atalho Repair
+    if (k === "i") toggleMenu("inv"); if (k === "c") toggleMenu("char"); if (k === "k") toggleMenu("craft");
+
+    if (k === "r" && uiState.shop) socket.emit("repair_all");
+
     if (k === "escape") closeAllMenus();
-    if (k === " ") socket.emit("dash", getDashAngle());
-    if (k === "e") socket.emit("potion");
+
+    if (k === " ") socket.emit("dash", getDashAngle()); if (k === "e") socket.emit("potion");
 
     updateUI();
+
 });
 
-window.addEventListener("keyup", e => {
-    const k = e.key.toLowerCase();
-    pressedKeys.delete(k);
-    if (keys.hasOwnProperty(k)) { keys[k] = false; sendInput(true); }
-});
+window.addEventListener("keyup", e => { const k = e.key.toLowerCase(); if (keys.hasOwnProperty(k)) { keys[k] = false; sendInput(true); } });
 
-function toggleMenu(menu) {
-    const wasOpen = uiState[menu];
-    uiState.inv = uiState.char = uiState.shop = uiState.craft = false;
-    uiState[menu] = !wasOpen;
-}
+window.onmousemove = e => { mouse.x = e.clientX; mouse.y = e.clientY; if(!isMobile) { tooltip.style.left = (mouse.x+15)+"px"; tooltip.style.top = (mouse.y+15)+"px"; } };
 
-/* MOBILE TOUCH */
-const JOYSTICK_AREA_EL = document.getElementById('joystick-area');
-const handleTouchStart = (e) => {
-    if (gamepadActive) return;
-    ensureBGM();
-    if (uiState.chat || document.getElementById("menu").style.display !== "none") return;
-
-    const r = JOYSTICK_AREA_EL.getBoundingClientRect();
-    for (const t of e.touches) {
-        if (!joystick.active && t.clientX >= r.left && t.clientX <= r.right && t.clientY >= r.top && t.clientY <= r.bottom) {
-            joystick.active = true; joystick.id = t.identifier;
-            joystick.startX = t.clientX; joystick.startY = t.clientY;
-            joystick.knob.style.display = 'block'; joystick.knob.style.transform = 'translate(0,0)';
-        }
-    }
-};
-
-const handleTouchMove = (e) => {
-    if (!joystick.active) return;
-    for (const t of e.touches) {
-        if (t.identifier === joystick.id) {
-            let dx = t.clientX - joystick.startX; let dy = t.clientY - joystick.startY;
-            let dist = Math.hypot(dx, dy);
-            if (dist > joystick.radius) { dx = dx / dist * joystick.radius; dy = dy / dist * joystick.radius; }
-            const deadzone = joystick.radius * 0.1;
-            joystick.normX = Math.abs(dx) < deadzone ? 0 : dx / joystick.radius;
-            joystick.normY = Math.abs(dy) < deadzone ? 0 : dy / joystick.radius;
-            joystick.knob.style.transform = `translate(${dx}px, ${dy}px)`;
-            sendInput(true);
-        }
-    }
-    e.preventDefault();
-};
-
-const handleTouchEnd = (e) => {
-    for (const t of e.changedTouches) {
-        if (t.identifier === joystick.id) {
-            joystick.active = false; joystick.id = null;
-            joystick.normX = 0; joystick.normY = 0;
-            joystick.knob.style.display = 'none'; joystick.knob.style.transform = 'translate(0,0)';
-            sendInput(true);
-        }
-    }
-};
-
-document.addEventListener('touchstart', handleTouchStart, { passive: false });
-document.addEventListener('touchmove', handleTouchMove, { passive: false });
-document.addEventListener('touchend', handleTouchEnd);
-document.addEventListener('touchcancel', handleTouchEnd);
-
-/* GAMEPAD */
-window.addEventListener("gamepadconnected", (e) => { 
-    gamepad = e.gamepad; gamepadActive = true; 
-    document.getElementById("mobile-controls").style.display = "none"; 
-    document.getElementById("mobile-menu-buttons").style.display = "flex"; 
-    addLog("Gamepad Conectado!", "#0f0");
-});
-window.addEventListener("gamepaddisconnected", (e) => { 
-    gamepad = null; gamepadActive = false; 
-    addLog("Gamepad Desconectado.", "#f00");
-});
-
-const resize = () => { 
-    canvas.width=innerWidth; canvas.height=innerHeight; ctx.imageSmoothingEnabled=false; 
-    isMobile = window.matchMedia("(max-width: 1024px)").matches || /Mobi|Android/i.test(navigator.userAgent); 
-    updateUI(); 
-};
-resize(); window.onresize=resize;
-
-function addLog(msg, color="#0f0") {
-    const d = new Date();
-    const time = `[${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}]`;
-    const logEntry = document.createElement("div");
-    logEntry.innerHTML = `<span style="color:#666">${time}</span> <span style="color:${color}">${msg}</span>`;
-    gameLog.prepend(logEntry); 
-    if (gameLog.children.length > 50) gameLog.removeChild(gameLog.lastChild);
-}
-
-/* =========================
-   SOCKET EVENTS
-   ========================= */
-socket.on("connect", () => myId=socket.id);
-socket.on("char_list", list => {
-    document.getElementById("login-form").style.display="none"; document.getElementById("char-select").style.display="block";
-    const l = document.getElementById("char-list"); l.innerHTML="";
-    for(let n in list){
-        let d=document.createElement("div"); d.className="btn"; d.innerHTML=`${n} <small>Lvl ${list[n].level}</small>`;
-        d.onclick=()=>{ socket.emit("enter_game", n); document.getElementById("menu").style.display="none"; ensureBGM(); };
-        l.appendChild(d);
-    }
-});
-socket.on("game_start", d => { recipes = d.recipes; renderCrafting(); });
-socket.on("map_data", d => { state.map = d.map; state.theme = d.theme; state.explored = []; addLog("Mapa Carregado.", "#0f0"); });
-
-socket.on("u", d => { 
-    const currentMap = state.map;
-    Object.assign(state, d); 
-    if (!d.map && currentMap) state.map = currentMap;
-    me = state.pl[myId];
-    if(me && state.theme === "#444") {
-        const stairs = state.props.find(p => p.type === "stairs");
-        if(stairs && Math.hypot(me.x - stairs.x, me.y - stairs.y) < 1.2) {
-            const modal = document.getElementById('entry-modal');
-            if(modal && modal.style.display !== 'block') modal.style.display = 'block';
-        }
-    }
-    if(me) updateUI(); 
-});
-
-function preventTextOverlap(newText) {
-    if(texts.length > 15) texts.shift(); 
-    let attempts = 0;
-    while(attempts < 3) {
-        let collision = false;
-        for(let t of texts) { if(Math.abs(t.x - newText.x) < 2 && Math.abs(t.y - newText.y) < 2) { collision = true; break; } }
-        if(collision) { newText.y -= 1.0; newText.x += (Math.random() - 0.5) * 2; attempts++; } else { break; }
-    }
-}
-
-socket.on("txt", d => {
-    const valStr = String(d.val);
-    let vy = -0.05; let life = 80; 
-    let startX = d.x + (Math.random() - 0.5) * 0.5;
-    let startY = d.y + (Math.random() - 0.5) * 0.5;
-    if(valStr.includes("LEVEL UP!")) { vy = -0.02; life = 150; d.size="16px bold Courier New"; d.color="#fb0"; }
-    else if(valStr.includes("CRIT!") || valStr.includes("BROKE")) { vy = -0.08; life = 100; d.size="14px bold Courier New"; }
-    const newText = { val: valStr, x: startX, y: startY, color: d.color || "#fff", life: life, vy: vy, size: d.size || "10px Courier New" };
-    preventTextOverlap(newText);
-    texts.push(newText);
-    if(valStr.includes("CRAFT")) playSfx("craft");
-    if(valStr.includes("LEVEL")) playSfx("levelup");
-});
-
-socket.on("fx", d => {
-    if(effects.length > 20) effects.shift(); 
-    if (d.type === "slash") { effects.push({ type: "slash", x: d.x, y: d.y, angle: d.angle, life: 8 }); playSfx("atk"); }
-    else if (d.type === "spin") { effects.push({ type: "spin", x: d.x, y: d.y, angle: d.angle || 0, life: 15 }); playSfx("atk"); }
-    else if (d.type === "nova") effects.push({ type: "nova", x: d.x, y: d.y, life: d.life || 15 });
-    else if (d.type === "dash") playSfx("dash");
-    else if (d.type === "fireball") effects.push({ type: "nova", x: d.x, y: d.y, life: 10, color: "#f80" });
-    else if (d.type === "boss_hit") { if(!isMobile) cameraShake = 8; playSfx("hit"); }
-    else if (d.type === "charge") { effects.push({ type: "charge", x: d.x, y: d.y, life: 20 }); }
-    else if (d.type === "hit") playSfx("hit");
-    else if (d.type === "gold") playSfx("gold");
-    else if (d.type === "lore") playSfx("lore");
-});
-
-socket.on("chat", d => { playSfx("chat"); addLog(`${state.pl[d.id]?.name || "Unknown"}: ${d.msg}`, "#fff"); });
-socket.on("open_shop", items => { uiState.shop = true; shopItems = items; updateUI(); });
-socket.on("log", d => addLog(d.msg, d.color));
-
-/* =========================
-   INPUT HELPERS
-   ========================= */
-function getMouseAngle() { return Math.atan2((mouse.y - canvas.height/2), (mouse.x - canvas.width/2)); }
-function getDirectionalInput() {
-    if (joystick.active) return { dx: joystick.normX, dy: joystick.normY };
-    const game_dx = keys.game_x, game_dy = keys.game_y;
-    if (Math.abs(game_dx) > 0.1 || Math.abs(game_dy) > 0.1) return { dx: game_dx, dy: game_dy };
-    const key_dx = (keys.d?1:0) - (keys.a?1:0), key_dy = (keys.s?1:0) - (keys.w?1:0);
-    if (Math.abs(key_dx) > 0.1 || Math.abs(key_dy) > 0.1) return { dx: key_dx, dy: key_dy };
-    return { dx: 0, dy: 0 };
-}
-function getDashAngle() {
-    if (!isMobile && !gamepadActive) return getMouseAngle();
-    const { dx, dy } = getDirectionalInput();
-    const isMoving = (Math.abs(dx) > 0.1) || (Math.abs(dy) > 0.1);
-    if (isMoving) return Math.atan2(dy, dx);
-    return me ? Math.atan2(me.vy || 0, me.vx || 1) : 0;
-}
-function getClosestEnemyAngle(maxRange = 8) {
-    if (!me || !state.mb) return null;
-    let closestEnemy = null, minDistSq = Infinity;
-    Object.values(state.mb).forEach(m => {
-        if (m.ai === "static" || m.ai === "npc" || m.ai === "resource" || m.hp <= 0) return;
-        const dx = m.x - me.x, dy = m.y - me.y, distSq = dx * dx + dy * dy;
-        if (distSq < minDistSq && distSq < maxRange * maxRange) { minDistSq = distSq; closestEnemy = m; }
-    });
-    return closestEnemy ? Math.atan2(closestEnemy.y - me.y, closestEnemy.x - me.x) : null;
-}
-function getAttackAngle() {
-    if (!isMobile && !gamepadActive) return getMouseAngle();
-    const closestAngle = getClosestEnemyAngle(8); 
-    if (closestAngle !== null) return closestAngle;
-    const { dx, dy } = getDirectionalInput();
-    const isMoving = (Math.abs(dx) > 0.1) || (Math.abs(dy) > 0.1);
-    if (isMoving) return Math.atan2(dy, dx);
-    if (me && (me.vx !== 0 || me.vy !== 0)) return Math.atan2(me.vy, me.vx);
-    return 0; 
-}
-
-/* =========================
-   CHAT & MOUSE
-   ========================= */
-const chatInput = document.getElementById("chat-input");
-const btnChatMobile = document.getElementById("btn-chat-mobile");
-if (btnChatMobile) {
-    btnChatMobile.onclick = () => {
-        if (uiState.chat) return;
-        uiState.chat = true;
-        document.getElementById("chat-container").style.display = "block";
-        setTimeout(() => { chatInput.focus(); }, 100);
-        sendInput();
-    };
-}
-chatInput.onkeydown = (e) => {
-    if (e.key === "Enter") {
-        const msg = chatInput.value.trim();
-        if (msg.length > 0) socket.emit("chat", msg.substring(0, 100));
-        closeChat();
-    }
-};
-function closeChat() {
-    chatInput.value = ""; uiState.chat = false;
-    document.getElementById("chat-container").style.display = "none";
-    chatInput.blur(); document.activeElement.blur?.();
-    setTimeout(() => { canvas.focus(); sendInput(); }, 50);
-}
-chatInput.onblur = () => { if (uiState.chat) closeChat(); };
-
-window.onmousemove = e => { 
-    mouse.x=e.clientX; mouse.y=e.clientY; 
-    if (!isMobile && !gamepadActive) {
-        tooltip.style.left = (mouse.x+15)+"px"; 
-        tooltip.style.top = (mouse.y+15)+"px"; 
-    }
-};
 window.onmousedown = (e) => {
-    if (isClickOnUI(e)) return; 
-    ensureBGM();
-    if (!me || uiState.chat || gamepadActive || document.getElementById("menu").style.display !== "none") return;
+
+    ensureAudio();
+
+    // 🔓 SE CLICOU EM UI, NÃO FAZ COMBATE
+    if (isClickOnUI(e)) return;
+
+    if (!me || uiState.chat || gamepadActive) return;
+
     const ang = getAttackAngle();
+
     if (e.button === 0) socket.emit("attack", ang);
     if (e.button === 2) socket.emit("skill", { idx: 1, angle: ang });
 };
 
+
+
+
+function toggleMenu(menu) {
+
+    const wasOpen = uiState[menu];
+
+    uiState.inv = uiState.char = uiState.shop = uiState.craft = false;
+
+    uiState[menu] = !wasOpen;
+
+    focusIndex = 0; updateUI();
+
+}
+
+function isClickOnUI(e) {
+
+    const uiIds = ["inventory", "char-panel", "shop-panel", "craft-panel", "menu", "chat-container"];
+
+    for (const id of uiIds) {
+
+        const el = document.getElementById(id);
+
+        if (el && el.offsetParent !== null) { 
+
+            const r = el.getBoundingClientRect();
+
+            if (e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom) return true;
+
+        }
+
+    }
+
+    return false;
+
+}
+
+
+
+const JOYSTICK_EL = document.getElementById('joystick-area');
+
+JOYSTICK_EL.addEventListener('touchstart', e => { if (gamepadActive) return; const t = e.touches[0]; joystick.active = true; joystick.id = t.identifier; joystick.startX = t.clientX; joystick.startY = t.clientY; joystick.knob.style.display = 'block'; }, {passive:false});
+
+JOYSTICK_EL.addEventListener('touchmove', e => { if (!joystick.active) return; const t = e.changedTouches[0]; if(t.identifier !== joystick.id) return; let dx = t.clientX - joystick.startX; let dy = t.clientY - joystick.startY; let dist = Math.hypot(dx, dy); if (dist > joystick.radius) { dx = dx / dist * joystick.radius; dy = dy / dist * joystick.radius; } joystick.normX = dx / joystick.radius; joystick.normY = dy / joystick.radius; joystick.knob.style.transform = `translate(${dx}px, ${dy}px)`; sendInput(); }, {passive:false});
+
+const endTouch = () => { joystick.active = false; joystick.normX = 0; joystick.normY = 0; joystick.knob.style.display = 'none'; sendInput(true); };
+
+JOYSTICK_EL.addEventListener('touchend', endTouch); JOYSTICK_EL.addEventListener('touchcancel', endTouch);
+
+
+
 /* =========================
-   UI & GAMEPAD NAVIGATION
+
+   SOCKET & UI
+
    ========================= */
-let lastNavTimestamp = 0; const NAV_DELAY = 150;
-function handleGamepadNavigation(direction) {
-    if (Date.now() - lastNavTimestamp < NAV_DELAY) return;
-    let elements = [], cols = 8, maxIndex = 0;
-    
-    if (uiState.inv) { elements = Array.from(document.querySelectorAll('#inv-grid .slot')); cols = 8; focusArea = 'inventory'; } 
-    else if (uiState.char) {
-        const eq_slots = Array.from(document.querySelectorAll('.equip-slots .slot')); 
-        const stat_btns = Array.from(document.querySelectorAll('.stat-row .plus-btn')); 
-        elements = eq_slots.concat(stat_btns); cols = 5; focusArea = 'equipment';
-    } 
-    else if (uiState.craft) {
-        elements = Array.from(document.querySelectorAll('#craft-list .craft-item')); cols = 1; focusArea = 'craft';
-        let newIndex = focusIndex;
-        if (direction === 'up') newIndex = Math.max(0, focusIndex - 1);
-        else if (direction === 'down') newIndex = Math.min(elements.length - 1, focusIndex + 1);
-        focusIndex = newIndex; updateUI(); lastNavTimestamp = Date.now(); return; 
-    }
-    else if (uiState.shop) {
-        elements = Array.from(document.querySelectorAll('#shop-grid .slot')); cols = 5; focusArea = 'shop';
-        let newIndex = focusIndex;
-        if (direction === 'left') newIndex--; else if (direction === 'right') newIndex++; 
-        else if (direction === 'up') newIndex -= cols; else if (direction === 'down') newIndex += cols;
-        focusIndex = Math.max(0, Math.min(newIndex, elements.length - 1)); updateUI(); lastNavTimestamp = Date.now(); return; 
-    }
-    else { return; } 
 
-    maxIndex = elements.length - 1; if (elements.length === 0) { focusIndex = 0; updateUI(); lastNavTimestamp = Date.now(); return; }
-    let newIndex = focusIndex; 
+socket.on("connect", () => myId=socket.id);
 
-    if (uiState.inv) {
-        if (direction === 'left') newIndex--; else if (direction === 'right') newIndex++; 
-        else if (direction === 'up') newIndex -= cols; else if (direction === 'down') newIndex += cols;
-    } else if (uiState.char) {
-        if (focusIndex <= 4) {
-            if (direction === 'left') newIndex = Math.max(0, newIndex - 1);
-            else if (direction === 'right') newIndex = Math.min(4, newIndex + 1);
-            else if (direction === 'down') newIndex = 5; 
-        } else if (focusIndex >= 5 && focusIndex <= 7) {
-            if (direction === 'up') newIndex = (newIndex === 5) ? 4 : newIndex - 1; 
-            else if (direction === 'down') newIndex = Math.min(7, newIndex + 1);
+socket.on("char_list", list => {
+
+    document.getElementById("login-form").style.display="none"; document.getElementById("char-select").style.display="block";
+
+    const l = document.getElementById("char-list"); l.innerHTML="";
+
+    for(let n in list){ let d=document.createElement("div"); d.className="btn"; d.innerHTML=`${n} <span style="color:#fb0; font-size:0.8em">LVL ${list[n].level}</span>`; d.onclick=()=>{ socket.emit("enter_game", n); document.getElementById("menu").style.display="none"; ensureAudio(); }; l.appendChild(d); }
+
+});
+
+socket.on("game_start", d => { if(d.recipes) recipes = d.recipes; renderCrafting(); });
+
+socket.on("map_data", d => { state.map = d.map; state.theme = d.theme; state.explored = []; cameraShake = 5; });
+
+socket.on("u", d => { 
+
+    Object.assign(state, d); me = state.pl[myId];
+
+    if(me && state.theme === "#444") { 
+
+        const stairs = state.props.find(p => p.type === "stairs");
+
+        if(stairs && Math.hypot(me.x - stairs.x, me.y - stairs.y) < 2.5) {
+
+            if(!modalOpen) { document.getElementById('entry-modal').style.display = 'block'; modalOpen = true; playSfx("door"); }
+
+        } else if(modalOpen) { document.getElementById('entry-modal').style.display = 'none'; modalOpen = false; }
+
+    }
+
+    if(me) updateUI(); 
+
+});
+
+socket.on("txt", d => {
+
+    let vy = -0.5 - Math.random() * 0.5;
+
+    if(String(d.val).includes("!")) { vy *= 1.5; spawnParticle(d.x, d.y, d.color, 10, 1.5); }
+
+    texts.push({ val: String(d.val), x: d.x, y: d.y, vx: (Math.random()-0.5)*1, vy, life: 60, color: d.color || "#fff", gravity: 0.02 });
+
+});
+
+socket.on("fx", d => {
+
+    if (d.type === "slash") { 
+
+        playSfx("atk"); 
+
+        let actor = null;
+
+        if (me && Math.hypot(me.x-d.x, me.y-d.y) < 1.0) actor = me;
+
+        else for(let id in state.pl) if(Math.hypot(state.pl[id].x-d.x, state.pl[id].y-d.y)<1) actor=state.pl[id];
+
+        else for(let id in state.mb) if(Math.hypot(state.mb[id].x-d.x, state.mb[id].y-d.y)<1.5) actor=state.mb[id];
+
+        if(actor) actor.attackAnim = 12; 
+
+        
+
+        let style = "slash";
+
+        if(actor && actor.equipment && actor.equipment.hand) {
+
+            const k = actor.equipment.hand.key;
+
+            if(k.includes("axe")) style = "chop"; else if(k.includes("dagger")) style="stab";
+
         }
+
+        effects.push({ type: style, x: d.x, y: d.y, angle: d.angle, life: 10, color: "#fff" });
+
     }
-    newIndex = Math.max(0, Math.min(newIndex, maxIndex));
-    focusIndex = newIndex; updateUI(); lastNavTimestamp = Date.now();
+
+    else if (d.type === "hit") { spawnParticle(d.x, d.y, "#900", 6, 1.0, 20, "blood"); playSfx("hit"); }
+
+    else if (d.type === "nova") { effects.push({ type: "nova", x: d.x, y: d.y, life: 20, color: d.color || "#0ff" }); }
+
+    else if (d.type === "fireball") { spawnParticle(d.x, d.y, "#f50", 8, 1.5, 25, "spark"); }
+
+    else if (d.type === "dash") { playSfx("dash"); spawnParticle(d.x, d.y, "#fff", 5, 0.5, 10, "trail"); }
+
+});
+
+socket.on("chat", d => { playSfx("chat"); addLog(`${state.pl[d.id]?.name || "Unk"}: ${d.msg}`, "#fff"); });
+
+socket.on("open_shop", items => { uiState.shop = true; shopItems = items; updateUI(); });
+
+socket.on("log", d => addLog(d.msg, d.color));
+
+
+
+function addLog(msg, color="#0f0") {
+
+    const d = new Date(); const time = `[${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}]`;
+
+    const logDiv = document.getElementById("game-log"); const entry = document.createElement("div");
+
+    entry.innerHTML = `<span style="color:#555">${time}</span> <span style="color:${color}; text-shadow:0 0 5px ${color}">${msg}</span>`;
+
+    logDiv.prepend(entry); if(logDiv.children.length > 50) logDiv.removeChild(logDiv.lastChild);
+
 }
 
-function closeAllMenus() {
-    uiState.inv=false; uiState.char=false; uiState.shop=false; uiState.craft=false;
-    hideTooltip(); updateUI();
+
+
+function getMouseAngle() { return Math.atan2((mouse.y - canvas.height/2), (mouse.x - canvas.width/2)); }
+
+function getDashAngle() {
+
+    if (joystick.active) return Math.atan2(joystick.normY, joystick.normX);
+
+    if (gamepadActive) return Math.atan2(keys.game_y, keys.game_x);
+
+    const kdx = (keys.d?1:0)-(keys.a?1:0); const kdy = (keys.s?1:0)-(keys.w?1:0);
+
+    if(kdx!==0||kdy!==0) return Math.atan2(kdy, kdx);
+
+    return (!isMobile) ? getMouseAngle() : (me ? Math.atan2(me.vy||0, me.vx||1) : 0);
+
 }
 
-function handleGamepadAction() {
-    if (!me || !(uiState.inv || uiState.char || uiState.shop || uiState.craft)) return;
-    if (uiState.char) {
-        const eq_slots = ["head", "body", "hand", "rune", "potion"];
-        if (focusIndex >= 0 && focusIndex <= 4) { 
-            const slotName = eq_slots[focusIndex];
-            if (slotName === "potion") socket.emit("potion"); else if (me.equipment[slotName]) socket.emit("unequip", slotName);
-        } else if (focusIndex >= 5 && focusIndex <= 7) {
-            const statNames = ['str', 'dex', 'int'];
-            if (me.pts > 0) socket.emit("add_stat", statNames[focusIndex - 5]);
-        }
-    } else if (uiState.inv && me.inventory.length > 0) {
-        const item = me.inventory[focusIndex];
-        if (item) { 
-            if (item.key === "potion") socket.emit("potion");
-            else if (item.slot && item.type !== "material" && item.type !== "consumable" && item.type !== "key") socket.emit("equip", focusIndex);
-        }
-    } else if (uiState.craft && recipes.length > 0) { 
-        socket.emit("craft", {action:"create", recipeIdx: focusIndex});
-    } else if (uiState.shop && shopItems.length > 0) {
-        window.buy(focusIndex);
-    }
-    updateUI();
+function getAttackAngle() {
+
+    if (!isMobile && !gamepadActive) return getMouseAngle();
+
+    let closest = null, minD = 100; 
+
+    if (state.mb) { for(let k in state.mb) { let m = state.mb[k]; if(m.hp>0 && !m.npc && m.ai!=="resource") { let d = Math.hypot(m.x - me.x, m.y - me.y); if(d < minD) { minD = d; closest = m; } } } }
+
+    if (closest) return Math.atan2(closest.y - me.y, closest.x - me.x);
+
+    return getDashAngle();
+
 }
 
-function handleGamepadSecondaryAction() { 
-    if (!me) return;
-    if (uiState.inv && me.inventory.length > 0) {
-        socket.emit("drop", focusIndex); if (focusIndex > 0) focusIndex = Math.max(0, focusIndex - 1);
-    } else if (uiState.shop) {
-        if (focusArea === 'inventory' && me.inventory.length > 0 && focusIndex < me.inventory.length) {
-            socket.emit("sell", focusIndex); if (focusIndex > 0) focusIndex = Math.max(0, focusIndex - 1);
-        } else closeAllMenus();
-    } else closeAllMenus();
-    updateUI(); 
-}
 
-let lastButtons = {};
-function handleGamepadInput() {
-    const gamepads = navigator.getGamepads ? navigator.getGamepads() : []; gamepad = gamepads[0]; 
-    if (!gamepad) { gamepadActive = false; return; }
-    gamepadActive = true; gamepad = navigator.getGamepads()[gamepad.index];
-    const stickX = gamepad.axes[0] || 0; const stickY = gamepad.axes[1] || 0; const deadzone = 0.3;
+
+function updateUI() {
+
+    if(!me) return;
+
+    const maxHp = me.stats.maxHp||100; const maxMp = me.stats.maxMp||50;
+
+    document.getElementById("hp-bar").style.width = ((me.hp/maxHp)*100)+"%";
+
+    document.getElementById("mp-bar").style.width = ((me.mp/maxMp)*100)+"%";
+
+    document.getElementById("xp-bar").style.width = ((me.xp/((me.level+1)*100))*100)+"%";
+
+    document.getElementById("hp-txt").innerText = `${Math.ceil(me.hp)}/${maxHp}`;
+
+    document.getElementById("mp-txt").innerText = `${Math.ceil(me.mp)}/${maxMp}`;
+
+    document.getElementById("lvl-txt").innerText = state.theme === "#444" ? "SAFE ZONE" : `DEPTH ${me.level}`;
+
+    document.getElementById("hud-gold").innerText = `${me.gold} G`;
+
+    document.getElementById("cp-pts").innerText = me.pts;
+
+    document.getElementById("val-str").innerText = me.attrs.str; document.getElementById("val-dex").innerText = me.attrs.dex; document.getElementById("val-int").innerText = me.attrs.int;
+
+    document.getElementById("stat-dmg").innerText = me.stats.dmg;
+
     
-    keys.game_x = (Math.abs(stickX) > deadzone) ? stickX : 0; keys.game_y = (Math.abs(stickY) > deadzone) ? stickY : 0;
-    if (gamepad.buttons[14]?.pressed) keys.game_x = -1; if (gamepad.buttons[15]?.pressed) keys.game_x = 1;  
-    if (gamepad.buttons[12]?.pressed) keys.game_y = -1; if (gamepad.buttons[13]?.pressed) keys.game_y = 1;  
-    sendInput(); 
+
+    document.getElementById("inventory").style.display = uiState.inv ? "block" : "none";
+
+    document.getElementById("char-panel").style.display = uiState.char ? "block" : "none";
+
+    document.getElementById("shop-panel").style.display = uiState.shop ? "block" : "none";
+
+    document.getElementById("craft-panel").style.display = uiState.craft ? "block" : "none";
+
     
-    const processButton = (buttonIndex, action) => {
-        const button = gamepad.buttons[buttonIndex]; const isPressed = button?.pressed; const wasPressed = lastButtons[buttonIndex] || false;
-        if (action === 'block') keys.q = isPressed; 
-        if (isPressed && !wasPressed) {
-            ensureBGM();
-            if (uiState.inv || uiState.char || uiState.shop || uiState.craft) {
-                if (action === 'attack') handleGamepadAction(); if (action === 'skill') handleGamepadSecondaryAction(); 
-                if (action === 'repair' && uiState.shop) socket.emit("repair_all");
+
+    if(uiState.inv) renderInventory();
+
+    if(uiState.char) renderEquipment();
+
+    if(uiState.shop) renderShop();
+
+}
+
+
+
+function getIconCanvas(it) {
+
+    const c = document.createElement("canvas"); c.width=32; c.height=32;
+
+    const ctx = c.getContext("2d"); ArtisanRender.drawItem(ctx, it, 16, 16, 30);
+
+    return c;
+
+}
+
+
+
+
+function renderEquipment() {
+
+    const slots = ["head", "body", "hand", "rune", "potion"];
+
+    slots.forEach(s => {
+
+        const el = document.getElementById("eq-" + s);
+        el.innerHTML = "";
+
+        const it = me.equipment[s];
+        el.style.borderColor = it ? it.color : "#333";
+        if (!it) return;
+
+        el.appendChild(getIconCanvas(it));
+
+        el.onmousedown = (e) => {
+            e.preventDefault();
+            e.stopPropagation(); // 🔒 mata o canvas
+
+            if (e.button !== 0) return;
+
+            if (s === "potion") {
+                socket.emit("potion");
             } else {
-                const ang = getAttackAngle(); 
-                if (action === 'attack') socket.emit("attack", ang); if (action === 'skill') socket.emit("skill", {idx:1, angle:ang});
-                if (action === 'dash') socket.emit("dash", getDashAngle()); if (action === 'potion') socket.emit("potion"); 
+                socket.emit("unequip", s);
             }
-            if (action === 'inventory') { uiState.inv = !uiState.inv; uiState.char = false; uiState.shop = false; uiState.craft = false; }
-            if (action === 'character') { uiState.char = !uiState.char; uiState.inv = false; uiState.shop = false; uiState.craft = false; }
-            if (action === 'inventory' || action === 'character') { focusIndex = 0; focusArea = (uiState.inv ? 'inventory' : uiState.char ? 'equipment' : 'none'); }
-            updateUI();
-        }
-        lastButtons[buttonIndex] = isPressed;
-    };
-    
-    processButton(0, 'attack'); processButton(1, 'skill'); processButton(2, 'block'); 
-    processButton(3, 'dash'); processButton(4, 'potion'); processButton(5, 'repair'); 
-    processButton(9, 'inventory'); processButton(8, 'character'); 
-    
-    if (uiState.inv || uiState.char || uiState.shop || uiState.craft) {
-        if (gamepad.buttons[12]?.pressed && !lastButtons[12]) handleGamepadNavigation('up');
-        if (gamepad.buttons[13]?.pressed && !lastButtons[13]) handleGamepadNavigation('down');
-        if (gamepad.buttons[14]?.pressed && !lastButtons[14]) handleGamepadNavigation('left');
-        if (gamepad.buttons[15]?.pressed && !lastButtons[15]) handleGamepadNavigation('right');
-        if (Math.abs(stickY) > deadzone && Math.abs(stickY) > Math.abs(stickX)) {
-             if (stickY < 0 && (!lastNavTimestamp || Date.now() - lastNavTimestamp > NAV_DELAY)) handleGamepadNavigation('up');
-             else if (stickY > 0 && (!lastNavTimestamp || Date.now() - lastNavTimestamp > NAV_DELAY)) handleGamepadNavigation('down');
-        } else if (Math.abs(stickX) > deadzone && Math.abs(stickX) > Math.abs(stickY)) {
-             if (stickX < 0 && (!lastNavTimestamp || Date.now() - lastNavTimestamp > NAV_DELAY)) handleGamepadNavigation('left');
-             else if (stickX > 0 && (!lastNavTimestamp || Date.now() - lastNavTimestamp > NAV_DELAY)) handleGamepadNavigation('right');
-        }
-        lastButtons[12] = gamepad.buttons[12]?.pressed; lastButtons[13] = gamepad.buttons[13]?.pressed; 
-        lastButtons[14] = gamepad.buttons[14]?.pressed; lastButtons[15] = gamepad.buttons[15]?.pressed;
-    }
+        };
+
+        el.oncontextmenu = e => e.preventDefault();
+        el.onmouseenter = () => showTooltip(it, el);
+        el.onmouseleave = () => hideTooltip();
+    });
+}
+
+
+
+function renderShop() {
+
+    const g = document.getElementById("shop-grid"); g.innerHTML = "";
+
+    shopItems.forEach((it, idx) => {
+
+        const slot = document.createElement("div"); slot.className = "slot";
+
+        slot.appendChild(getIconCanvas(it)); slot.style.borderColor = it.color;
+
+        slot.onclick = () => socket.emit("buy", idx);
+
+        slot.onmouseenter = () => showTooltip(it, slot); slot.onmouseleave = () => hideTooltip();
+
+        g.appendChild(slot);
+
+    });
+
 }
 
 function renderCrafting() {
-    const list = document.getElementById("craft-list"); list.innerHTML = "";
+
+    const l = document.getElementById("craft-list");
+
+    if(l.children.length > 0 && !uiState.craft) return;
+
+    l.innerHTML = "";
+
+    if(!recipes) return;
+
     recipes.forEach((r, idx) => {
-        const d = document.createElement("div"); d.className = "craft-item";
-        d.innerHTML = `<span style="color:#fff">${r.res.toUpperCase()}</span> <br> <small style="color:#aaa">Wood:${r.req.wood} Stone:${r.req.stone}</small>`;
+
+        const d = document.createElement("div"); 
+
+        d.style.cssText = "padding:8px; border-bottom:1px solid #333; cursor:pointer; display:flex; justify-content:space-between;";
+
+        d.innerHTML = `<span style="color:#ddd">${r.res.toUpperCase()}</span> <span style="font-size:0.8em; color:#888">W:${r.req.wood} S:${r.req.stone}</span>`;
+
         d.onclick = () => socket.emit("craft", {action:"create", recipeIdx:idx});
-        list.appendChild(d);
+
+        d.onmouseenter = () => { d.style.background = "#202"; }; d.onmouseleave = () => { d.style.background = "transparent"; };
+
+        l.appendChild(d);
+
     });
+
 }
 
-function getIcon(it) {
-    if (!it || !it.key) return "❓"; 
-    const key = it.key;
-    let seed = 0; if(it.id) { for(let i=0; i<it.id.length; i++) seed += it.id.charCodeAt(i); }
-    const pick = (arr) => arr[seed % arr.length];
+function showTooltip(it, el) {
 
-    if(key.includes("sword")) return pick(["🗡️", "⚔️", "🔪"]);
-    if(key.includes("axe")) return pick(["🪓", "⚒️", "⛏️"]);
-    if(key.includes("dagger")) return pick(["🗡️", "🔪", "✂️"]);
-    if(key.includes("bow")) return "🏹"; 
-    if(key.includes("staff")) return "🪄"; 
-    if(key.includes("helm")) return "🪖"; 
-    if(key.includes("armor")) return "👕"; 
-    if(key.includes("potion")) return "🧪"; 
-    if(key.includes("wood")) return "🪵";
-    if(key.includes("stone")) return "🪨"; 
-    if(key.includes("ruby")) return "💎"; 
-    if(key.includes("sapphire")) return "🔹"; 
-    if(key.includes("emerald")) return "🟩"; 
-    if(key.includes("diamond")) return "⚪"; 
-    if(key.includes("topaz")) return "🔶"; 
-    if(key.includes("amethyst")) return "🟣"; 
-    if(key.includes("runa")) return "⚛️";
-    if(key.includes("key")) return "🔑";
-    return "📦";
+    if(!it) return;
+
+    const rect = el.getBoundingClientRect();
+
+    tooltip.style.display = "block"; tooltip.style.left = (rect.right + 10) + "px"; tooltip.style.top = rect.top + "px";
+
+    let h = `<div style="color:${it.color}; font-weight:bold;">${it.name}</div>`;
+
+    if(it.price) h += `<br>Price: ${it.price}G`;
+
+    if(it.stats) { for(let s in it.stats) h += `<br>${s.toUpperCase()}: ${it.stats[s]}`; }
+
+    if(it.dur !== undefined) h += `<br>Dur: ${it.dur}/${it.maxDur}`;
+
+    tooltip.innerHTML = h;
+
 }
 
-/* =========================
-   UPDATE UI
-   ========================= */
-function updateUI() {
-    if(!me && state.pl && myId) me = state.pl[myId];
-    if(!me || !me.stats) return;
-
-    const maxHp = me.stats.maxHp || 100;
-    const maxMp = me.stats.maxMp || 50;
-    const hpPct = (me.hp / maxHp) * 100; 
-    const mpPct = (me.mp / maxMp) * 100; 
-    const xpPct = (me.xp / ((me.level+1)*100)) * 100;
-    
-    let diffName = "NORMAL";
-    if (state.theme === "#444") diffName = "SAFE ZONE";
-    else if (state.theme === "#f00") diffName = "HORDE I";
-    else if (state.theme === "#900") diffName = "HORDE II";
-    else if (state.theme === "#102") diffName = "HELL";
-    else if (state.theme === "#311") diffName = "NIGHTMARE";
-    else if (state.theme === "#000") diffName = "PRIMORDIAL"; 
-
-    const elHpBar = document.getElementById("hp-bar");
-    const elMpBar = document.getElementById("mp-bar");
-    const elXpBar = document.getElementById("xp-bar");
-
-    if(elHpBar) elHpBar.style.width = hpPct + "%"; 
-    if(elMpBar) elMpBar.style.width = mpPct + "%"; 
-    if(elXpBar) elXpBar.style.width = xpPct + "%";
-    
-    document.getElementById("hp-txt").innerText = `HP: ${Math.floor(me.hp)}/${maxHp}`; 
-    document.getElementById("mp-txt").innerText = `MP: ${Math.floor(me.mp)}/${maxMp}`; 
-    document.getElementById("xp-txt").innerText = `${Math.floor(xpPct)}%`; 
-    document.getElementById("lvl-txt").innerText = `${diffName} [${me.level}]`;
-    
-    const hLvlTxt = document.getElementById("h-lvl-txt"); if(hLvlTxt) hLvlTxt.innerText = `${diffName} [${me.level}]`; 
-    const hGoldTxt = document.getElementById("h-gold-txt"); if(hGoldTxt) hGoldTxt.innerText = `${me.gold || 0}G`;
-    const hHpBar = document.getElementById("h-hp-bar"); if(hHpBar) hHpBar.style.width = hpPct + "%"; 
-    const hMpBar = document.getElementById("h-mp-bar"); if(hMpBar) hMpBar.style.width = mpPct + "%"; 
-    
-    document.getElementById("cp-pts").innerText = me.pts || 0;
-    const attrs = me.attrs || {str:0, dex:0, int:0};
-    document.getElementById("val-str").innerText = attrs.str; 
-    document.getElementById("val-dex").innerText = attrs.dex; 
-    document.getElementById("val-int").innerText = attrs.int;
-    document.getElementById("stat-dmg").innerText = (me.stats.dmg || 0) + ` (CRIT: ${Math.floor((me.stats.crit || 0.01)*100)}%)`; 
-    document.getElementById("stat-spd").innerText = Math.floor((me.stats.spd || 0)*100);
-    document.getElementById("hud-gold").innerText = "GOLD: " + (me.gold || 0);
-
-    const uiActionButtons = document.getElementById("ui-action-buttons");
-    if (uiState.inv || uiState.char || uiState.shop || uiState.craft) { if(uiActionButtons) uiActionButtons.style.display = 'flex'; } 
-    else { if(uiActionButtons) uiActionButtons.style.display = 'none'; hideTooltip(); }
-
-    document.getElementById("inventory").style.display = uiState.inv ? "block" : "none";
-    document.getElementById("char-panel").style.display = uiState.char ? "block" : "none";
-    document.getElementById("shop-panel").style.display = uiState.shop ? "block" : "none";
-    document.getElementById("craft-panel").style.display = uiState.craft ? "block" : "none";
-
-    const eq_slots = ["head","body","hand","rune","potion"];
-    eq_slots.forEach((slot, index) => {
-        const el = document.getElementById("eq-"+slot); if (!el) return; 
-        el.innerHTML = ""; el.style.outline = 'none';
-        const isSelected = (uiState.char && focusArea === 'equipment' && focusIndex === index);
-        if (isSelected) { 
-            el.style.outline = '2px solid yellow'; 
-            if (me.equipment && me.equipment[slot]) showTooltip(me.equipment[slot], el); 
-            else hideTooltip();
-            const equipBtn = document.getElementById('ui-btn-equip');
-            if(equipBtn) equipBtn.innerText = slot==='potion'?'USAR (A)':'DESEQUIPAR (A)';
-        }
-        if(me.equipment && me.equipment[slot]) {
-            const it = me.equipment[slot];
-            el.style.borderColor = it.color; el.innerHTML = getIcon(it); 
-            el.onmousedown = (e) => {
-                e.preventDefault(); e.stopPropagation();
-                if (!isMobile && !gamepadActive) {
-                    slot === 'potion' ? socket.emit("potion") : socket.emit("unequip", slot);
-                    return;
-                }
-                if (focusIndex === index && focusArea === 'equipment') {
-                    slot === 'potion' ? socket.emit("potion") : socket.emit("unequip", slot);
-                } else { focusIndex = index; focusArea = 'equipment'; updateUI(); }
-            };
-            if (!isMobile && !gamepadActive) { 
-                el.onmouseover = () => { showTooltip(it, el); focusIndex = index; focusArea = 'equipment'; el.style.outline = '2px solid yellow'; }; 
-                el.onmouseout = () => { hideTooltip(); el.style.outline = 'none'; }; 
-            }
-        } else { el.style.borderColor = "#0f0"; el.onclick=null; }
-    });
-    
-    const stat_btns = ['str', 'dex', 'int'];
-    stat_btns.forEach((stat, index) => {
-        const btn = document.getElementById("btn-"+stat);
-        const globalIndex = index + 5;
-        if(btn) btn.style.outline = 'none';
-        if (uiState.char && focusArea === 'equipment' && focusIndex === globalIndex) {
-             if(btn) btn.style.outline = '2px solid yellow'; hideTooltip();
-             const equipBtn = document.getElementById('ui-btn-equip');
-             if(equipBtn) equipBtn.innerText = `ADD ${stat.toUpperCase()} (A)`;
-        }
-    });
-    
-    const ig = document.getElementById("inv-grid"); ig.innerHTML = "";
-    if (uiState.inv && focusArea === 'inventory' && me.inventory.length > 0 && focusIndex >= me.inventory.length) focusIndex = Math.max(0, me.inventory.length - 1);
-
-    if(me.inventory) {
-        me.inventory.forEach((it, idx) => {
-            if (!it) return;
-            const d = document.createElement("div"); d.className = "slot"; d.style.borderColor = it.color; d.style.outline = 'none';
-            const isSelected = (uiState.inv && focusArea === 'inventory' && focusIndex === idx);
-            if (isSelected) {
-                d.style.outline = '2px solid yellow'; showTooltip(it, d); 
-                const equipBtn = document.getElementById('ui-btn-equip');
-                const dropBtn = document.getElementById('ui-btn-drop');
-                if (it.key === 'potion' && equipBtn) equipBtn.innerText = 'USAR POÇÃO (A)';
-                else if (it.slot && equipBtn) equipBtn.innerText = 'EQUIPAR (A)';
-                else if (equipBtn) equipBtn.innerText = 'ITEM DE CRAFT';
-                if(dropBtn) dropBtn.innerText = 'DROPAR (B)';
-            } 
-            d.innerHTML = getIcon(it);
-            if(it.sockets && it.sockets.length > 0) {
-                const socks = document.createElement("div"); socks.style.cssText="position:absolute;bottom:0;right:0;display:flex;";
-                it.sockets.forEach((s, i) => { const dot = document.createElement("div"); dot.style.cssText=`width:4px;height:4px;background:${it.gems[i]?it.gems[i].color:"#222"};border:1px solid #555;margin-right:1px;`; socks.appendChild(dot); });
-                d.appendChild(socks);
-            }
-            d.onmousedown = (e) => {
-                e.preventDefault(); e.stopPropagation();
-                if (!isMobile && !gamepadActive) {
-                    if (it.key === "potion") socket.emit("potion");
-                    else if (it.slot && it.type !== "material" && it.type !== "gem" && it.type !== "key") { socket.emit("equip", idx); }
-                    focusIndex = idx; focusArea = 'inventory'; updateUI();
-                    return;
-                }
-                if (focusIndex === idx && focusArea === 'inventory') {
-                    if (it.key === "potion") socket.emit("potion");
-                    else if (it.slot && it.type !== "material" && it.type !== "gem") socket.emit("equip", idx);
-                } else { focusIndex = idx; focusArea = 'inventory'; updateUI(); }
-            };
-            d.draggable = true; d.ondragstart = (e) => { dragItem = { idx, item: it }; }; d.ondragover = (e) => e.preventDefault();
-            d.ondrop = (e) => { e.preventDefault(); if(dragItem && dragItem.item.type === "gem" && it.type !== "gem") socket.emit("craft", {action:"socket", itemIdx:idx, gemIdx:dragItem.idx}); };
-            if (!isMobile) { 
-                d.onmouseover = () => { focusIndex = idx; focusArea = 'inventory'; showTooltip(it, d); d.style.outline = '2px solid yellow'; }; 
-                d.onmouseout = () => { hideTooltip(); d.style.outline = 'none'; }; 
-            }
-            d.oncontextmenu = (e) => { e.preventDefault(); socket.emit("drop", idx); };
-            ig.appendChild(d);
-        });
-    }
-
-    if (uiState.craft) {
-        const craftList = document.getElementById("craft-list");
-        if(craftList) {
-            Array.from(craftList.children).forEach((d, idx) => {
-                d.style.outline = 'none';
-                if (focusArea === 'craft' && focusIndex === idx) { d.style.outline = '2px solid yellow'; }
-            });
-        }
-    }
-    
-    if(uiState.shop) {
-        const sg = document.getElementById("shop-grid"); sg.innerHTML = "";
-        shopItems.forEach((it, idx) => {
-            const d = document.createElement("div"); d.className = "slot"; d.style.borderColor = it.color; d.style.outline = 'none';
-            if (focusArea === 'shop' && focusIndex === idx) { d.style.outline = '2px solid yellow'; showTooltip(it, d); }
-            d.innerHTML = getIcon(it); 
-            d.onmousedown = (e) => { e.preventDefault(); e.stopPropagation(); socket.emit("buy", idx); };
-            if (!isMobile && !gamepadActive) { 
-                d.onmouseover = () => { focusIndex = idx; focusArea = 'shop'; showTooltip(it, d); d.style.outline = '2px solid yellow'; }; 
-                d.onmouseout = () => { hideTooltip(); d.style.outline = 'none'; }; 
-            }
-            sg.appendChild(d);
-        });
-
-        // REPAIR BUTTON INJECTION
-        const shopPanel = document.getElementById("shop-panel");
-        let repairBtn = document.getElementById("btn-repair-all");
-        if (!repairBtn) {
-             const btnContainer = shopPanel.querySelector('div[style*="display: flex"]'); 
-             if (btnContainer) {
-                 repairBtn = document.createElement("button");
-                 repairBtn.id = "btn-repair-all";
-                 repairBtn.className = "btn";
-                 repairBtn.style.borderColor = "#0f0";
-                 repairBtn.style.color = "#0f0";
-                 repairBtn.innerText = "REPARAR (R)";
-                 repairBtn.onclick = () => socket.emit("repair_all");
-                 btnContainer.insertBefore(repairBtn, btnContainer.firstChild); 
-             }
-        }
-        const closeShopBtn = document.getElementById("btn-shop-close");
-        if(closeShopBtn) closeShopBtn.onclick = closeAllMenus;
-    }
-    
-    if ((uiState.inv && (!me.inventory || me.inventory.length === 0))) { 
-        hideTooltip(); 
-        const equipBtn = document.getElementById('ui-btn-equip');
-        if(equipBtn) equipBtn.innerText = 'VAZIO'; 
-    } 
-}
-
-function showTooltip(it, elementRef) {
-    if (!it) return;
-    let html = `<b style="color:${it.color}">${it.name}</b><br><span style="color:#aaa">${(it.type || "UNKNOWN").toUpperCase()}</span>`;
-    
-    // VISUALIZAÇÃO DA DURABILIDADE (NOVO)
-    if (it.dur !== undefined && it.maxDur) {
-        const pct = (it.dur / it.maxDur) * 100;
-        let color = "#0f0";
-        if (pct < 50) color = "#fb0";
-        if (pct < 20) color = "#f00";
-        html += `<br><div style="width:100%; height:4px; background:#444; margin-top:2px; border:1px solid #777;">
-                    <div style="width:${pct}%; height:100%; background:${color};"></div>
-                 </div>`;
-        html += `<span style="font-size:9px; color:${color}">DUR: ${it.dur}/${it.maxDur}</span>`;
-        if (it.dur === 0) html += ` <b style="color:#f00">[BROKEN]</b>`;
-    }
-
-    if(it.desc) html += `<br><span style="color:#ff0">${it.desc}</span>`;
-    if(it.price) html += `<br>Price: ${it.price}G`;
-    const isSellable = (uiState.inv || uiState.shop) && it.key !== 'gold';
-    if (isSellable) html += `<br><span style="color:#fff">Sell Value: ${Math.floor((it.price || 1) * 0.5)}G</span>`;
-    if(it.stats) { for(let k in it.stats) { 
-        if(k==="crit") html += `<br>Crit: ${Math.floor(it.stats[k]*100)}%`; else if(k==="spd" && it.stats[k] > 0.01) html += `<br>Spd: +${Math.floor(it.stats[k]*100)}%`; else if (k !== "spd") html += `<br>${k.toUpperCase()}: ${it.stats[k]}`; 
-    } }
-    if(it.sockets) { html += `<br><br>GEMS [${it.gems.length}/${it.sockets.length}]`; it.gems.forEach(g => html += `<br><span style="color:${g.color}">* ${g.desc}</span>`); }
-    tooltip.innerHTML = html; tooltip.style.display = "block";
-
-    if ((isMobile || gamepadActive) && elementRef) {
-        const rect = elementRef.getBoundingClientRect();
-        let top = rect.top - tooltip.offsetHeight - 10;
-        if (top < 0) top = rect.bottom + 10;
-        let left = rect.left + (rect.width - tooltip.offsetWidth) / 2;
-        if (left < 10) left = 10;
-        if (left + tooltip.offsetWidth > window.innerWidth) left = window.innerWidth - tooltip.offsetWidth - 10;
-        tooltip.style.top = top + "px";
-        tooltip.style.left = left + "px";
-    }
-}
 function hideTooltip() { tooltip.style.display = "none"; }
 
+function closeAllMenus() { uiState.inv=false; uiState.char=false; uiState.shop=false; uiState.craft=false; tooltip.style.display="none"; updateUI(); }
+
+
+
 /* =========================
-   DRAWING
+
+   MAIN RENDER LOOP
+
    ========================= */
-function drawAura(x, y, color, intensity) {
-    ctx.shadowBlur = intensity; ctx.shadowColor = color; ctx.fillStyle = color; ctx.globalAlpha = 0.2;
-    ctx.beginPath(); ctx.arc(x, y, 10 + Math.sin(Date.now()/200)*2, 0, Math.PI*2); ctx.fill();
-    ctx.globalAlpha = 1.0; ctx.shadowBlur = 0;
-}
 
-let fogPattern = null;
-function createFogPattern() {
-    const size = 32; const tempCanvas = document.createElement('canvas'); tempCanvas.width = size; tempCanvas.height = size;
-    const tempCtx = tempCanvas.getContext('2d'); tempCtx.fillStyle = 'rgba(0, 0, 0, 0.4)'; tempCtx.fillRect(0, 0, size, size);
-    for (let i = 0; i < size * size * 0.1; i++) { const x = Math.random() * size; const y = Math.random() * size; tempCtx.fillStyle = `rgba(0, 15, 0, ${Math.random() * 0.1 + 0.05})`; tempCtx.fillRect(x, y, 1, 1); }
-    fogPattern = ctx.createPattern(tempCanvas, 'repeat');
-}
+const COLORS = { void: "#050005", floor: "#0a050a", wallTop: "#2a1a2a", grid: "rgba(50, 0, 50, 0.1)" };
 
-function drawOffscreenPlayerIndicators() {
-    if (!me || !state.pl) return;
-    const screenCenterX = canvas.width / 2; const screenCenterY = canvas.height / 2;
-    const indicatorRadius = Math.min(screenCenterX, screenCenterY) - 20; const indicatorSize = 8;
-    const ox = -cam.x, oy = -cam.y;
-    Object.values(state.pl).filter(p => p.id !== myId).forEach(p => {
-        const playerScreenX = ox + p.x * SCALE + SCALE/2; const playerScreenY = oy + p.y * SCALE + SCALE/2;
-        const dx = playerScreenX - screenCenterX; const dy = playerScreenY - screenCenterY;
-        if (dx * dx + dy * dy < indicatorRadius * indicatorRadius) return;
-        const angle = Math.atan2(dy, dx);
-        let ix = screenCenterX + Math.cos(angle) * indicatorRadius; let iy = screenCenterY + Math.sin(angle) * indicatorRadius;
-        ctx.save(); ctx.translate(ix, iy); ctx.rotate(angle); 
-        ctx.fillStyle = "#0ff"; ctx.shadowBlur = 5; ctx.shadowColor = "#0ff";
-        ctx.beginPath(); ctx.moveTo(indicatorSize, 0); ctx.lineTo(-indicatorSize, -indicatorSize); ctx.lineTo(-indicatorSize, indicatorSize); ctx.closePath(); ctx.fill();
-        ctx.font = "8px Courier New"; ctx.textAlign = "center"; ctx.fillText(p.name, 0, -indicatorSize - 2); 
-        ctx.restore(); ctx.shadowBlur = 0;
-    });
-}
 
-function drawProceduralItem(ctx, item, x, y, angle, scale = 1.0) {
-    if (!item) return;
-    let seed = 0; if (item.id) { for(let i=0; i<item.id.length; i++) seed += item.id.charCodeAt(i); }
-    const rng = () => { const x = Math.sin(seed++) * 10000; return x - Math.floor(x); };
-    
-    ctx.save(); ctx.translate(x, y); ctx.rotate(angle); ctx.scale(scale, scale);
-    let baseColor = "#aaa", glowColor = null;
-    if (item.rarity === "magic") { baseColor = "#4ff"; glowColor = "rgba(0, 255, 255, 0.4)"; }
-    if (item.rarity === "rare") { baseColor = "#ff0"; glowColor = "rgba(255, 255, 0, 0.5)"; }
-    if (item.rarity === "legendary") { baseColor = "#f0f"; glowColor = "rgba(255, 0, 255, 0.6)"; }
-    if (glowColor) { ctx.shadowBlur = 8; ctx.shadowColor = glowColor; }
 
-    const key = item.key;
-    if (key.includes("sword") || key.includes("dagger")) {
-        const len = key.includes("dagger") ? 8 : 14 + rng() * 6; const width = 3 + rng() * 3; const curve = (rng() - 0.5) * 4;
-        ctx.fillStyle = baseColor;
-        ctx.beginPath(); ctx.moveTo(0, -2); ctx.lineTo(width, -2); ctx.lineTo(width - 1 + curve, -len); ctx.lineTo(-1, -2); ctx.fill();
-        ctx.fillStyle = "#420"; ctx.fillRect(1, 0, 2, 4);
-    } else if (key.includes("axe")) {
-        ctx.fillStyle = "#532"; ctx.fillRect(0, -2, 2, 14);
-        ctx.fillStyle = baseColor; const sz = 6 + rng() * 4;
-        ctx.beginPath(); ctx.moveTo(1, 2); ctx.lineTo(1+sz, -4); ctx.lineTo(1+sz, 6); ctx.fill();
-    } else if (key.includes("staff")) {
-        ctx.fillStyle = "#421"; ctx.fillRect(0, -10, 2, 20);
-        ctx.fillStyle = item.color || "#0ff"; ctx.beginPath(); ctx.arc(1, -12, 4, 0, Math.PI*2); ctx.fill();
-    } else if (key.includes("bow")) {
-        ctx.strokeStyle = "#532"; ctx.lineWidth = 2;
-        ctx.beginPath(); ctx.arc(0, 0, 8, -Math.PI/2, Math.PI/2); ctx.stroke();
-        ctx.strokeStyle = "#fff"; ctx.lineWidth = 0.5; ctx.beginPath(); ctx.moveTo(0, -8); ctx.lineTo(0, 8); ctx.stroke();
+function spawnParticle(x, y, color, count=1, speed=1, life=20, type="spark") {
+
+    for(let i=0; i<count; i++) {
+
+        const angle = Math.random() * Math.PI * 2; const vel = Math.random() * speed;
+
+        effects.push({ type: type, x: x, y: y, vx: Math.cos(angle) * vel, vy: Math.sin(angle) * vel, color: color, life: life + Math.random() * 10, maxLife: life + 10 });
+
     }
-    ctx.restore();
+
 }
+
+
 
 function draw() {
+
     requestAnimationFrame(draw);
-    handleGamepadInput(); 
-    ctx.fillStyle = "#000"; ctx.fillRect(0,0,canvas.width,canvas.height);
+
+    if (canvas.width !== window.innerWidth) canvas.width = window.innerWidth;
+
+    if (canvas.height !== window.innerHeight) canvas.height = window.innerHeight;
+
+
+
+    if(me) {
+
+        let shakeX = 0, shakeY = 0;
+
+        if(cameraShake > 0) { shakeX = (Math.random()-0.5)*cameraShake; shakeY = (Math.random()-0.5)*cameraShake; cameraShake *= 0.9; }
+
+        cam.x += (me.x * SCALE - canvas.width/2 - cam.x) * 0.1;
+
+        cam.y += (me.y * SCALE - canvas.height/2 - cam.y) * 0.1;
+
+        cam.x += shakeX; cam.y += shakeY;
+
+    }
+
+    const ox = -Math.floor(cam.x), oy = -Math.floor(cam.y);
+
     
-    if(!me) {
-        ctx.fillStyle = "#0f0"; ctx.font = "16px Courier New"; ctx.textAlign = "center";
-        ctx.fillText("CONNECTING...", canvas.width/2, canvas.height/2); return;
-    }
 
-    cam.x += (me.x*SCALE - canvas.width/2 - cam.x)*0.2;
-    cam.y += (me.y*SCALE - canvas.height/2 - cam.y)*0.2;
-    if (cameraShake > 0) {
-        cam.x += (Math.random() - 0.5) * cameraShake; cam.y += (Math.random() - 0.5) * cameraShake;
-        cameraShake *= 0.85; if (cameraShake < 0.5) cameraShake = 0;
-    }
-    const ox = -cam.x, oy = -cam.y; const now = Date.now();
-    const lightRadiusPixels = state.lightRadius * SCALE;
-    const playerScreenX = ox + me.x * SCALE + SCALE/2; const playerScreenY = oy + me.y * SCALE + SCALE/2;
+    ctx.fillStyle = COLORS.void; ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-    const map = state.map; const explored = state.explored || []; 
-    const theme = state.theme || "#222";
-    const isCity = state.theme === "#444"; 
 
-    if(map && map.length){
-        const sy=Math.floor(cam.y/SCALE), ey=sy+Math.ceil(canvas.height/SCALE)+1; const sx=Math.floor(cam.x/SCALE), ex=sx+Math.ceil(canvas.width/SCALE)+1;
-        for(let y=sy; y<ey; y++){ 
-            if(!map[y]) continue; 
-            for(let x=sx; x<ex; x++){ 
-                if(map[y][x]===0) { 
-                    if (isCity) {
-                        ctx.fillStyle="#333"; ctx.fillRect(ox+x*SCALE,oy+y*SCALE,SCALE,SCALE);
-                        if((x+y)%2===0) { ctx.fillStyle="#3a3a3a"; ctx.fillRect(ox+x*SCALE+4, oy+y*SCALE+4, 8, 8); }
-                    } else {
-                        ctx.fillStyle="#080808"; ctx.fillRect(ox+x*SCALE,oy+y*SCALE,SCALE,SCALE); 
-                        if((x+y)%3===0) { ctx.fillStyle=theme; ctx.fillRect(ox+x*SCALE+6, oy+y*SCALE+6, 2, 2); } 
-                    }
-                } else if(map[y][x]===1) { 
-                    ctx.fillStyle=isCity?"#222":"#000"; ctx.fillRect(ox+x*SCALE,oy+y*SCALE,SCALE,SCALE);
-                    ctx.strokeStyle=isCity?"#555":theme; ctx.strokeRect(ox+x*SCALE,oy+y*SCALE,SCALE,SCALE);
-                } 
-            } 
+
+    const buffer = 4;
+
+    const startCol = Math.floor(cam.x / SCALE) - buffer;
+
+    const endCol = startCol + (canvas.width / SCALE) + (buffer * 2);
+
+    const startRow = Math.floor(cam.y / SCALE) - buffer;
+
+    const endRow = startRow + (canvas.height / SCALE) + (buffer * 2);
+
+
+
+    // 1. CHÃO (Floor)
+
+    if(state.map) {
+
+        for (let y = startRow; y <= endRow; y++) {
+
+            if(!state.map[y]) continue;
+
+            for (let x = startCol; x <= endCol; x++) {
+
+                if (state.map[y][x] === 0) ArtisanRender.drawFloor(ctx, ox + x*SCALE, oy + y*SCALE, x, y, state.theme);
+
+            }
+
         }
-    }
-    
-    if(state.props) state.props.forEach(p => { 
-        const px=ox+p.x*SCALE, py=oy+p.y*SCALE; 
-        if(p.type==="rock") { ctx.fillStyle="#333"; ctx.fillRect(px,py,4,3); } 
-        else if(p.type==="bones") { ctx.fillStyle="#ccc"; ctx.fillRect(px,py,3,1); ctx.fillRect(px+2,py+1,3,1); } 
-        else if(p.type==="shrine") { 
-            ctx.shadowBlur=10; ctx.shadowColor="#0ff";
-            ctx.fillStyle="#0ff"; ctx.fillRect(px,py-4,4,12); ctx.fillRect(px-2,py,8,2); ctx.shadowBlur=0; 
-        }
-        else if(p.type==="book") { ctx.fillStyle="#a52"; ctx.fillRect(px,py,6,4); ctx.fillStyle="#eee"; ctx.fillRect(px+1,py+1,4,2); }
-        else if(p.type==="stairs") {
-            ctx.fillStyle = p.locked ? "#f00" : "#0f0"; ctx.fillRect(px-4, py-6, 8, 12);
-            ctx.strokeStyle = "#fff"; ctx.strokeRect(px-4, py-6, 8, 12);
-            if (p.locked) { ctx.fillStyle = "#fff"; ctx.font = "8px Arial"; ctx.textAlign="center"; ctx.fillText("🔒", px, py); }
-        }
-        else { ctx.fillStyle="#232"; ctx.fillRect(px,py,2,4); ctx.fillRect(px+3,py+1,2,3); } 
-    });
-    
-    for(let k in state.it){ 
-        let i=state.it[k]; let yb = Math.sin(now/200)*2; 
-        if(i.item.key === "gold") { 
-            ctx.shadowBlur=5; ctx.shadowColor="#fb0";
-            ctx.fillStyle="#fb0"; ctx.fillRect(ox+i.x*SCALE+4, oy+i.y*SCALE+6+yb, 3, 3); ctx.shadowBlur=0; 
-        } else { 
-            drawProceduralItem(ctx, i.item, ox+i.x*SCALE+8, oy+i.y*SCALE+8+yb, -Math.PI/4, 0.5);
-        } 
+
     }
 
-    if(state.pr) state.pr.forEach(p => {
-        ctx.save(); ctx.translate(ox+p.x*SCALE, oy+p.y*SCALE); ctx.rotate(p.angle || 0); 
-        ctx.shadowBlur=10;
+
+
+    // 2. ORDENAÇÃO Y (Paredes, Items, Entidades)
+
+    let renderList = [];
+
+    if(state.map) {
+
+        for (let y = startRow; y <= endRow; y++) {
+
+            if(!state.map[y]) continue;
+
+            for (let x = startCol; x <= endCol; x++) {
+
+                if(state.map[y][x]===1) renderList.push({type:"wall", x:x*SCALE, y:y*SCALE, gx:x, gy:y});
+
+            }
+
+        }
+
+    }
+
+    state.props.forEach(p => renderList.push({type:"prop", obj:p, x:p.x*SCALE, y:p.y*SCALE}));
+
+    for(let k in state.it) renderList.push({type:"item", obj:state.it[k], x:state.it[k].x*SCALE, y:state.it[k].y*SCALE});
+
+    [...Object.values(state.pl), ...Object.values(state.mb)].forEach(e => renderList.push({type:"entity", obj:e, x:e.x*SCALE+SCALE/2, y:e.y*SCALE+SCALE/2}));
+
+
+
+    renderList.sort((a,b) => a.y - b.y);
+
+
+
+    renderList.forEach(r => {
+
+        const px = ox + r.x; const py = oy + r.y;
+
         
-        if(p.type === "arrow") { ctx.shadowColor="#ff0"; ctx.fillStyle = "#ff0"; ctx.fillRect(-6, -1, 12, 2); } 
-        else if (p.type === "fireball" || p.type === "fireball_spell") { ctx.shadowColor="#f80"; ctx.fillStyle = "#f80"; ctx.beginPath(); ctx.arc(0,0, 4, 0, Math.PI*2); ctx.fill(); }
-        else if (p.type === "meteor") { ctx.shadowColor="#f00"; ctx.fillStyle = "#f00"; ctx.beginPath(); ctx.arc(0,0, 8, 0, Math.PI*2); ctx.fill(); } 
-        else if (p.type === "web") { ctx.shadowColor="#fff"; ctx.strokeStyle="#fff"; ctx.lineWidth=1; ctx.beginPath(); ctx.moveTo(-4,-4); ctx.lineTo(4,4); ctx.moveTo(4,-4); ctx.lineTo(-4,4); ctx.stroke(); }
-        else if (p.type === "laser") { ctx.shadowColor="#f0f"; ctx.fillStyle="#f0f"; ctx.fillRect(-10, -2, 20, 4); }
-        else if (p.type === "frostball") { ctx.shadowColor="#0ff"; ctx.fillStyle="#0ff"; ctx.beginPath(); ctx.arc(0,0,5,0,Math.PI*2); ctx.fill(); }
-        else if (p.type === "hook") { 
-            ctx.shadowColor="#aaa"; ctx.strokeStyle="#aaa"; ctx.lineWidth=2; 
-            ctx.beginPath(); ctx.moveTo(0,0); ctx.lineTo(-8, 0); ctx.stroke(); 
-            ctx.fillStyle="#fff"; ctx.beginPath(); ctx.moveTo(-8,-3); ctx.lineTo(-12,0); ctx.lineTo(-8,3); ctx.fill(); 
+
+        if(r.type === "wall") {
+
+            ArtisanRender.drawWall(ctx, px, py, r.gx, r.gy);
+
         }
-        else { ctx.shadowColor="#0ff"; ctx.fillStyle = "#0ff"; ctx.beginPath(); ctx.arc(0, 0, 3, 0, Math.PI*2); ctx.fill(); }
-        ctx.shadowBlur=0; ctx.restore();
+
+        else if(r.type === "prop") {
+
+            const p = r.obj;
+
+            if (p.type === "stairs") {
+
+                ctx.fillStyle = p.locked ? "#500" : "#0f0"; ctx.fillRect(px - 6, py - 6, 12, 12);
+
+                ctx.fillStyle = "#fff"; ctx.font = "10px monospace"; ctx.fillText(p.locked ? "🔒" : "⇩", px-3, py+4);
+
+                if(me && Math.hypot(me.x - p.x, me.y - p.y) < 3.0) {
+
+                    const float = Math.sin(Date.now()/200)*2;
+
+                    ctx.fillStyle = "#fff"; ctx.font = "10px monospace"; ctx.textAlign = "center";
+
+                    ctx.fillText("⇩ ENTRAR", px, py - 15 + float);
+
+                }
+
+            } else if (p.type === "shrine") {
+
+                const float = Math.sin(Date.now()/500)*3;
+
+                ctx.fillStyle = "#0ff"; ctx.fillRect(px-4, py-6 + float, 8, 12);
+
+                ctx.globalCompositeOperation = "lighter"; ctx.fillStyle = "rgba(0, 255, 255, 0.2)"; 
+
+                ctx.beginPath(); ctx.arc(px, py, 20 + float, 0, Math.PI*2); ctx.fill(); 
+
+                ctx.globalCompositeOperation = "source-over";
+
+            }
+
+        }
+
+        else if(r.type === "item") {
+
+            const float = Math.sin(Date.now()/300) * 3;
+
+            if(r.obj.item.rarity !== "common") {
+
+                ctx.globalCompositeOperation = "lighter";
+
+                const grad = ctx.createLinearGradient(0, -30, 0, 10);
+
+                grad.addColorStop(0, "rgba(0,0,0,0)"); grad.addColorStop(1, r.obj.item.color);
+
+                ctx.save(); ctx.translate(px, py); ctx.fillStyle = grad; ctx.fillRect(-2, -30, 4, 40); ctx.restore();
+
+                ctx.globalCompositeOperation = "source-over";
+
+            }
+
+            ArtisanRender.drawItem(ctx, r.obj.item, px, py + float, 16);
+
+        }
+
+        else if(r.type === "entity") {
+
+            const e = r.obj;
+
+            const shadowScale = 1 + Math.sin(Date.now()/200)*0.1;
+
+            ctx.fillStyle = "rgba(0,0,0,0.5)"; ctx.beginPath(); ctx.ellipse(px, py+4, 6*shadowScale, 3*shadowScale, 0, 0, Math.PI*2); ctx.fill();
+
+            if(e.hitFlash > 0) { ctx.globalCompositeOperation = "lighter"; ctx.fillStyle = "#fff"; ctx.beginPath(); ctx.arc(px, py, 10, 0, Math.PI*2); ctx.fill(); ctx.globalCompositeOperation = "source-over"; }
+
+            
+
+            ArtisanRender.drawEntity(ctx, e, px, py, e.id===myId);
+
+
+
+            if(e.hp < (e.maxHp||100) && e.hp > 0) {
+
+                const pct = e.hp / (e.maxHp||100);
+
+                ctx.fillStyle = "#000"; ctx.fillRect(px - 8, py - (e.size||12) - 6, 16, 3);
+
+                ctx.fillStyle = e.boss ? "#f0f" : "#f00"; ctx.fillRect(px - 8, py - (e.size||12) - 6, 16 * pct, 3);
+
+            }
+
+            if((e.id === myId) || e.boss || e.npc) {
+
+                ctx.font = "8px 'VT323'"; ctx.fillStyle = "#fff"; ctx.textAlign = "center";
+
+                ctx.fillText(e.name, px, py - (e.size||12) - 8);
+
+            }
+
+        }
+
     });
+
+
+
+    state.pr.forEach(p => {
+
+        const px = Math.floor(ox + p.x * SCALE), py = Math.floor(oy + p.y * SCALE);
+
+        if(!isMobile) spawnParticle(p.x, p.y, p.type==="fireball"?"#f80":"#0ff", 1, 0.2, 5, "trail");
+
+        ctx.save(); ctx.translate(px, py); ctx.rotate(p.angle || 0);
+
+        if(p.type === "arrow") { ctx.fillStyle = "#ff0"; ctx.fillRect(-6, -1, 12, 2); } 
+
+        else if (p.type.includes("fireball")) { ctx.fillStyle = "#f80"; ctx.beginPath(); ctx.arc(0,0,4,0,Math.PI*2); ctx.fill(); }
+
+        else { ctx.fillStyle = "#0ff"; ctx.beginPath(); ctx.arc(0,0, 3, 0, Math.PI*2); ctx.fill(); }
+
+        ctx.restore();
+
+    });
+
+
+
+    ctx.globalCompositeOperation = "lighter";
 
     for(let i = effects.length - 1; i >= 0; i--) {
-        let e = effects[i]; e.life--; if (e.life <= 0) { effects.splice(i, 1); continue; }
-        const x = ox + e.x * SCALE; const y = oy + e.y * SCALE;
-        ctx.shadowBlur = 10; ctx.shadowColor = e.color || "#fff";
 
-        if (e.type === "slash") {
-            ctx.strokeStyle = `rgba(255,255,255,${e.life/10})`; ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(x, y, 20, e.angle - 0.8, e.angle + 0.8); ctx.stroke();
-        }
-        else if (e.type === "spin") {
-            ctx.strokeStyle = `rgba(255,255,0,${e.life/20})`; ctx.lineWidth = 4; ctx.beginPath(); const radius = 35 - (20 - e.life) * 2; if (radius > 0) ctx.arc(x, y, radius, 0, Math.PI * 2); ctx.stroke();
-        }
-        else if (e.type === "nova") {
-            const col = e.color || "255,0,0";
-            ctx.strokeStyle = `rgba(${col === "#f80" ? "255,128,0" : "255,0,0"},${e.life/(e.life > 15 ? 20 : 10)})`; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(x, y, 30 - e.life, 0, Math.PI * 2); ctx.stroke();
-        }
-        else if (e.type === "charge") {
-            ctx.strokeStyle = `rgba(255,0,0,${e.life/30})`; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(x, y, 25 + (30 - e.life), 0, Math.PI * 2); ctx.stroke();
-        }
-        ctx.shadowBlur = 0;
-    }
+        let e = effects[i]; e.life--; e.x += e.vx || 0; e.y += e.vy || 0;
 
-    const ents = [...Object.values(state.mb), ...Object.values(state.pl)]; 
-    ents.sort((a,b) => a.y - b.y);
+        e.vx *= 0.9; e.vy *= 0.9; if (e.type === "blood") e.vy += 0.05; 
 
-    ents.forEach(e => {
-        const x = ox + e.x * SCALE + SCALE/2;
-        const y = oy + e.y * SCALE + SCALE/2;
-        const s = e.size || 12; 
-        const blink = e.hitFlash > 0;
+        const px = Math.floor(ox + e.x * SCALE), py = Math.floor(oy + e.y * SCALE);
 
-        if (e.equipment && e.equipment.body) {
-             if (e.equipment.body.rarity === "legendary") drawAura(x, y, "#f0f", 15); 
-             else if (e.equipment.body.rarity === "rare") drawAura(x, y, "#ff0", 8);
-        }
+        ctx.globalAlpha = e.life / (e.maxLife || 20); ctx.fillStyle = e.color || "#fff";
+
         
-        if (e.boss) drawAura(x, y, "#f00", 25);
-        else if (e.color && !e.npc && !e.class) drawAura(x, y, e.color, 10);
 
-        ctx.save(); ctx.translate(x, y);
-        let dirX = (e.vx > 0.01) ? 1 : (e.vx < -0.01) ? -1 : 1; 
-        if (e.id === myId) {
-            if (!isMobile && !gamepadActive) { dirX = (mouse.x > canvas.width/2) ? 1 : -1; } 
-            else { 
-                const currentInputX = joystick.normX || keys.game_x || (keys.a ? -1 : keys.d ? 1 : 0);
-                if (Math.abs(currentInputX) > 0.1) dirX = Math.sign(currentInputX); 
-            }
-        }
-        ctx.scale(dirX, 1);
+        if(e.type==="slash") {
 
-        const isFlashing = blink && (e.hitFlash % 4 < 2);
-        if (isFlashing) ctx.filter = "brightness(1000%) grayscale(100%)"; 
+            ctx.strokeStyle = `rgba(255,255,255,${e.life/8})`; ctx.lineWidth=3;
 
-        if (e.class) {
-            let c = e.class; ctx.fillStyle = (c==="knight"?"#668":c==="hunter"?"#464":"#448"); ctx.fillRect(-4, -6, 8, 12);
-            if(e.equipment && e.equipment.head) { ctx.fillStyle=e.equipment.head.color; ctx.fillRect(-4,-9,8,5); }
-            if(e.equipment && e.equipment.body) { ctx.fillStyle=e.equipment.body.color; ctx.fillRect(-3,-4,6,8); }
-            if(e.equipment && e.equipment.hand) {
-                drawProceduralItem(ctx, e.equipment.hand, 6, 2, 0, 0.7);
-            }
-            if (e.id === myId) {
-                ctx.fillStyle = "white"; ctx.fillRect(-2, -4, 2, 2); ctx.fillRect(2, -4, 2, 2); 
-                let lookAngle = (!isMobile && !gamepadActive) ? getMouseAngle() : getAttackAngle();
-                let lx = Math.cos(lookAngle); let ly = Math.sin(lookAngle); if (dirX === -1) lx = -lx; 
-                ctx.fillStyle = "black"; ctx.fillRect(-2 + lx, -4 + ly, 1, 1); ctx.fillRect(2 + lx, -4 + ly, 1, 1); 
-            } else { ctx.fillStyle = "#000"; ctx.fillRect(-2, -4, 1, 1); ctx.fillRect(2, -4, 1, 1); }
-        }
-        else if (e.ai === "resource") {
-            if(e.drop==="wood") { ctx.fillStyle="#532"; ctx.fillRect(-2, -2, 4, 6); ctx.fillStyle="#151"; ctx.beginPath(); ctx.moveTo(0,-16); ctx.lineTo(-10,-2); ctx.lineTo(10,-2); ctx.fill(); ctx.fillStyle="#262"; ctx.beginPath(); ctx.moveTo(0,-14); ctx.lineTo(-7,-4); ctx.lineTo(7,-4); ctx.fill(); } 
-            else { ctx.fillStyle="#555"; ctx.beginPath(); ctx.arc(0,0,6,0,Math.PI*2); ctx.fill(); ctx.fillStyle="#777"; ctx.beginPath(); ctx.arc(-2,-2,3,0,Math.PI*2); ctx.fill(); }
-        }
-        else if (e.npc) {
-            ctx.fillStyle = e.name==="Merchant"?"#a84":e.name==="Healer"?"#fff":"#555"; ctx.fillRect(-5,-8,10,14); ctx.fillStyle="#fcc"; ctx.fillRect(-3,-12,6,4); 
-            if(e.name==="Merchant") { ctx.fillStyle="#a84"; ctx.fillRect(-4,-13,8,2); ctx.fillStyle="#0f0"; ctx.fillText("$", 0, -16); } 
-            if(e.name==="Healer") { ctx.fillStyle="#f00"; ctx.fillRect(-1,-10,2,6); ctx.fillRect(-3,-8,6,2); } 
-            if(e.name==="Blacksmith") { ctx.fillStyle="#333"; ctx.fillRect(4, -2, 4, 8); } 
-        }
-        else if (e.boss) {
-            const bs = s; 
-            if (e.name && e.name.includes("TIAMAT")) {
-                ctx.save();
-                const t = Date.now() * 0.002;
-                const pulse = Math.sin(t * 2) * bs * 0.05;
-                const wingWave = Math.sin(t * 1.5) * bs * 0.25;
-                const tailWave = Math.sin(t * 1.2) * bs * 0.3;
-                ctx.shadowBlur = 30; ctx.shadowColor = "#800020"; ctx.globalAlpha = 0.9;
-                ctx.fillStyle = "rgba(20,0,12,0.85)"; ctx.strokeStyle = "#600020"; ctx.lineWidth = 2;
-                ctx.beginPath(); ctx.moveTo(-bs * 0.2, 0); ctx.quadraticCurveTo(-bs * 1.4, -bs * 0.8 + wingWave, -bs * 2.0, 0); ctx.quadraticCurveTo(-bs * 1.3, bs * 0.8, -bs * 0.3, bs * 0.4); ctx.closePath(); ctx.fill(); ctx.stroke();
-                ctx.beginPath(); ctx.moveTo(bs * 0.2, 0); ctx.quadraticCurveTo(bs * 1.4, -bs * 0.8 - wingWave, bs * 2.0, 0); ctx.quadraticCurveTo(bs * 1.3, bs * 0.8, bs * 0.3, bs * 0.4); ctx.closePath(); ctx.fill(); ctx.stroke();
-                ctx.shadowBlur = 0; ctx.fillStyle = "#120008"; ctx.beginPath(); ctx.ellipse(0, 0, bs * 0.55, bs * 0.7 + pulse, 0, 0, Math.PI * 2); ctx.fill();
-                ctx.strokeStyle = "#500020"; ctx.lineWidth = 2; for (let i = -2; i <= 2; i++) { ctx.beginPath(); ctx.moveTo(i * bs * 0.18, -bs * 0.6); ctx.lineTo(i * bs * 0.12, bs * 0.6); ctx.stroke(); }
-                const headColors = ["#ff3030", "#b040ff", "#ff3030"];
-                for (let i = -1; i <= 1; i++) {
-                    const hx = i * bs * 0.45; const hy = -bs * 0.95 + Math.sin(t + i) * bs * 0.08;
-                    ctx.strokeStyle = "#180008"; ctx.lineWidth = bs * 0.18; ctx.beginPath(); ctx.moveTo(i * bs * 0.25, -bs * 0.55); ctx.quadraticCurveTo(hx * 0.8, -bs * 0.8, hx, hy); ctx.stroke();
-                    ctx.save(); ctx.translate(hx, hy);
-                    ctx.fillStyle = "#0a0005"; ctx.beginPath(); ctx.ellipse(0, 0, bs * 0.22, bs * 0.28, 0, 0, Math.PI * 2); ctx.fill();
-                    ctx.fillStyle = "#200010"; ctx.beginPath(); ctx.ellipse(0, bs * 0.18, bs * 0.18, bs * 0.14, 0, 0, Math.PI * 2); ctx.fill();
-                    ctx.fillStyle = "#ddd"; ctx.beginPath(); ctx.moveTo(-bs * 0.12, -bs * 0.18); ctx.lineTo(-bs * 0.28, -bs * 0.45); ctx.lineTo(-bs * 0.02, -bs * 0.25); ctx.fill();
-                    ctx.beginPath(); ctx.moveTo(bs * 0.12, -bs * 0.18); ctx.lineTo(bs * 0.28, -bs * 0.45); ctx.lineTo(bs * 0.02, -bs * 0.25); ctx.fill();
-                    ctx.shadowColor = headColors[i + 1]; ctx.shadowBlur = 12; ctx.fillStyle = headColors[i + 1]; ctx.beginPath(); ctx.arc(0, -bs * 0.05, bs * 0.06, 0, Math.PI * 2); ctx.fill(); ctx.shadowBlur = 0;
-                    ctx.restore();
-                }
-                ctx.strokeStyle = "#1a0008"; ctx.lineWidth = bs * 0.22; ctx.lineCap = "round";
-                ctx.beginPath(); ctx.moveTo(0, bs * 0.7); ctx.bezierCurveTo(tailWave, bs * 1.2, -tailWave, bs * 1.8, 0, bs * 2.4); ctx.stroke();
-                ctx.restore();
-            }
-            else if (e.name.includes("Butcher")) {
-                ctx.fillStyle = "#900"; ctx.fillRect(-bs/1.1, -bs/2, bs*1.8, bs);
-                ctx.fillStyle = "#700"; ctx.fillRect(-bs/3, -bs + 4, bs/1.5, bs/2);
-                ctx.fillStyle = "#fff"; ctx.fillRect(-3, -bs + 8, 2, 2); ctx.fillRect(3, -bs + 8, 2, 2);
-                ctx.fillStyle = "#ccc"; ctx.fillRect(-bs/1.5, -bs/3, bs*1.3, bs*0.7);
-                ctx.fillStyle = "#b00"; ctx.fillRect(-5, 0, 4, 4); ctx.fillRect(6, -5, 3, 3); ctx.fillRect(-bs/2, 5, 5, 5);
-                ctx.save(); ctx.translate(bs, 0); ctx.fillStyle = "#421"; ctx.fillRect(-2, 2, 4, 6); ctx.fillStyle = "#667"; ctx.fillRect(-2, -14, 12, 16); ctx.fillStyle = "#aaa"; ctx.fillRect(-2, -14, 2, 16); ctx.fillStyle = "#a00"; ctx.fillRect(-2, -4, 12, 6); ctx.restore();
-            } 
-            else if (e.name.includes("Lich")) {
-                ctx.fillStyle = "#222"; ctx.beginPath(); ctx.moveTo(0, -bs); ctx.lineTo(-bs/2, bs/2); ctx.lineTo(bs/2, bs/2); ctx.fill(); ctx.fillStyle = "#eee"; ctx.beginPath(); ctx.arc(0, -bs/2, 6, 0, Math.PI*2); ctx.fill(); ctx.fillStyle = "#0ff"; ctx.fillRect(-2, -bs/2 - 2, 1, 1); ctx.fillRect(1, -bs/2 - 2, 1, 1); ctx.strokeStyle = "#db0"; ctx.lineWidth=2; ctx.strokeRect(-4, -bs/2-6, 8, 2); 
-            }
-            else if (e.name.includes("Broodmother")) {
-                ctx.fillStyle = "#120"; ctx.lineWidth = 2; ctx.strokeStyle = "#120"; for(let i=0; i<4; i++) { ctx.beginPath(); ctx.moveTo(0,0); ctx.lineTo(bs, (i*6)-10); ctx.moveTo(0,0); ctx.lineTo(-bs, (i*6)-10); ctx.stroke(); } ctx.fillStyle = "#241"; ctx.beginPath(); ctx.arc(0, 0, bs/2, 0, Math.PI*2); ctx.fill(); ctx.fillStyle = "#f00"; ctx.fillRect(-2, -bs/2, 1, 1); ctx.fillRect(1, -bs/2, 1, 1); 
-            }
-            else if (e.name.includes("Fire Lord")) {
-                ctx.fillStyle = "#f80"; let wobble = Math.sin(Date.now()/100) * 2; ctx.beginPath(); ctx.arc(0, wobble, bs/2, 0, Math.PI*2); ctx.fill(); ctx.fillStyle = "#ff0"; ctx.beginPath(); ctx.arc(0, wobble, bs/3, 0, Math.PI*2); ctx.fill(); ctx.fillStyle = "#f40"; ctx.fillRect(-bs, wobble - 10, 6, 6); ctx.fillRect(bs-6, wobble - 10, 6, 6);
-            }
-            else if (e.name.includes("Void")) {
-                ctx.fillStyle = "#fff"; ctx.beginPath(); ctx.arc(0, 0, bs/2, 0, Math.PI*2); ctx.fill(); ctx.fillStyle = "#909"; ctx.beginPath(); ctx.arc(0, 0, bs/3, 0, Math.PI*2); ctx.fill(); ctx.fillStyle = "#000"; ctx.beginPath(); ctx.arc(0, 0, bs/5, 0, Math.PI*2); ctx.fill(); ctx.strokeStyle = "#909"; ctx.lineWidth=2; ctx.beginPath(); ctx.moveTo(0, bs/2); ctx.quadraticCurveTo(5, bs, 0, bs+5); ctx.stroke(); ctx.beginPath(); ctx.moveTo(-5, bs/2); ctx.quadraticCurveTo(-10, bs, -5, bs+5); ctx.stroke();
-            }
-            else if (e.name.includes("DIABLO")) {
-                const scale = 1.6; const b = bs * scale; ctx.fillStyle = "#a00"; ctx.beginPath(); ctx.moveTo(-10*scale, 10*scale); ctx.lineTo(-b/2, -b/2); ctx.lineTo(b/2, -b/2); ctx.lineTo(10*scale, 10*scale); ctx.fill(); ctx.fillRect(-6*scale, -b/2 - 8*scale, 12*scale, 10*scale); ctx.fillStyle = "#eee"; ctx.beginPath(); ctx.moveTo(-6*scale, -b/2 - 6*scale); ctx.lineTo(-12*scale, -b - 5*scale); ctx.lineTo(-2*scale, -b/2 - 8*scale); ctx.fill(); ctx.beginPath(); ctx.moveTo(6*scale, -b/2 - 6*scale); ctx.lineTo(12*scale, -b - 5*scale); ctx.lineTo(2*scale, -b/2 - 8*scale); ctx.fill(); ctx.fillStyle = "#ff0"; ctx.fillRect(-3*scale, -b/2 - 4*scale, 2*scale, 2*scale); ctx.fillRect(1*scale, -b/2 - 4*scale, 2*scale, 2*scale); ctx.strokeStyle = "#a00"; ctx.lineWidth = 4 * scale; ctx.beginPath(); ctx.moveTo(0, 5*scale); ctx.quadraticCurveTo(-b, 5*scale, -b - 5*scale, -5*scale); ctx.stroke();
-            }
-            else { ctx.fillStyle = e.color || "#f00"; ctx.fillRect(-s/2, -s/2, s, s); }
-        }
-        else {
-            const t = e.type;
-            if (t === "rat") { ctx.fillStyle = "#654"; ctx.beginPath(); ctx.ellipse(0, 2, 6, 3, 0, 0, Math.PI*2); ctx.fill(); ctx.fillStyle = "#fbb"; ctx.beginPath(); ctx.moveTo(6, 2); ctx.lineTo(10, 2); ctx.stroke(); }
-            else if (t === "bat") { ctx.fillStyle = "#222"; ctx.beginPath(); ctx.moveTo(0,0); ctx.lineTo(-8, -6); ctx.lineTo(-4, 2); ctx.lineTo(0,0); ctx.lineTo(4, 2); ctx.lineTo(8, -6); ctx.fill(); }
-            else if (t === "slime") { ctx.fillStyle = e.color || "#0f0"; ctx.globalAlpha = 0.8; ctx.beginPath(); ctx.arc(0, 0, 6, Math.PI, 0); ctx.lineTo(6, 4); ctx.lineTo(-6, 4); ctx.fill(); ctx.fillStyle = "#000"; ctx.fillRect(-2, -1, 1, 1); ctx.fillRect(2, -1, 1, 1); ctx.globalAlpha = 1.0; }
-            else if (t === "goblin" || t === "imp") { ctx.fillStyle = e.color || (t==="imp"?"#d40":"#484"); ctx.fillRect(-4, -6, 8, 10); ctx.beginPath(); ctx.moveTo(-4, -4); ctx.lineTo(-7, -8); ctx.lineTo(-4, -2); ctx.fill(); ctx.beginPath(); ctx.moveTo(4, -4); ctx.lineTo(7, -8); ctx.lineTo(4, -2); ctx.fill(); ctx.fillStyle = "#ccc"; ctx.fillRect(4, 0, 4, 1); }
-            else if (t === "skeleton" || t === "archer") { ctx.fillStyle = "#eee"; ctx.fillRect(-3, -7, 6, 6); ctx.fillRect(-2, 0, 4, 8); ctx.strokeStyle = "#eee"; ctx.lineWidth=1; ctx.beginPath(); ctx.moveTo(-4, 2); ctx.lineTo(4, 2); ctx.moveTo(-4, 4); ctx.lineTo(4, 4); ctx.stroke(); if (t==="archer") { ctx.strokeStyle="#852"; ctx.lineWidth=1; ctx.beginPath(); ctx.arc(5, 0, 5, -1, 1); ctx.stroke(); } else { ctx.fillStyle="#aaa"; ctx.fillRect(4, -2, 2, 8); } }
-            else if (t === "orc" || t === "hellknight") { ctx.fillStyle = t==="orc"?"#262":"#300"; ctx.fillRect(-6, -8, 12, 14); if(t==="orc"){ ctx.fillStyle="#fff"; ctx.fillRect(-3,-3,1,2); ctx.fillRect(2,-3,1,2); } else { ctx.fillStyle="#111"; ctx.fillRect(-2, -6, 4, 2); } ctx.fillStyle = "#555"; ctx.fillRect(6, -8, 2, 16); ctx.fillRect(4, -8, 6, 4); }
-            else if (t === "mage" || t === "ghost" || t === "succubus") { ctx.fillStyle = t==="ghost"?"rgba(200,255,255,0.7)":t==="succubus"?"#f0f":"#408"; ctx.beginPath(); ctx.moveTo(0, -8); ctx.lineTo(-5, 8); ctx.lineTo(5, 8); ctx.fill(); if(t==="mage") { ctx.fillStyle="#840"; ctx.fillRect(4, -8, 1, 16); ctx.fillStyle="#0ff"; ctx.fillRect(3,-10,3,3); } if(t==="succubus") { ctx.fillStyle="#000"; ctx.fillRect(-6,-4,3,3); ctx.fillRect(3,-4,3,3); } }
-            else if (t === "chest") { ctx.fillStyle = "#a60"; ctx.fillRect(-6, -4, 12, 8); ctx.fillStyle = "#fd0"; ctx.fillRect(-1, -2, 2, 3); ctx.strokeStyle = "#420"; ctx.strokeRect(-6, -4, 12, 8); }
-            else { ctx.fillStyle = e.color || "#ccc"; ctx.fillRect(-s/2, -s/2, s, s); }
+            ctx.beginPath(); ctx.arc(px, py, 20, e.angle-1.2, e.angle+1.2); ctx.stroke();
+
         }
 
-        if(e.input && e.input.block) { ctx.strokeStyle = "#0ff"; ctx.lineWidth=2; ctx.beginPath(); ctx.arc(0,0,14,0,Math.PI*2); ctx.stroke(); }
-        ctx.restore();
-        ctx.filter = "none"; 
+        else if(e.type==="chop") {
 
-        const maxHp = e.stats ? e.stats.maxHp : e.maxHp;
-        if(e.hp > 0 && e.hp < maxHp && e.ai!=="static" && !e.npc && e.ai!=="resource") { 
-            const pct = Math.max(0, e.hp/maxHp); const bw = e.boss ? 30 : 16;
-            ctx.fillStyle="#000"; ctx.fillRect(x-bw/2, y-s-6, bw, 3); 
-            ctx.fillStyle=e.boss?"#d00":"#f00"; ctx.fillRect(x-bw/2, y-s-6, bw*pct, 3); 
-        }
-        if(e.class || e.boss || e.npc || (e.color && !e.ai.includes("resource"))) { 
-            ctx.fillStyle = e.npc ? "#0ff" : e.boss ? "#f00" : (e.id === myId ? "#0f0" : "#fff"); 
-            ctx.font = e.boss ? "bold 10px Courier New" : "8px Courier New"; ctx.textAlign="center"; 
-            let nameTxt = e.class ? `[Lvl ${e.level}] ${e.name}` : e.name;
-            if (e.boss) nameTxt = "☠ " + nameTxt + " ☠";
-            ctx.fillText(nameTxt, x, y - s - 10); 
-        }
-        if(e.chatMsg && e.chatTimer > 0) {
-            ctx.font = "10px Courier New";
-            const w = ctx.measureText(e.chatMsg).width + 6;
-            ctx.fillStyle = "rgba(0,0,0,0.7)"; ctx.strokeStyle="#fff"; ctx.lineWidth=1;
-            ctx.fillRect(x - w/2, y - s - 28, w, 14); ctx.strokeRect(x - w/2, y - s - 28, w, 14);
-            ctx.fillStyle = "#fff"; ctx.fillText(e.chatMsg, x, y - s - 18);
-        }
-    });
+            ctx.strokeStyle = `rgba(255,200,200,${e.life/8})`; ctx.lineWidth=4;
 
-    ctx.save();
-    const sy=Math.floor(cam.y/SCALE), ey=sy+Math.ceil(canvas.height/SCALE)+1; const sx=Math.floor(cam.x/SCALE), ex=sx+Math.ceil(canvas.width/SCALE)+1;
-    for(let y=sy; y<ey; y++){
-        if(!explored[y]) continue;
-        for(let x=sx; x<ex; x++){
-            const dist = Math.hypot(x - me.x, y - me.y);
-            if (dist > state.lightRadius) {
-                if (explored[y][x] === 1) { ctx.fillStyle = 'rgba(0, 0, 0, 0.75)'; ctx.fillRect(ox+x*SCALE, oy+y*SCALE, SCALE, SCALE); } 
-                else if (explored[y][x] === 0) { ctx.fillStyle = 'rgba(0, 0, 0, 1.0)'; ctx.fillRect(ox+x*SCALE, oy+y*SCALE, SCALE, SCALE); }
-            }
+            ctx.beginPath(); ctx.moveTo(px,py); ctx.lineTo(px + Math.cos(e.angle)*20, py + Math.sin(e.angle)*20); ctx.stroke();
+
         }
-    }
-    
-    const innerRadius = lightRadiusPixels * 0.7; const outerRadius = lightRadiusPixels * 1.0;
-    const gradient = ctx.createRadialGradient(playerScreenX, playerScreenY, innerRadius, playerScreenX, playerScreenY, outerRadius);
-    gradient.addColorStop(0, 'rgba(0, 0, 0, 0)'); gradient.addColorStop(0.75, 'rgba(0, 0, 0, 0.2)'); gradient.addColorStop(1, 'rgba(0, 0, 0, 1)'); 
-    ctx.fillStyle = gradient; ctx.fillRect(0, 0, canvas.width, canvas.height);
-    
-    ctx.restore(); 
-    
-    if(state.hint && me) {
-        const hintDx = state.hint.x - me.x; const hintDy = state.hint.y - me.y; const dist = Math.hypot(hintDx, hintDy);
-        if(dist > 8) {
-            const angle = Math.atan2(hintDy, hintDx);
-            const radius = 40; 
-            const ax = ox + me.x*SCALE + SCALE/2 + Math.cos(angle)*radius;
-            const ay = oy + me.y*SCALE + SCALE/2 + Math.sin(angle)*radius;
-            ctx.save(); ctx.translate(ax, ay); ctx.rotate(angle); 
-            const scale = 1 + Math.sin(Date.now() / 200) * 0.2; ctx.scale(scale, scale);
-            ctx.fillStyle = state.hint.type === "exit" ? "#0f0" : "#f00";
-            ctx.shadowBlur = 10; ctx.shadowColor = ctx.fillStyle; 
-            ctx.beginPath(); ctx.moveTo(6, 0); ctx.lineTo(-6, -6); ctx.lineTo(-6, 6); ctx.closePath(); ctx.fill();
-            ctx.restore(); ctx.shadowBlur = 0;
+
+        else if(e.type==="stab") {
+
+            ctx.fillStyle = "#fff"; ctx.font="14px monospace"; ctx.fillText("X", px, py);
+
         }
+
+        else if(e.type==="nova") { ctx.strokeStyle=e.color; ctx.lineWidth=2; ctx.beginPath(); ctx.arc(px,py,(20-e.life)*2,0,Math.PI*2); ctx.stroke(); }
+
+        else ctx.fillRect(px, py, 2, 2);
+
+        
+
+        if(e.life <= 0) effects.splice(i, 1);
+
     }
 
-    if (!fogPattern) createFogPattern();
-    ctx.fillStyle = fogPattern; ctx.globalAlpha = 0.5; ctx.fillRect(0, 0, canvas.width, canvas.height); ctx.globalAlpha = 1.0;
-    
-    drawOffscreenPlayerIndicators(); 
-    
+    ctx.globalAlpha = 1.0; ctx.globalCompositeOperation = "source-over";
+
+
+
     for(let i=texts.length-1; i>=0; i--){ 
-        let t=texts[i]; t.y += t.vy; t.life--; 
-        ctx.globalAlpha = Math.min(1.0, Math.max(0, t.life / 50)); 
-        ctx.fillStyle = t.color; ctx.font = t.size || "10px Courier New"; ctx.textAlign = "center"; 
-        ctx.strokeStyle = "#000"; ctx.lineWidth = 3; ctx.strokeText(t.val, ox+t.x*SCALE, oy+t.y*SCALE); 
-        ctx.fillText(t.val, ox+t.x*SCALE, oy+t.y*SCALE); ctx.globalAlpha = 1.0; 
+
+        let t=texts[i]; t.y += t.vy; t.x += t.vx; t.life--; 
+
+        if (t.gravity) t.vy += t.gravity; 
+
+        ctx.globalAlpha = Math.min(1.0, t.life / 20); ctx.fillStyle = t.color; 
+
+        ctx.font = `bold ${t.size||10}px 'VT323'`; ctx.textAlign = "center"; 
+
+        ctx.strokeStyle = "#000"; ctx.lineWidth = 3; ctx.strokeText(t.val, ox + t.x * SCALE, oy + t.y * SCALE);
+
+        ctx.fillText(t.val, ox + t.x * SCALE, oy + t.y * SCALE); 
+
         if(t.life<=0) texts.splice(i,1); 
+
     }
+
+    ctx.globalAlpha = 1.0;
+
+
+
+    const screenCx = ox + me.x * SCALE, screenCy = oy + me.y * SCALE;
+
+    const flicker = Math.random() * 0.5;
+
+    const r = (state.lightRadius * SCALE) + flicker;
+
+    const grad = ctx.createRadialGradient(screenCx, screenCy, r * 0.4, screenCx, screenCy, r);
+
+    grad.addColorStop(0, "rgba(0,0,0,0)"); grad.addColorStop(1, "rgba(5,0,5,1)");
+
+    ctx.fillStyle = grad; ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+
+
+    if(!isMobile) {
+
+        const gps = navigator.getGamepads ? navigator.getGamepads() : [];
+
+        if(gps[0]) {
+
+            gamepad = gps[0]; gamepadActive = true;
+
+            let ax0 = gamepad.axes[0], ay0 = gamepad.axes[1];
+
+            if(Math.abs(ax0)<0.2) ax0=0; if(Math.abs(ay0)<0.2) ay0=0;
+
+            keys.game_x = ax0; keys.game_y = ay0;
+
+            if(gamepad.buttons[0].pressed) socket.emit("attack", getAttackAngle());
+
+            if(gamepad.buttons[1].pressed) socket.emit("dash", getDashAngle());
+
+            if(gamepad.buttons[2].pressed) socket.emit("potion");
+
+            if(gamepad.buttons[3].pressed) socket.emit("skill", {idx:1, angle:getAttackAngle()});
+
+            sendInput();
+
+        }
+
+    }
+
 }
 
-window.login = () => { ensureBGM(); socket.emit("login", document.getElementById("username").value); };
+
+
+window.login = () => { ensureAudio(); socket.emit("login", document.getElementById("username").value); };
+
 window.create = () => socket.emit("create_char", {name:document.getElementById("cname").value, cls:document.getElementById("cclass").value});
+
 window.addStat = (s) => socket.emit("add_stat", s);
+
 window.buy = (idx) => socket.emit("buy", idx);
-window.sell = () => { if(!me || !uiState.shop || focusArea !== 'inventory' || me.inventory.length === 0) return; socket.emit("sell", focusIndex); updateUI(); };
+
+window.sell = () => { if(focusIndex>=0) socket.emit("sell", focusIndex); updateUI(); };
+
 window.closeShop = closeAllMenus;
 
-/* MOBILE BUTTONS */
-document.querySelectorAll(".action-btn").forEach(btn => {
-    const action = btn.dataset.action;
-    const handle = (e) => {
-        e.preventDefault(); e.stopPropagation();
-        if (!me || uiState.chat) return;
-        ensureBGM();
-        const ang = getAttackAngle();
-        switch (action) {
-            case "attack": socket.emit("attack", ang); break;
-            case "skill": socket.emit("skill", { idx: 1, angle: ang }); break;
-            case "dash": socket.emit("dash", getDashAngle()); break;
-            case "potion": socket.emit("potion"); break;
-            case "block": keys.q = true; sendInput(true); break;
-        }
-    };
-    const release = () => { if (action === "block") { keys.q = false; sendInput(true); } };
-    btn.addEventListener("touchstart", handle, { passive: false });
-    btn.addEventListener("touchend", release);
-    btn.addEventListener("mousedown", handle);
-    btn.addEventListener("mouseup", release);
-});
 
-document.querySelectorAll("#mobile-menu-buttons .skill-btn").forEach(btn => {
-    const action = btn.dataset.action;
-    const handle = (e) => {
-        e.preventDefault(); e.stopPropagation();
-        if (!me) return;
-        if (action === "toggle_inv") toggleMenu("inv");
-        if (action === "toggle_char") toggleMenu("char");
-        if (action === "toggle_craft") toggleMenu("craft");
-        if (action === "toggle_chat") {
-            uiState.chat = !uiState.chat;
-            document.getElementById("chat-container").style.display = uiState.chat ? "block" : "none";
-            if (uiState.chat) setTimeout(() => chatInput.focus(), 50);
-        }
-        updateUI();
-    };
-    btn.addEventListener("touchstart", handle, { passive:false });
-    btn.addEventListener("mousedown", handle);
-});
-
-/* CHECKPOINT SYSTEM */
-const CHECKPOINT_SYSTEM = {
-    interval: 10,
-    getAvailable(maxLevel) {
-        const cps = []; for (let i = this.interval; i <= maxLevel; i += this.interval) cps.push(i); return cps;
-    }
-};
-window.enterCheckpoint = function(level) { socket.emit("enter_checkpoint", level); };
 
 draw();

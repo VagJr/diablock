@@ -4,54 +4,78 @@ const path = require("path");
 const { Server } = require("socket.io");
 const { Pool } = require("pg");
 
-// ===================================
-// 0. CONFIGURAÇÃO DE GM (ADMIN)
-// ===================================
+// =======================================================
+// DIABLOCK - LEGACY OF SHADOWS [SERVER GOLD MASTER v1.0]
+// Studio Direction: Grim Voxel
+// =======================================================
+
 const GM_USERS = ["admin", "dev", "god", "creator"];
 
-// ===================================
-// 1. DATABASE CONFIGURATION
-// ===================================
+// --- 1. CONFIGURAÇÃO DE BANCO DE DADOS (ROBUSTEZ) ---
 let DB_MODE = process.env.DATABASE_URL ? "POSTGRES" : "NONE";
 let pgPool = null;
 let isDbReady = false;
 
 async function initializeServer() {
+    console.log("------------------------------------------------");
+    console.log("   DIABLOCK - LEGACY OF SHADOWS (SERVER UP)     ");
+    console.log("------------------------------------------------");
+
     if (DB_MODE === 'POSTGRES') {
         try {
             pgPool = new Pool({
                 connectionString: process.env.DATABASE_URL,
-                ssl: process.env.NODE_ENV === "production" ? { rejectUnauthorized: false } : false
+                ssl: process.env.NODE_ENV === "production" ? { rejectUnauthorized: false } : false,
+                connectionTimeoutMillis: 5000 // Timeout para evitar travar no boot
             });
-            if (process.env.WIPE_DB === "true") await pgPool.query("DROP TABLE IF EXISTS characters;");
+            
+            // Teste de conexão
+            await pgPool.query("SELECT 1"); 
+            
+            if (process.env.WIPE_DB === "true") {
+                console.warn("!!! WIPE_DB ACTIVE: DELETING ALL CHARACTERS !!!");
+                await pgPool.query("DROP TABLE IF EXISTS characters;");
+            }
+
             await pgPool.query(`
                 CREATE TABLE IF NOT EXISTS characters (
-                    id TEXT PRIMARY KEY, user_name TEXT NOT NULL, char_name TEXT NOT NULL,
-                    data JSONB NOT NULL, updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+                    id TEXT PRIMARY KEY, 
+                    user_name TEXT NOT NULL, 
+                    char_name TEXT NOT NULL,
+                    data JSONB NOT NULL, 
+                    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
                 );
             `);
+            
+            // Index para busca rápida por usuário
+            await pgPool.query("CREATE INDEX IF NOT EXISTS idx_user_name ON characters(user_name);");
+            
             isDbReady = true;
-            console.log("PostgreSQL connected. Persistence ENABLED.");
+            console.log(`[DB] PostgreSQL Connected: ENABLED. Persistence ON.`);
         } catch (err) {
-            console.error("FATAL ERROR: PostgreSQL connection failed.", err.message);
+            console.error("[DB] FATAL ERROR: Connection failed. Switching to RAM-ONLY mode.", err.message);
             DB_MODE = 'NONE';
         }
+    } else {
+        console.log("[DB] No DATABASE_URL found. Running in RAM-ONLY mode (Data lost on restart).");
     }
-    server.listen(3000, () => { console.log("DIABLOCK V35 GOLD - Server running on port 3000"); });
+
+    server.listen(process.env.PORT || 3000, () => { 
+        console.log(`[NET] Server listening on port ${process.env.PORT || 3000}`);
+    });
 }
 
-// ===================================
-// 2. FUNÇÕES DE PERSISTÊNCIA
-// ===================================
-let localCharacters = {};
+// --- 2. PERSISTÊNCIA ---
+let localCharacters = {}; // Fallback RAM
 
 async function loadUserChars(user) {
     if (DB_MODE === 'NONE' || !isDbReady) return localCharacters[user] || {};
     try {
-        const r = await pgPool.query("SELECT char_name, data->>'level' AS level FROM characters WHERE user_name=$1", [user]);
-        const chars = {}; r.rows.forEach(c => chars[c.char_name] = { level: Number(c.level) });
+        const r = await pgPool.query("SELECT char_name, data->>'level' AS level, data->>'class' as class_name FROM characters WHERE user_name=$1", [user]);
+        const chars = {}; 
+        r.rows.forEach(c => chars[c.char_name] = { level: Number(c.level), class: c.class_name });
         return chars;
-    } catch (error) { return {}; }
+    } catch (error) { console.error("DB Load Error:", error); return {}; }
 }
 
 async function createChar(user, name, cls) {
@@ -83,11 +107,11 @@ async function loadCharData(user, name) {
 }
 
 async function saveCharData(user, name, data) {
+    // Sanitização para economizar espaço e evitar bugs cíclicos
     const savableData = { ...data };
-    delete savableData.x; delete savableData.y; delete savableData.vx; delete savableData.vy; 
-    delete savableData.input; delete savableData.cd; delete savableData.id;
-    delete savableData.user; delete savableData.charName; delete savableData.chatMsg; delete savableData.chatTimer;
-    delete savableData.instId; delete savableData.buffs; delete savableData.dashTime; delete savableData.god; 
+    const fieldsToRemove = ['x', 'y', 'vx', 'vy', 'input', 'cd', 'id', 'user', 'charName', 'chatMsg', 'chatTimer', 'instId', 'buffs', 'dashTime', 'god', 'hitFlash', 'vx', 'vy'];
+    fieldsToRemove.forEach(f => delete savableData[f]);
+
     if (DB_MODE === 'NONE' || !isDbReady) {
         if(localCharacters[user]) localCharacters[user][name] = savableData;
         return;
@@ -98,9 +122,7 @@ async function saveCharData(user, name, data) {
     } catch (error) { console.error(`Error saving char:`, error); }
 }
 
-// ===================================
-// 3. INFRAESTRUTURA E CONSTANTES
-// ===================================
+// --- 3. INFRAESTRUTURA HTTP & WEBSOCKET ---
 const server = http.createServer((req, res) => {
   const safeUrl = decodeURI(req.url === "/" ? "/index.html" : req.url);
   const p = path.join(__dirname, safeUrl);
@@ -115,15 +137,16 @@ const server = http.createServer((req, res) => {
 });
 const io = new Server(server, { transports: ['websocket'], pingInterval: 10000, pingTimeout: 5000 });
 
+// --- 4. GAME CONSTANTS & DATA ---
 const SIZE = 120;
 const TILE_FLOOR=0, TILE_WALL=1;
 const TICK = 50; 
 const SCALE = 16; 
 const instances = {}; 
 
-const PREFIXES = ["Ancient", "Sharp", "Heavy", "Fast", "Brutal", "Glowing", "Cursed", "Holy", "Dark", "Light"];
-const SUFFIXES = ["of Doom", "of Light", "of Speed", "of Power", "of the Bear", "of the Eagle", "of Hell", "of Heaven"];
-const LORE_TEXTS = ["The shadows whisper...", "Beware the Butcher...", "Tiamat sleeps below...", "Only the brave survive.", "Darkness rises."];
+const PREFIXES = ["Ancient", "Sharp", "Heavy", "Fast", "Brutal", "Glowing", "Cursed", "Holy", "Dark", "Light", "Void", "Blood"];
+const SUFFIXES = ["of Doom", "of Light", "of Speed", "of Power", "of the Bear", "of the Eagle", "of Hell", "of Heaven", "of the Void", "of Blood"];
+const LORE_TEXTS = ["The shadows whisper...", "Beware the Butcher...", "Tiamat sleeps below...", "Only the brave survive.", "Darkness rises.", "The cubes align...", "Legacy of the Prime."];
 
 function generateRandomName(baseName, rarity) {
     if (rarity === "common") return baseName;
@@ -153,7 +176,6 @@ function getDifficulty(lvl) {
     return DIFFICULTY.NORMAL;
 }
 
-// ADICIONADO DURABILIDADE BASE
 const ITEM_BASES = {
   sword: { slot: "hand", name: "Sword", dmg: 6, type: "melee", cd: 10, price:50, maxDur: 100 },
   axe:   { slot: "hand", name: "Axe", dmg: 10, spd: -0.03, type: "melee", cd: 16, price:60, maxDur: 100 },
@@ -285,7 +307,6 @@ function recalcStats(p) {
     ["hand", "head", "body", "rune"].forEach(s => { 
         if(p.equipment[s]){ 
             const it = p.equipment[s];
-            // LÓGICA DE ITEM QUEBRADO
             if (it.dur !== undefined && it.dur <= 0) return; 
 
             addHp+=it.stats?.hp||0; addMp+=it.stats?.mp||0; addDmg+=it.stats?.dmg||0; addDef+=it.stats?.def||0;
@@ -306,13 +327,13 @@ function recalcStats(p) {
     p.stats.lightRadius = Math.ceil(baseLightRadius); 
     const wep = p.equipment.hand;
     let baseDmg = addDmg;
-    // Verifica arma quebrada
+    
     if(wep && (!wep.dur || wep.dur > 0)) { 
         if(wep.type === "melee") baseDmg += str * 0.6; 
         if(wep.type === "ranged") baseDmg += dex * 0.6; 
         if(wep.type === "magic") baseDmg += int * 0.6; 
     } 
-    else { baseDmg += str * 0.3; } // Dano desarmado ou arma quebrada
+    else { baseDmg += str * 0.3; } 
     
     if (p.buffs.dmg) baseDmg *= 1.5; if (p.buffs.spd) p.stats.spd *= 1.5; 
     p.stats.dmg = Math.floor(baseDmg); p.stats.cd_mult = (1 - cdRed); 
@@ -416,7 +437,7 @@ io.on("connection", socket => {
     socket.on("dash", angle => { const p = instances[socket.instId]?.players[socket.id]; if(!p || p.cd.dash > 0 || p.input.block || p.mp < 10) return; const isCity = instances[p.instId].level === 0; if(!isCity) p.mp -= 10; p.cd.dash = Math.floor(30 * (p.stats.cd_mult || 1)); p.vx = Math.cos(angle) * 0.7; p.vy = Math.sin(angle) * 0.7; p.dashTime = 5; io.to(instances[socket.instId].id).emit("fx", { type: "dash", x: p.x, y: p.y }); });
     socket.on("potion", () => { const p = instances[socket.instId]?.players[socket.id]; if(!p) return; let pot = p.equipment.potion; let invIdx = -1; if (!pot) { invIdx = p.inventory.findIndex(i => i.key === "potion"); if (invIdx !== -1) pot = p.inventory[invIdx]; } if(!pot) return; p.hp = Math.min(p.stats.maxHp, p.hp + (pot.stats?.heal || 50)); io.to(instances[socket.instId].id).emit("fx", { type: "nova", x: p.x, y: p.y }); if (p.equipment.potion) p.equipment.potion = null; else if (invIdx !== -1) p.inventory.splice(invIdx, 1); recalcStats(p); });
     
-    // ATTACK HANDLER COM DURABILIDADE
+    // ATTACK HANDLER
     socket.on("attack", ang => { 
         const inst = instances[socket.instId]; const p = inst?.players[socket.id]; 
         if(!p || p.cd.atk > 0 || p.input.block) return; 
@@ -462,7 +483,7 @@ io.on("connection", socket => {
         } 
     });
 
-    // SKILL HANDLER (FIXED WIZARD)
+    // SKILL HANDLER
     socket.on("skill", ({angle}) => { 
         const inst = instances[socket.instId]; const p = inst?.players[socket.id]; 
         if(!p || p.cd.skill > 0 || p.input.block || inst.level === 0) return; 
@@ -488,12 +509,11 @@ io.on("connection", socket => {
             if(p.mp < 20) return; 
             p.mp -= 20; 
             base_cd = 60; 
-            // CORREÇÃO: Dispara projétil 'fireball_spell'
             inst.projectiles.push({ 
                 x:p.x, y:p.y, 
                 vx:Math.cos(ang)*0.35, vy:Math.sin(ang)*0.35, 
                 life: 60, dmg: damage * 2.5, 
-                owner: p.id, type: "fireball_spell", // Novo tipo
+                owner: p.id, type: "fireball_spell", 
                 angle: ang, isCrit: isCrit 
             }); 
         } 
@@ -503,14 +523,14 @@ io.on("connection", socket => {
     // REPAIR SYSTEM
     socket.on("repair_all", () => {
         const inst = instances[socket.instId]; const p = inst?.players[socket.id];
-        if(!p || inst.level !== 0) return; // Só na cidade
+        if(!p || inst.level !== 0) return; 
         
         let cost = 0;
         const slots = ["hand", "head", "body"];
         slots.forEach(s => {
             if(p.equipment[s] && p.equipment[s].dur < p.equipment[s].maxDur) {
                 const missing = p.equipment[s].maxDur - p.equipment[s].dur;
-                cost += missing * 2; // 2 Gold por ponto de durabilidade
+                cost += missing * 2; 
             }
         });
 
@@ -765,13 +785,17 @@ setInterval(() => {
             if(p.dashTime > 0) { p.dashTime--; p.x += p.vx; p.y += p.vy; if(isWall(inst, p.x, p.y)) { p.x -= p.vx; p.y -= p.vy; p.dashTime = 0; } } 
             else { const spd = p.input.block ? p.stats.spd * 0.3 : p.stats.spd; let nx = p.x + p.input.x * spd; let ny = p.y + p.input.y * spd; if(!isWall(inst, nx + (p.input.x>0?0.3:-0.3), p.y)) p.x = nx; if(!isWall(inst, p.x, ny + (p.input.y>0?0.3:-0.3))) p.y = ny; resolveCollisions(inst, p, 0.4); p.x += p.vx; p.y += p.vy; p.vx *= 0.8; p.vy *= 0.8; }
             for (let k in inst.items) { const it = inst.items[k]; if (Math.hypot(p.x - it.x, p.y - it.y) < 0.8 && (!it.pickupDelay || Date.now() > it.pickupDelay)) { if (it.item.key === "gold") { p.gold += it.item.val; io.to(p.id).emit("txt", { x: p.x, y: p.y, val: `+${it.item.val}G`, color: "#fb0" }); } else if (p.inventory.length < 20) { p.inventory.push(it.item); io.to(p.id).emit("txt", { x: p.x, y: p.y, val: it.item.name, color: it.item.color }); } delete inst.items[k]; } }
-            for(let i = inst.props.length - 1; i >= 0; i--) { const pr = inst.props[i]; const dist = Math.hypot(p.x - pr.x, p.y - pr.y); if ((pr.type === "shrine" || pr.type === "book") && dist < 1.0) { if (pr.type === "shrine" && pr.buff !== "none") { p.buffs = { [pr.buff]: true, timer: 600 }; p.hp = p.stats.maxHp; p.mp = p.stats.maxMp; recalcStats(p); io.to(p.id).emit("txt", {x:p.x, y:p.y, val:"SHRINE POWER!", color:"#0ff"}); io.to(inst.id).emit("fx", {type:"nova", x:p.x, y:p.y}); } else if (pr.type === "book") { const msg = LORE_TEXTS[Math.floor(Math.random() * LORE_TEXTS.length)]; io.to(p.id).emit("log", {msg: msg, color: "#aaa"}); io.to(p.id).emit("fx", {type: "lore"}); } else if (pr.type === "shrine") { if (p.hp < p.stats.maxHp) { p.hp = p.stats.maxHp; p.mp = p.stats.maxMp; io.to(p.id).emit("txt", {x:p.x, y:p.y, val:"REFRESHED", color:"#0ff"}); } } if (pr.buff !== "none") inst.props.splice(i, 1); } if (pr.type === "stairs" && dist < 1.0) { if (!pr.locked) { if (inst.level !== 0) changeLevel(io.sockets.sockets.get(p.id), p, inst.level + 1); } else { const keyIdx = p.inventory.findIndex(it => it.key === "key"); if (keyIdx !== -1) { p.inventory.splice(keyIdx, 1); pr.locked = false; pr.label = "UNLOCKED"; io.to(inst.id).emit("txt", {x:pr.x, y:pr.y, val:"UNLOCKED!", color:"#ffd700"}); sendLog(inst.id, `${p.name} usou uma Chave!`, "#ffd700"); } else if (!p.lastMsg || Date.now() - p.lastMsg > 2000) { io.to(p.id).emit("txt", {x:p.x, y:p.y, val:"LOCKED", color:"#f00"}); p.lastMsg = Date.now(); } } } }
+            for(let i = inst.props.length - 1; i >= 0; i--) { const pr = inst.props[i]; const dist = Math.hypot(p.x - pr.x, p.y - pr.y); if ((pr.type === "shrine" || pr.type === "book") && dist < 1.0) { if (pr.type === "shrine" && pr.buff !== "none") { p.buffs = { [pr.buff]: true, timer: 600 }; p.hp = p.stats.maxHp; p.mp = p.stats.maxMp; recalcStats(p); io.to(p.id).emit("txt", {x:p.x, y:p.y, val:"SHRINE POWER!", color:"#0ff"}); io.to(inst.id).emit("fx", {type:"nova", x:p.x, y:p.y}); } else if (pr.type === "book") { const msg = LORE_TEXTS[Math.floor(Math.random() * LORE_TEXTS.length)]; io.to(p.id).emit("log", {msg: msg, color: "#aaa"}); io.to(p.id).emit("fx", {type: "lore"}); } else if (pr.type === "shrine") { if (p.hp < p.stats.maxHp) { p.hp = p.stats.maxHp; p.mp = p.stats.maxMp; io.to(p.id).emit("txt", {x:p.x, y:p.y, val:"REFRESHED", color:"#0ff"}); } } if (pr.buff !== "none") inst.props.splice(i, 1); } if (pr.type === "stairs" && dist < 1.0) { if (!pr.locked) {
+    const nextLevel = inst.level === 0 ? 1 : inst.level + 1;
+    changeLevel(io.sockets.sockets.get(p.id), p, nextLevel);
+}
+ else { const keyIdx = p.inventory.findIndex(it => it.key === "key"); if (keyIdx !== -1) { p.inventory.splice(keyIdx, 1); pr.locked = false; pr.label = "UNLOCKED"; io.to(inst.id).emit("txt", {x:pr.x, y:pr.y, val:"UNLOCKED!", color:"#ffd700"}); sendLog(inst.id, `${p.name} usou uma Chave!`, "#ffd700"); } else if (!p.lastMsg || Date.now() - p.lastMsg > 2000) { io.to(p.id).emit("txt", {x:p.x, y:p.y, val:"LOCKED", color:"#f00"}); p.lastMsg = Date.now(); } } } }
             sendPlayerUpdate(p, mobsSimple, playersSimple);
         });
 
         Object.values(inst.mobs).forEach(m => { processMobAI(inst, m); resolveCollisions(inst, m, 0.5); m.x += m.vx; m.y += m.vy; m.vx *= 0.7; m.vy *= 0.7; if (m.hitFlash > 0) m.hitFlash--; });
         
-        // PROJECTILE LOGIC - COMPLETAMENTE REESCRITO PARA O WIZARD
+        // PROJECTILE LOGIC
         for(let i = inst.projectiles.length - 1; i >= 0; i--) {
             let pr = inst.projectiles[i]; 
             pr.x += pr.vx; pr.y += pr.vy; pr.life--; 
@@ -780,7 +804,6 @@ setInterval(() => {
             let hitMob = null;
             let hitPlayer = null;
 
-            // Colisão com Mobs (se for do player)
             if (pr.owner !== "mob") {
                 for(let k in inst.mobs) { 
                     let m = inst.mobs[k]; 
@@ -789,27 +812,22 @@ setInterval(() => {
                     } 
                 }
             }
-            // Colisão com Players (se for de mob)
             else {
                 Object.values(inst.players).forEach(p => { 
                     if(Math.hypot(p.x - pr.x, p.y - pr.y) < 0.8) hitPlayer = p; 
                 });
             }
 
-            // --- LÓGICA ESPECÍFICA DO MAGE FIREBALL ---
             if (pr.type === "fireball_spell") {
                 if (hitWall || hitMob || pr.life <= 0) {
                     inst.projectiles.splice(i, 1);
-                    // Efeito Visual da Explosão
                     io.to(inst.id).emit("fx", { type: "nova", x: pr.x, y: pr.y, life: 15 });
-                    io.to(inst.id).emit("fx", { type: "fireball", x: pr.x, y: pr.y }); // Particulas extras
+                    io.to(inst.id).emit("fx", { type: "fireball", x: pr.x, y: pr.y }); 
                     
-                    // Dano em Área
                     hitArea(inst, {id: pr.owner}, pr.x, pr.y, 3.0, null, 0, pr.dmg, 20, pr.isCrit);
                     continue;
                 }
             }
-            // --- LÓGICA PADRÃO PARA OUTROS PROJÉTEIS ---
             else {
                 if(hitWall || pr.life <= 0) { 
                     if(pr.type === "meteor" || pr.type === "fireball") hitArea(inst, {id:pr.owner}, pr.x, pr.y, 1.5, null, 0, pr.dmg * 0.5, 10); 
