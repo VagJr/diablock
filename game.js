@@ -694,19 +694,17 @@ window.onmousemove = e => { mouse.x = e.clientX; mouse.y = e.clientY; if(!isMobi
 
 window.onmousedown = (e) => {
 
-    ensureAudio();
-
-    // 🔓 SE CLICOU EM UI, NÃO FAZ COMBATE
-    if (isClickOnUI(e)) return;
+    if (isClickOnUI(e)) return; ensureAudio();
 
     if (!me || uiState.chat || gamepadActive) return;
 
     const ang = getAttackAngle();
 
     if (e.button === 0) socket.emit("attack", ang);
-    if (e.button === 2) socket.emit("skill", { idx: 1, angle: ang });
-};
 
+    if (e.button === 2) socket.emit("skill", { idx: 1, angle: ang });
+
+};
 
 
 
@@ -964,7 +962,49 @@ function getIconCanvas(it) {
 
 }
 
+function renderInventory() {
+    const g = document.getElementById("inv-grid");
+    g.innerHTML = "";
 
+    for (let i = 0; i < 20; i++) {
+        const it = me.inventory[i];
+        const slot = document.createElement("div");
+        slot.className = "slot";
+
+        if (it) {
+            slot.appendChild(getIconCanvas(it));
+            slot.style.borderColor = it.color || "#444";
+
+            // ✅ CLIQUE CORRETO (mousedown)
+            slot.onmousedown = (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+
+                // Botão direito → DROP
+                if (e.button === 2) {
+                    socket.emit("drop", i);
+                    return;
+                }
+
+                // Botão esquerdo → EQUIPAR / USAR
+                if (it.key === "potion") {
+                    socket.emit("potion");
+                } 
+                else if (it.slot) {
+                    socket.emit("equip", i);
+                }
+            };
+
+            // ❌ Desativa menu do navegador
+            slot.oncontextmenu = (e) => e.preventDefault();
+
+            slot.onmouseenter = () => showTooltip(it, slot);
+            slot.onmouseleave = () => hideTooltip();
+        }
+
+        g.appendChild(slot);
+    }
+}
 
 
 function renderEquipment() {
@@ -973,35 +1013,25 @@ function renderEquipment() {
 
     slots.forEach(s => {
 
-        const el = document.getElementById("eq-" + s);
-        el.innerHTML = "";
+        const el = document.getElementById("eq-"+s); el.innerHTML = "";
 
         const it = me.equipment[s];
+
         el.style.borderColor = it ? it.color : "#333";
-        if (!it) return;
 
-        el.appendChild(getIconCanvas(it));
+        if(it) {
 
-        el.onmousedown = (e) => {
-            e.preventDefault();
-            e.stopPropagation(); // 🔒 mata o canvas
+            el.appendChild(getIconCanvas(it));
 
-            if (e.button !== 0) return;
+            el.onclick = () => socket.emit(s==="potion"?"potion":"unequip", s);
 
-            if (s === "potion") {
-                socket.emit("potion");
-            } else {
-                socket.emit("unequip", s);
-            }
-        };
+            el.onmouseenter = () => showTooltip(it, el); el.onmouseleave = () => hideTooltip();
 
-        el.oncontextmenu = e => e.preventDefault();
-        el.onmouseenter = () => showTooltip(it, el);
-        el.onmouseleave = () => hideTooltip();
+        }
+
     });
+
 }
-
-
 
 function renderShop() {
 
